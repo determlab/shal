@@ -1,0 +1,12 @@
+shal_version: 1
+
+root:
+  bench:
+    id: bench
+    driver: shal,sim-i2c
+    address: sim0
+    children:
+      temp0:
+        id: ambient_temp
+        driver: ti,tmp102
+        address: 0x48

@@ -1,0 +1,99 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://shal.dev/schemas/shal-v1.schema.json",
+  "title": "SHAL topology file, shal_version 1",
+  "description": "Structural validation of a SHAL topology. Semantic checks (id uniqueness, per-bus-family address grammar, driver installed, $ref resolution, transport-kind compatibility) happen at load, after schema validation.",
+  "type": "object",
+  "required": ["shal_version", "root"],
+  "additionalProperties": false,
+  "properties": {
+    "shal_version": { "const": 1 },
+    "root": {
+      "type": "object",
+      "minProperties": 1,
+      "propertyNames": { "$ref": "#/$defs/nodeName" },
+      "additionalProperties": { "$ref": "#/$defs/node" }
+    }
+  },
+  "$defs": {
+    "nodeName": {
+      "type": "string",
+      "pattern": "^[a-z0-9][a-z0-9_-]*$"
+    },
+    "id": {
+      "type": "string",
+      "pattern": "^[a-z0-9][a-z0-9_-]*$",
+      "description": "Optional, globally unique (uniqueness enforced at load), location-independent handle."
+    },
+    "compatible": {
+      "type": "string",
+      "pattern": "^[a-z0-9][a-z0-9_.-]*,[a-z0-9][a-z0-9_.-]*$",
+      "description": "vendor,device — e.g. ti,tmp102 or shal,ssh-host. Resolved via entry points; unknown compatible fails the load."
+    },
+    "address": {
+      "description": "Meaning and grammar are defined by the parent bus family and validated at load (e.g. 7-bit I2C is 0x03-0x77). ${ENV_VAR} interpolation allowed; resolved values never come from the file.",
+      "oneOf": [
+        { "type": "string", "minLength": 1 },
+        { "type": "integer", "minimum": 0 }
+      ]
+    },
+    "path": {
+      "type": "string",
+      "pattern": "^(/[a-z0-9][a-z0-9_-]*)+$"
+    },
+    "ref": {
+      "type": "string",
+      "pattern": "^\\$[a-z0-9][a-z0-9_-]*$",
+      "description": "$<id> — name pointer to an existing node. Linked, not recursed into; never routed through."
+    },
+    "route": {
+      "type": "object",
+      "required": ["via", "address"],
+      "additionalProperties": false,
+      "properties": {
+        "via": { "$ref": "#/$defs/path" },
+        "address": { "$ref": "#/$defs/address" }
+      }
+    },
+    "node": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "id": { "$ref": "#/$defs/id" },
+        "driver": { "$ref": "#/$defs/compatible" },
+        "address": { "$ref": "#/$defs/address" },
+        "routes": {
+          "type": "array",
+          "minItems": 1,
+          "items": { "$ref": "#/$defs/route" },
+          "description": "Failover, opt-in. Declared order = priority; canonical path derives from the first route."
+        },
+        "to": { "$ref": "#/$defs/ref" },
+        "children": {
+          "type": "object",
+          "minProperties": 1,
+          "propertyNames": { "$ref": "#/$defs/nodeName" },
+          "additionalProperties": { "$ref": "#/$defs/node" }
+        },
+        "watchdog_ms": {
+          "type": "integer",
+          "minimum": 1,
+          "description": "No command within N ms -> driver's safe_state(). Valid only on nodes whose driver implements an actuator capability (checked at load)."
+        },
+        "verify": {
+          "type": "boolean",
+          "description": "Per-bus: re-assert real state instead of trusting the selection/connection cache (shared/untrusted buses)."
+        },
+        "insecure": {
+          "type": "boolean",
+          "description": "Loud opt-out of TLS for network buses. Never a default."
+        }
+      },
+      "oneOf": [
+        { "required": ["address"], "not": { "anyOf": [{ "required": ["routes"] }, { "required": ["to"] }] } },
+        { "required": ["routes"], "not": { "anyOf": [{ "required": ["address"] }, { "required": ["to"] }] } },
+        { "required": ["to"], "not": { "anyOf": [{ "required": ["address"] }, { "required": ["routes"] }, { "required": ["children"] }] } }
+      ]
+    }
+  }
+}

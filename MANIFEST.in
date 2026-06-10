@@ -1,0 +1,15 @@
+# Source distribution contents. Wheel data files are handled by package-data in
+# pyproject.toml; this governs the sdist tarball.
+include LICENSE
+include README.md
+include CHANGELOG.md
+include CONTRIBUTING.md
+include pyproject.toml
+recursive-include src/shal *.json py.typed
+recursive-include docs *.md
+
+# Keep examples and the design-validation prototype out of the tarball.
+prune playground
+prune sim
+prune tests
+global-exclude __pycache__ *.py[cod]

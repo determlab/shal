@@ -1,0 +1,82 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "shal"
+version = "0.1.0"
+description = "System/Software Hardware Abstraction Layer — device-tree-inspired, dynamic, user-space, network-capable"
+readme = "README.md"
+license = { text = "MIT" }
+authors = [{ name = "SHAL contributors" }]
+requires-python = ">=3.10"
+keywords = [
+    "hardware", "hal", "device-tree", "i2c", "spi", "ssh",
+    "embedded", "lab-automation", "robotics", "instrumentation",
+]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Developers",
+    "Intended Audience :: Science/Research",
+    "License :: OSI Approved :: MIT License",
+    "Operating System :: OS Independent",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Topic :: System :: Hardware",
+    "Topic :: Software Development :: Embedded Systems",
+    "Typing :: Typed",
+]
+dependencies = [
+    "pyyaml>=6.0",
+    "jsonschema>=4.18",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=7",
+    "ruff>=0.4",
+]
+
+[project.urls]
+Documentation = "https://github.com/shal-project/shal#readme"
+Changelog = "https://github.com/shal-project/shal/blob/main/CHANGELOG.md"
+Source = "https://github.com/shal-project/shal"
+
+# Bundled drivers, discovered the same way community drivers are (decision 3):
+[project.entry-points."shal.drivers"]
+"ti,tmp102" = "shal.drivers.tmp102:Tmp102"
+"shal,sim-i2c" = "shal.buses.sim:SimI2cBus"
+"shal,local" = "shal.buses.local:LocalBus"
+"shal,ssh-host" = "shal.buses.ssh:SshBus"
+"shal,i2c-cli" = "shal.buses.i2c_cli:I2cCliBus"
+"shal,spi-cli" = "shal.buses.spi_cli:SpiCliBus"
+"shal,tcp" = "shal.buses.tcp:TcpBus"
+"shal,http" = "shal.buses.http_bus:HttpBus"
+"nxp,pca9548" = "shal.buses.mux:Pca9548"
+
+[tool.setuptools.packages.find]
+where = ["src"]       # src/ layout — playground/, sim/, tests/ are never packaged
+
+[tool.setuptools.package-data]
+shal = ["schema/*.json", "py.typed"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-q"
+
+[tool.ruff]
+line-length = 100
+target-version = "py310"
+src = ["src", "tests"]
+extend-exclude = ["sim", "playground"]
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "B", "UP"]
+ignore = ["E741"]
+
+[tool.ruff.lint.per-file-ignores]
+# compact bench-script style is intentional in the test suite
+"tests/*" = ["E701", "E702"]

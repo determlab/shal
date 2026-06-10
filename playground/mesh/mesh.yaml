@@ -1,0 +1,21 @@
+shal_version: 1
+
+# A microservice estate as a SHAL tree. The buses are the UNMODIFIED core
+# shal,http and shal,tcp. `insecure: true` is the loud localhost opt-out —
+# TLS is the default, never the other way around.
+
+root:
+  api:
+    driver: shal,http
+    address: http://127.0.0.1:8765
+    insecure: true
+    children:
+      users:  { id: users,  driver: "acme,user-service",  address: users }
+      orders: { id: orders, driver: "acme,order-service", address: orders }
+
+  worker:
+    driver: shal,tcp
+    address: 127.0.0.1:9876
+    insecure: true
+    children:
+      jobs: { id: jobs, driver: "acme,job-runner", address: jobs }

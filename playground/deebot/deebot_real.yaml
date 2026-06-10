@@ -1,0 +1,24 @@
+shal_version: 1
+
+# Credentials are declared on the ecovacs node below (config:). The ${VAR} form
+# resolves from the environment at load — recommended, since topology files get
+# committed and shared. Literal values are allowed for strictly-local files.
+
+root:
+  pc:
+    driver: shal,local             # this computer — the root of the tree
+    address: localhost
+    children:
+      ecovacs:
+        driver: ecovacs,cloud      # the Ecovacs portal: a bus hanging off the PC.
+        address: nz                # Set ECOVACS_BUMPER_URL to aim this same bus at a
+                                   # self-hosted Bumper server instead of the real cloud.
+        config:
+          user: ${ECOVACS_EMAIL}         # ${VAR} = resolved from the environment at load.
+          password: ${ECOVACS_PASSWORD}  # A literal value works too — ONLY if this file
+                                         # never leaves your machine (never commit it).
+        children:
+          cleaner:
+            id: cleaner
+            driver: ecovacs,deebot-v2  # DEEBOT N20 PRO PLUS (class gwtll7) — V2 command set
+            address: swapi             # robot nick from the Ecovacs app

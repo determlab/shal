@@ -1,0 +1,8 @@
+{
+  "name": "root",
+  "children": {
+    "wifi0": {"bus": "http", "addr": "http://192.168.1.42", "children": {"vac": {"id": "cleaner",   "driver": "robi,vacuum",    "addr": "/"}}},
+    "mqtt0": {"bus": "mqtt", "addr": "tcp://broker:1883",   "children": {"mt":  {"id": "mqtt_temp", "driver": "acme,mqtt-temp", "addr": "home/temp"}}},
+    "ble0":  {"bus": "ble",  "addr": "hci0",                "children": {"hr":  {"id": "hr",        "driver": "polar,hr",       "addr": "AA:BB:CC"}}}
+  }
+}

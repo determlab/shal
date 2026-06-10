@@ -1,0 +1,16 @@
+{
+  "name": "root",
+  "children": {
+    "lab": {
+      "bus": "ssh", "addr": "user@10.0.0.5",
+      "children": {
+        "ri2c": {
+          "bus": "i2c", "addr": "/dev/i2c-1",
+          "children": {
+            "rtemp": {"id": "lab_temp", "driver": "ti,tmp102", "addr": "0x48"}
+          }
+        }
+      }
+    }
+  }
+}

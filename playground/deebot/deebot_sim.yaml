@@ -1,0 +1,11 @@
+shal_version: 1
+
+root:
+  ecovacs_sim:
+    driver: playground,sim-cloud
+    address: sim
+    children:
+      cleaner:
+        id: cleaner
+        driver: ecovacs,deebot
+        address: sim-robot-1
