@@ -1,5 +1,7 @@
 # SHAL
 
+### Agent-native infrastructure for labs and production systems
+
 **System/Software Hardware Abstraction Layer** — describe a hardware/software
 setup in YAML, control it from Python. Inspired by the Linux device tree, but
 dynamic, user-space, and network-capable.
