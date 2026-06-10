@@ -1,197 +1,324 @@
+<div align="center">
+
 # SHAL
 
-### Agent-native infrastructure for labs and production systems
+### Turn a real lab — hardware *and* software — into safe tools for an AI agent.
 
-**System/Software Hardware Abstraction Layer** — describe a hardware/software
-setup in YAML, control it from Python. Inspired by the Linux device tree, but
-dynamic, user-space, and network-capable.
+Describe your devices, instruments, and services once in YAML. SHAL hands an LLM
+a **typed, permission-gated tool catalog** for the entire setup — sensors, power
+supplies, robots, and HTTP services alike. No transport code. No glue.
 
-A server wired to eval boards over I2C, a robot reached over the cloud, a DUT
-behind an SSH jumpbox and an I2C mux — all the same recursive shape: **a bus is
-just a node that provides a transport to its children.**
+<!-- BADGES -->
+[![PyPI](https://img.shields.io/badge/PyPI-coming_soon-blue)](#install)
+[![Python](https://img.shields.io/badge/python-3.10+-blue)](#install)
+[![License](https://img.shields.io/badge/license-MIT-green)](LICENSE)
+[![Status](https://img.shields.io/badge/status-alpha-orange)](#roadmap)
 
-```yaml
-# setup.yaml
-shal_version: 1
-root:
-  lab_server:
-    driver: shal,ssh-host
-    address: ${SHAL_LAB_SSH}        # secrets resolve from the environment
-    children:
-      i2c0:
-        driver: shal,i2c-cli        # I2C rendered as argv; far side needs only i2c-tools
-        address: /dev/i2c-1
-        children:
-          temp0:
-            id: ambient_temp
-            driver: ti,tmp102
-            address: 0x48
+```mermaid
+flowchart LR
+    HW["I²C sensors · SCPI supplies<br/>robots · SSH benches · HTTP services"] --> S["SHAL graph<br/>one YAML topology"]
+    S --> T["hal.tool_schemas()<br/>typed · gated tools"]
+    T --> A["AI agent<br/>Claude · GPT"]
+    style S fill:#1f6feb,color:#fff
+    style T fill:#1f6feb,color:#fff
 ```
+
+</div>
+
+**Built for:**
+
+✓ AI agent builders &nbsp;·&nbsp; ✓ Validation & test engineers &nbsp;·&nbsp;
+✓ Hardware-in-the-loop automation &nbsp;·&nbsp; ✓ Labs with mixed hardware + software
+
+---
+
+## From glue scripts to agent tools — in three steps
+
+**Step 1 · Today, without SHAL** — a separate library, address, and retry per device:
 
 ```python
-import shal
-
-with shal.load("setup.yaml") as hal:
-    print(hal.get_device("ambient_temp").read_celsius())
+sensor  = TMP102(i2c_bus, 0x48)
+supply  = SCPIPowerSupply("10.0.0.50:5025")
+results = RESTClient("https://mes.lab.internal")
+# ...and you wire each one's retries, logging, and tool-wrapper by hand
 ```
+
+**Step 2 · With SHAL** — describe the rack once, then call devices by name:
+
+```python
+hal = shal.load("lab.yaml")
+
+hal.get_device("ambient_temp").read_celsius()       # I²C sensor
+hal.get_device("dut_power").set_voltage(3.3)        # SCPI supply
+hal.get_device("results_db").record(status="pass")  # HTTP service
+```
+
+> **Validation & test engineers can stop here.** One model for the whole rack —
+> no agent needed, no transport code, no glue.
+
+**Step 3 · Hand the same rack to an agent** — the tool catalog is generated for you:
+
+```python
+tools = hal.tool_schemas()                           # one typed tool per device op
+hal.call_tool("dut_power__set_voltage", {"volts": 3.3})
+```
+
+> Writes are gated, reads aren't. The agent never sees SCPI, I²C, or an address.
+
+---
+
+## Why existing agent frameworks fall short
+
+Most agent tooling assumes **software-only** tools: APIs, databases, functions.
+The moment a tool is a *physical* device — a sensor on I²C, an instrument over a
+raw socket, a robot behind a network hop — you're on your own.
+
+SHAL exposes physical devices, remote labs, instruments, **and** software
+services as the *same* kind of tool — with the safety rails physical actions
+need: gated writes, honest failure, a full audit trail.
+
+---
 
 ## One model for hardware *and* software
 
-Plenty of frameworks unify software services. Plenty of hardware frameworks
-unify devices. **SHAL's advantage is that it treats both as first-class nodes in
-the same topology.** A temperature sensor on I²C, a power supply over SCPI, a
-firmware flasher run over SSH, and a manufacturing database behind HTTP all live
-in the same graph — same lookup model, same retry semantics, same audit trail,
-same observability stack. Automation, test code, and AI agents no longer need to
-understand transports, protocols, or network boundaries; **they operate on
-capabilities.** The result is a single operational model for an entire lab,
-validation rack, or production line — hardware and software as parts of one
-system, instead of separate worlds glued together by custom scripts.
+The core idea is small:
+
+> **A bus is just a node that provides a transport to its children.**
+
+A sensor on I²C and an HTTP service are the same kind of node. Your code — and
+your agent — calls **capabilities** (`read_celsius()`, `set_voltage()`), never
+transports. `[core]` ships with SHAL; `[pkg]` is a driver you install or write.
 
 ```yaml
-# lab.yaml — hardware and software in ONE graph.
-# [core] ships with SHAL; [pkg] = a device/service driver you install or write
-# (one small class — see the build-driver / build-bus guides in .claude/skills/).
+# lab.yaml — hardware and software in ONE graph
 shal_version: 1
 root:
-  bench:                       # one SSH hop to the bench controller        [core]
+  bench:                         # one SSH hop to the bench controller       [core]
     driver: shal,ssh-host
-    address: ${BENCH_SSH}
+    address: ${BENCH_SSH}        # secrets resolve from the environment, never logged
     children:
-      i2c0:                    # I²C rendered as argv over the SSH hop       [core]
+      i2c0:                      # I²C rendered as argv over the SSH hop      [core]
         driver: shal,i2c-cli
         address: /dev/i2c-1
         children:
-          ambient:
-            id: ambient_temp   # HARDWARE — TemperatureSensor               [core]
-            driver: ti,tmp102
-            address: 0x48
-      flash0:
-        id: dut_flasher        # HARDWARE — firmware flash = a CLI over SSH  [pkg]
-        driver: acme,dfu-util
-        address: /dev/ttyUSB0
+          ambient: { id: ambient_temp, driver: ti,tmp102, address: 0x48 }   # [core]
 
-  instruments:                 # raw-socket SCPI bus (MessageTransport)      [pkg]
+  instruments:                   # raw-socket SCPI bus                        [pkg]
     driver: acme,scpi
     address: 10.0.0.50:5025
     children:
-      supply:
-        id: dut_power          # HARDWARE — PowerSupply                      [pkg]
-        driver: keysight,e36312
-        address: ch1
+      supply: { id: dut_power, driver: keysight,e36312, address: ch1 }       # [pkg]
 
-  services:                    # HTTPS to internal services                 [core]
+  services:                      # HTTPS to internal services                [core]
     driver: shal,http
     address: https://mes.lab.internal
     children:
-      results:
-        id: results_db         # SOFTWARE — ResultsStore                     [pkg]
-        driver: acme,mes-results
-        address: api/v2/results
+      results: { id: results_db, driver: acme,mes-results, address: api/v2 } # [pkg]
+```
+
+Every node is reached the same way — `hal.get_device("dut_power").set_voltage(3.3)`
+— sensor or database, local or across the network. Same retries, same logs. Swap
+any node for its sim and **nothing in your code changes**.
+
+---
+
+## Features
+
+- **Agent-native** — every device op becomes a gated LLM tool.
+- **Hardware + software, one graph** — a sensor and an HTTP service are the same node.
+- **Capabilities, not wires** — call `read_celsius()`, never I²C.
+- **Retry you can trust** — reads auto-retry; risky writes never silently repeat.
+- **Sim-first** — test the whole rack with zero hardware.
+- **Recursive** — muxes, jumpboxes, nested buses: one primitive, no special cases.
+- **Drivers as plugins** — add a device in one small class.
+- **Secure by default** — no shell strings, TLS on, secrets via `${ENV}`.
+- **Observable** — structured logs, one `txn` id per call.
+
+---
+
+## Install
+
+> SHAL is in **alpha** (Phase 1). A PyPI release is coming; for now install from
+> source:
+
+```bash
+pip install git+https://github.com/hemipaska-maker/shal
+
+# or, for development
+git clone https://github.com/hemipaska-maker/shal && cd shal
+pip install -e ".[dev]"                                  # pytest, ruff
+```
+
+Requires **Python ≥ 3.10**. Dependencies: `pyyaml`, `jsonschema`.
+
+---
+
+## Quick Start
+
+Runs with **zero hardware** — the simulated bus ships with SHAL.
+
+```yaml
+# sim.yaml
+shal_version: 1
+root:
+  bus:
+    driver: shal,sim-i2c
+    address: sim0
+    children:
+      temp0:
+        id: ambient_temp
+        driver: ti,tmp102
+        address: 0x48
 ```
 
 ```python
 import shal
 
-with shal.load("lab.yaml") as hal:
-    # The SAME lookup + capability model for every node — hardware or software.
-    # No transport, protocol, or network detail leaks into this code.
-    temp = hal.get_device("ambient_temp").read_celsius()       # I²C sensor
-    hal.get_device("dut_power").set_voltage(3.3)               # SCPI power supply
-    hal.get_device("dut_flasher").flash("firmware.bin")        # CLI tool over SSH
-    hal.get_device("results_db").record(                       # HTTP service
-        part="DUT-0042", ambient_c=temp, status="pass")
+with shal.load("sim.yaml") as hal:
+    print(hal.get_device("ambient_temp").read_celsius())   # 25.0
 ```
 
-Every call above rides the **same** machinery: a delivery-unknown write to the
-power supply or the database is treated exactly like one to a motor — never
-silently re-fired. One `txn` id correlates the I²C transaction, the SCPI socket
-exchange, and the HTTP POST in a single log stream. And the whole graph is an
-**agent tool catalog** for free:
+```bash
+$ python quickstart.py
+25.0
+```
+
+When the real board arrives, change `shal,sim-i2c` → `shal,i2c-cli`. **Your
+Python doesn't change.**
+
+---
+
+## Write a driver in 30 seconds
+
+Need a device SHAL doesn't have yet? A driver is one small class. This is the
+*entire* bundled temperature-sensor driver:
 
 ```python
-with shal.load("lab.yaml") as hal:
-    tools = hal.tool_schemas()       # Anthropic tool-use defs for every device op
-    hal.call_tool("dut_power__set_voltage", {"volts": 3.3})
-    # the LLM picks 'dut_power__set_voltage' by capability — it never sees SCPI,
-    # and hal.tool_catalog() flags it `side_effect: write` so the harness can gate it
+from shal import Driver, TemperatureSensor, registry, idempotent, op, ByteTransport, Read, Write
+
+@registry.register
+class Tmp102(Driver, TemperatureSensor):
+    compatible = "ti,tmp102"          # matched against the YAML `driver:` field
+    kind = ByteTransport
+    llm_ready = True
+
+    @idempotent                        # a read: safe to auto-retry across drops
+    @op("Read the ambient temperature now.", unit="celsius", side_effect="none")
+    def read_celsius(self) -> float:
+        raw = self.bus.txn(self.addr, [Write(b"\x00"), Read(2)])
+        return ((raw[0] << 4) | (raw[1] >> 4)) * 0.0625
 ```
 
-Swap the SSH hop for `shal,local`, or any real service for its `shal,sim-i2c`-style
-mock, and **none of the capability calls change** — the same property that lets
-you test an entire rack before touching real hardware.
+That's it — register the `compatible`, implement the capability. The `@op`
+metadata is what makes it show up as a gated agent tool. SHAL discovers your
+driver via the `shal.drivers` entry point.
 
-## Install
+---
 
+## How It Works
+
+A topology is a tree, and **every edge is a bus** — itself a node that carries
+traffic to its children. You call a capability; SHAL translates it down the stack
+to the wire and hands the result back up. No layer leaks into the one above.
+
+```mermaid
+sequenceDiagram
+    participant U as Your code
+    participant T as tmp102 driver
+    participant I as i2c-cli bus
+    participant S as ssh-host bus
+    U->>T: read_celsius()
+    T->>I: read register 0x00
+    I->>S: i2ctransfer 0x48 … (argv)
+    Note over S: runs on lab_server
+    S-->>I: raw bytes
+    I-->>T: raw bytes
+    T-->>U: 22.5 °C
 ```
-pip install shal            # library
-pip install -e ".[dev]"     # development (pytest, ruff)
-```
 
-Requires Python ≥ 3.10. Dependencies: `pyyaml`, `jsonschema`.
+Because every hop is the same primitive, an SSH jumpbox, an I²C mux, and an
+in-process sim all compose — no special cases.
 
-## What you get
+---
 
-- **Declarative topology** — versioned YAML (`shal_version: 1`) with a published
-  JSON Schema; ids, paths, `$ref` back-links, per-node `config:` with `${ENV}`
-  secret resolution.
-- **Typed transport kinds** — `ByteTransport` (I2C/SPI), `CommandTransport`
-  (argv — never shell strings), `MessageTransport` (JSON), with honest `kinds()`
-  introspection validated at load.
-- **Bundled buses** — `shal,local`, `shal,ssh-host` (ControlMaster reuse),
-  `shal,i2c-cli`, `shal,spi-cli`, `shal,tcp` (TLS by default), `shal,http`,
-  `nxp,pca9548` mux (per-mux selection cache), and `shal,sim-i2c` — a
-  first-class simulated bus: test before you touch the real motor.
-- **Capabilities, not driver APIs** — code depends on Protocols
-  (`TemperatureSensor.read_celsius()`), never on how the device is reached.
-- **A retry policy you can trust** — idempotent ops reconnect once/retry once;
-  a write with unknown delivery is **never** silently re-fired. You decide.
-- **Drivers as plugins** — registry keyed by `compatible` (`"ti,tmp102"`),
-  discovered via the `shal.drivers` entry-point group. The framework never
-  imports a module named by a config string.
+## Core Concepts
 
-## Observability
-
-SHAL emits structured records (stdlib `logging`, `shal.*` namespaces) and never
-configures logging. Every record carries a stable `event` key plus
-`path`/`hop`/`addr`/`txn`/`duration_ms` fields; one `txn` id correlates every
-hop of one capability call.
+| Concept | What it means |
+|---|---|
+| **Node** | Anything in the tree: a device, a bus, a board. |
+| **Bus** | A node that provides a transport to its children (I²C, SSH, HTTP…). |
+| **Driver** | Bound to a node by its `compatible` string. Implements a capability. |
+| **Capability** | The typed API your code calls (`read_celsius()`), independent of transport. |
+| **id vs path** | `id` is a stable name for lookup; `path` is where it sits. Move a device, keep its `id`. |
 
 ```python
-import logging, shal
-
-logging.basicConfig(level=logging.INFO)
-logging.getLogger().handlers[0].setFormatter(shal.logging.ConsoleFormatter())
-# INFO    shal.bus.tcp   connect 10.0.0.5:9000 tls=True  [path=/net event=connect duration_ms=12.3]
-
-with shal.logging.capture("debug.jsonl"):   # flight recorder: DEBUG, JSON-lines,
-    dev.set_speed(2.0)                       # escaping exceptions included
+hal.get_device("ambient_temp").read_celsius()   # by semantic id — no wires leak in
 ```
 
-`debug.jsonl` is designed to be handed to a human *or an AI assistant* whole:
-machine-stable events, full causal chain, secrets redacted by construction.
-Auditing of actuator commands is one line away:
-`logging.getLogger("shal.audit").addHandler(...)`.
+---
 
-## Security posture
+## Real-World Use Cases
 
-`yaml.safe_load` only · argv vectors, never shell strings · address grammars
-validated at load · TLS by default with loud `insecure: true` opt-out · secrets
-via `${ENV_VAR}` references, never logged, never in topology files.
+- **AI agents with real-world access** — expose a lab or robot to an LLM as
+  gated tools; writes require approval, reads don't.
+- **Validation & test racks** — one model for eval boards, instruments, and the
+  results database; test against sims in CI before hardware.
+- **Manufacturing lines** — same capability calls across stations; one audit
+  trail (`shal.audit`) for every actuator command.
+- **Remote & distributed setups** — drive hardware behind an SSH jumpbox with
+  nothing on the far side but standard CLI tools.
+- **Robotics bringup** — start against a sim, swap in transports as boards land,
+  without rewriting control code.
 
-## Development
+---
 
-```
+## Roadmap
+
+**Shipped — Phase 1 (synchronous core, v0.1.0):**
+
+- ✅ Declarative YAML topology: JSON-Schema validation, `id`/`path`/`$ref`,
+  `${ENV}` secrets, reusable `template:` includes
+- ✅ Bundled buses: `sim-i2c`, `local`, `ssh-host`, `i2c-cli`, `spi-cli`,
+  `tcp` (TLS), `http`, `nxp,pca9548` mux
+- ✅ Capability model, driver plugin registry, trustworthy retry policy
+- ✅ Agent tool surface: `tool_schemas()` / `tool_catalog()` / `call_tool()`
+- ✅ Structured observability + `capture()` flight recorder
+
+**Designed, in progress — Phase 2:**
+
+- 🚧 Async / streaming (`subscribe`, held channels) — [spec](docs/DESIGN%20-%20PHASE%202%20ASYNC.md)
+- 🚧 Actuator watchdog & safe-state
+- 🚧 Route failover for multi-path devices
+
+---
+
+## Documentation
+
+- [Architecture & locked decisions](docs/DESIGN%20V2.md)
+- [Phase 1 implementation decisions](docs/DECISIONS%20-%20V2.1.md)
+- [Phase 2 async + watchdog spec](docs/DESIGN%20-%20PHASE%202%20ASYNC.md)
+- Build guides: write a [driver](.claude/skills/shal-build-driver/SKILL.md),
+  a [bus](.claude/skills/shal-build-bus/SKILL.md), or a
+  [topology](.claude/skills/shal-build-yaml/SKILL.md)
+
+---
+
+## Contributing
+
+Contributions welcome — **new drivers and buses especially**. A driver is one
+small class (see [above](#write-a-driver-in-30-seconds)); SHAL discovers it via
+the `shal.drivers` entry point.
+
+```bash
+pip install -e ".[dev]"
 python -m pytest          # test suite
 ruff check src tests      # lint
 ```
 
-Design documents: [docs/DESIGN V2.md](docs/DESIGN%20V2.md) (architecture, locked
-decisions) and [docs/DECISIONS - V2.1.md](docs/DECISIONS%20-%20V2.1.md) (Phase 1
-implementation decisions). Phase 1 ships the sync core; async/streaming,
-watchdog, and route failover are Phase 2. Contributing:
-[CONTRIBUTING.md](CONTRIBUTING.md).
+See [CONTRIBUTING.md](CONTRIBUTING.md) for the full guide.
+
+---
 
 ## License
 
-MIT — see [LICENSE](LICENSE).
+[MIT](LICENSE).
