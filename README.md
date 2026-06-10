@@ -33,6 +33,92 @@ with shal.load("setup.yaml") as hal:
     print(hal.get_device("ambient_temp").read_celsius())
 ```
 
+## One model for hardware *and* software
+
+Plenty of frameworks unify software services. Plenty of hardware frameworks
+unify devices. **SHAL's advantage is that it treats both as first-class nodes in
+the same topology.** A temperature sensor on I²C, a power supply over SCPI, a
+firmware flasher run over SSH, and a manufacturing database behind HTTP all live
+in the same graph — same lookup model, same retry semantics, same audit trail,
+same observability stack. Automation, test code, and AI agents no longer need to
+understand transports, protocols, or network boundaries; **they operate on
+capabilities.** The result is a single operational model for an entire lab,
+validation rack, or production line — hardware and software as parts of one
+system, instead of separate worlds glued together by custom scripts.
+
+```yaml
+# lab.yaml — hardware and software in ONE graph.
+# [core] ships with SHAL; [pkg] = a device/service driver you install or write
+# (one small class — see the build-driver / build-bus guides in .claude/skills/).
+shal_version: 1
+root:
+  bench:                       # one SSH hop to the bench controller        [core]
+    driver: shal,ssh-host
+    address: ${BENCH_SSH}
+    children:
+      i2c0:                    # I²C rendered as argv over the SSH hop       [core]
+        driver: shal,i2c-cli
+        address: /dev/i2c-1
+        children:
+          ambient:
+            id: ambient_temp   # HARDWARE — TemperatureSensor               [core]
+            driver: ti,tmp102
+            address: 0x48
+      flash0:
+        id: dut_flasher        # HARDWARE — firmware flash = a CLI over SSH  [pkg]
+        driver: acme,dfu-util
+        address: /dev/ttyUSB0
+
+  instruments:                 # raw-socket SCPI bus (MessageTransport)      [pkg]
+    driver: acme,scpi
+    address: 10.0.0.50:5025
+    children:
+      supply:
+        id: dut_power          # HARDWARE — PowerSupply                      [pkg]
+        driver: keysight,e36312
+        address: ch1
+
+  services:                    # HTTPS to internal services                 [core]
+    driver: shal,http
+    address: https://mes.lab.internal
+    children:
+      results:
+        id: results_db         # SOFTWARE — ResultsStore                     [pkg]
+        driver: acme,mes-results
+        address: api/v2/results
+```
+
+```python
+import shal
+
+with shal.load("lab.yaml") as hal:
+    # The SAME lookup + capability model for every node — hardware or software.
+    # No transport, protocol, or network detail leaks into this code.
+    temp = hal.get_device("ambient_temp").read_celsius()       # I²C sensor
+    hal.get_device("dut_power").set_voltage(3.3)               # SCPI power supply
+    hal.get_device("dut_flasher").flash("firmware.bin")        # CLI tool over SSH
+    hal.get_device("results_db").record(                       # HTTP service
+        part="DUT-0042", ambient_c=temp, status="pass")
+```
+
+Every call above rides the **same** machinery: a delivery-unknown write to the
+power supply or the database is treated exactly like one to a motor — never
+silently re-fired. One `txn` id correlates the I²C transaction, the SCPI socket
+exchange, and the HTTP POST in a single log stream. And the whole graph is an
+**agent tool catalog** for free:
+
+```python
+with shal.load("lab.yaml") as hal:
+    tools = hal.tool_schemas()       # Anthropic tool-use defs for every device op
+    hal.call_tool("dut_power__set_voltage", {"volts": 3.3})
+    # the LLM picks 'dut_power__set_voltage' by capability — it never sees SCPI,
+    # and hal.tool_catalog() flags it `side_effect: write` so the harness can gate it
+```
+
+Swap the SSH hop for `shal,local`, or any real service for its `shal,sim-i2c`-style
+mock, and **none of the capability calls change** — the same property that lets
+you test an entire rack before touching real hardware.
+
 ## Install
 
 ```
@@ -95,7 +181,7 @@ via `${ENV_VAR}` references, never logged, never in topology files.
 
 ```
 python -m pytest          # test suite
-ruff check shal tests     # lint
+ruff check src tests      # lint
 ```
 
 Design documents: [docs/DESIGN V2.md](docs/DESIGN%20V2.md) (architecture, locked
