@@ -41,9 +41,9 @@ dev = [
 ]
 
 [project.urls]
-Documentation = "https://github.com/shal-project/shal#readme"
-Changelog = "https://github.com/shal-project/shal/blob/main/CHANGELOG.md"
-Source = "https://github.com/shal-project/shal"
+Documentation = "https://github.com/hemipaska-maker/shal#readme"
+Changelog = "https://github.com/hemipaska-maker/shal/blob/main/CHANGELOG.md"
+Source = "https://github.com/hemipaska-maker/shal"
 
 # Bundled drivers, discovered the same way community drivers are (decision 3):
 [project.entry-points."shal.drivers"]
