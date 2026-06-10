@@ -58,7 +58,7 @@ Source = "https://github.com/shal-project/shal"
 "nxp,pca9548" = "shal.buses.mux:Pca9548"
 
 [tool.setuptools.packages.find]
-where = ["src"]       # src/ layout — playground/, sim/, tests/ are never packaged
+where = ["src"]       # src/ layout — playground/ and tests/ are never packaged
 
 [tool.setuptools.package-data]
 shal = ["schema/*.json", "py.typed"]
@@ -71,7 +71,7 @@ addopts = "-q"
 line-length = 100
 target-version = "py310"
 src = ["src", "tests"]
-extend-exclude = ["sim", "playground"]
+extend-exclude = ["playground"]
 
 [tool.ruff.lint]
 select = ["E", "F", "W", "I", "B", "UP"]

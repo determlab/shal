@@ -647,7 +647,11 @@ humans; attach `JSONFormatter` for machines. That's it — SHAL stays out of the
   `atexit`), explicitly documented as such.
 - Reconnect semantics are owned by the Retry section; teardown never auto-reconnects.
 
-## Validation (simulation harness — see sim/)
+## Validation (design-phase simulation harness)
+
+*The standalone prototype that produced these results has been removed now that
+the real implementation supersedes it; the Phase 1 test suite (`tests/`) and the
+playground demos (`playground/`) are the live validation. The original findings:*
 
 Ran the recursive model against 13 buses across embedded, automotive, industrial,
 network, IoT, and lab worlds, over 5 topology files. All core mechanisms held:

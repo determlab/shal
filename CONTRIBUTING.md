@@ -21,7 +21,6 @@ src/shal/        the package (importable as `shal`)
 tests/           pytest suite
 docs/            design + decision records
 playground/      runnable examples (Deebot cloud, microservice mesh) — not shipped
-sim/             original design-validation prototype — ignore
 ```
 
 ## Dev setup

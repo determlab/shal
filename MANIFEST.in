@@ -8,8 +8,7 @@ include pyproject.toml
 recursive-include src/shal *.json py.typed
 recursive-include docs *.md
 
-# Keep examples and the design-validation prototype out of the tarball.
+# Keep examples out of the tarball.
 prune playground
-prune sim
 prune tests
 global-exclude __pycache__ *.py[cod]

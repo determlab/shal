@@ -1,8 +1,0 @@
-{
-  "name": "root",
-  "children": {
-    "mb0":  {"bus": "modbus", "addr": "/dev/ttyUSB0", "children": {"relay": {"id": "relay",      "driver": "acme,modbus-relay", "addr": "1"}}},
-    "can0": {"bus": "can",    "addr": "can0",          "children": {"motor": {"id": "motor",      "driver": "vesc,motor",        "addr": "0x05"}}},
-    "tcp0": {"bus": "tcp",    "addr": "10.0.0.9:9000", "children": {"ts":    {"id": "tcp_sensor", "driver": "acme,tcp-sensor",   "addr": "-"}}}
-  }
-}
