@@ -2,13 +2,14 @@
 
 # SHAL
 
-### Turn a real lab — hardware *and* software — into safe tools for an AI agent.
+### Turn your whole lab — hardware *and* software — into safe tools for an AI agent.
 
-Describe your devices, instruments, and services once in YAML. SHAL hands an LLM
-a **typed, permission-gated tool catalog** for the entire setup — sensors, power
-supplies, robots, and HTTP services alike. No transport code. No glue.
+Describe any setup — sensors, instruments, robots, services — in **one YAML file**.
+Control it from Python, or hand it to an LLM as **typed, permission-gated tools**.
+No transport code. No glue.
 
 <!-- BADGES -->
+[![GitHub stars](https://img.shields.io/github/stars/hemipaska-maker/shal?style=social)](https://github.com/hemipaska-maker/shal)
 [![PyPI](https://img.shields.io/badge/PyPI-coming_soon-blue)](#install)
 [![Python](https://img.shields.io/badge/python-3.10+-blue)](#install)
 [![License](https://img.shields.io/badge/license-MIT-green)](LICENSE)
@@ -22,6 +23,8 @@ flowchart LR
     style S fill:#1f6feb,color:#fff
     style T fill:#1f6feb,color:#fff
 ```
+
+### [→ Try it in 60 seconds — no hardware required](#quick-start)
 
 </div>
 
@@ -155,7 +158,8 @@ Requires **Python ≥ 3.10**. Dependencies: `pyyaml`, `jsonschema`.
 
 ## Quick Start
 
-Runs with **zero hardware** — the simulated bus ships with SHAL.
+Runs with **zero hardware** — the simulated bus ships with SHAL. New to hardware?
+This is the whole setup, and it's just Python and a YAML file.
 
 ```yaml
 # sim.yaml
@@ -269,6 +273,24 @@ hal.get_device("ambient_temp").read_celsius()   # by semantic id — no wires le
   nothing on the far side but standard CLI tools.
 - **Robotics bringup** — start against a sim, swap in transports as boards land,
   without rewriting control code.
+
+---
+
+## FAQ
+
+**Why not just wrap Python libraries as agent tools myself?**
+You can — until there are ten devices on four transports, some behind an SSH hop,
+some not. Then you're hand-maintaining a tool wrapper, address, retry policy, and
+audit log *per device*. SHAL generates all of it from one topology.
+
+**Is it production-ready?**
+It's **alpha** (Phase 1). The synchronous core — topology, drivers, buses, retry
+policy, and the agent tool surface — is real and tested. Async/streaming, the
+actuator watchdog, and route failover are Phase 2 ([roadmap](#roadmap)).
+
+**Do I need real hardware to try it?**
+No. The bundled simulated bus runs the [Quick Start](#quick-start) with zero
+hardware — swap in a real transport later, and your code doesn't change.
 
 ---
 
