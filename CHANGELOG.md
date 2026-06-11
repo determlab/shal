@@ -7,6 +7,11 @@ All notable changes to this project are documented here. The format follows
 ## [Unreleased]
 
 ### Added
+- **SCPI instrument stack** (#2, Wave 1) — `shal,scpi-raw` bus (SCPI over a raw TCP
+  socket, the lab :5025 convention; stdlib sockets only, no VISA; plaintext with a
+  required `insecure: true`), plus the first instrument drivers `rigol,dp832`
+  (`PowerSupply`) and `keysight,34461a` (`DigitalMultimeter`) and their capability
+  Protocols. End-to-end tested against a fake SCPI socket server (no hardware).
 - **Driver `ti,ina219`** (#2, Wave 1) — I²C bus-voltage / current / power monitor,
   the first `PowerMonitor` capability. Dependency-free, sim-backed (`shal,sim-i2c`
   gains an `ina219` model), fully hermetic tests.

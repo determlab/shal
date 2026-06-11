@@ -163,7 +163,7 @@ src/shal/
 | Bus | `compatible` | Kind | Pri | Status | Notes |
 |---|---|---|---|---|---|
 | VISA (PyVISA) | `shal,visa` | Message | P0 | ⬜ | universal instrument backend |
-| SCPI raw socket | `shal,scpi-raw` | Message | P0 | ⬜ | TCP :5025; no VISA needed |
+| SCPI raw socket | `shal,scpi-raw` | Message | P0 | ✅ | TCP :5025; no VISA needed |
 | GPIB / IEEE-488 | `shal,gpib` | Message | P0 | ⬜ | classic bench bus |
 | USBTMC | `shal,usbtmc` | Message | P1 | ⬜ | USB test-and-measurement |
 | VXI-11 | `shal,vxi11` | Message | P1 | ⬜ | LAN instruments (legacy) |
@@ -431,7 +431,7 @@ src/shal/
 
 | Device | `compatible` | Capability | Pri | Notes |
 |---|---|---|---|---|
-| Keysight 34461A | `keysight,34461a` | DigitalMultimeter | P0 | 6½-digit bench standard |
+| Keysight 34461A | `keysight,34461a` | DigitalMultimeter | P0 | ✅ shipped; 6½-digit bench standard |
 | Keysight 34470A | `keysight,34470a` | DigitalMultimeter | P1 | 7½-digit |
 | Keithley DMM6500 | `keithley,dmm6500` | DigitalMultimeter | P1 | touchscreen 6½ |
 | Keithley 2000 | `keithley,2000` | DigitalMultimeter | P1 | long-running classic |
@@ -445,7 +445,7 @@ src/shal/
 |---|---|---|---|---|
 | Keysight E36312A | `keysight,e36312a` | PowerSupply | P0 | triple-output bench |
 | Keysight E3631A | `keysight,e3631a` | PowerSupply | P1 | classic triple |
-| Rigol DP832 | `rigol,dp832` | PowerSupply | P0 | popular triple |
+| Rigol DP832 | `rigol,dp832` | PowerSupply | P0 | ✅ shipped; popular triple |
 | Rigol DP712 | `rigol,dp712` | PowerSupply | P1 | single high-power |
 | Keithley 2230 | `keithley,2230` | PowerSupply | P1 | triple |
 | Siglent SPD3303 | `siglent,spd3303` | PowerSupply | P1 | value triple |

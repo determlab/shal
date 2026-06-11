@@ -5,7 +5,12 @@
         print(hal.get_device("ambient_temp").read_celsius())
 """
 from . import logging  # opt-in observability: shal.logging.{Console,JSON}Formatter, capture
-from .capabilities import PowerMonitor, TemperatureSensor
+from .capabilities import (
+    DigitalMultimeter,
+    PowerMonitor,
+    PowerSupply,
+    TemperatureSensor,
+)
 from .driver import Driver, idempotent, op
 from .errors import Busy, Error, Gap, HopError, HopTimeout, LoadError
 from .hal import Hal, load
@@ -30,5 +35,6 @@ __all__ = [
     "Error", "LoadError", "HopError", "HopTimeout", "Busy", "Gap",
     "Transport", "ByteTransport", "CommandTransport", "MessageTransport",
     "Stream", "Op", "Read", "Write", "Completed",
-    "TemperatureSensor", "PowerMonitor", "__version__",
+    "TemperatureSensor", "PowerMonitor", "PowerSupply", "DigitalMultimeter",
+    "__version__",
 ]

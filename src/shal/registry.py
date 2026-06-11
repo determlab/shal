@@ -204,9 +204,15 @@ def _ensure_bundled() -> None:
         i2c_cli,
         local,
         mux,
+        scpi_raw,
         sim,
         spi_cli,
         ssh,
         tcp,
     )
-    from .drivers import ina219, tmp102  # noqa: F401  (register their compatibles)
+    from .drivers import (  # noqa: F401  (register their compatibles)
+        ina219,
+        keysight_34461a,
+        rigol_dp832,
+        tmp102,
+    )
