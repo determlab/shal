@@ -15,14 +15,11 @@ No transport code. No glue.
 [![License](https://img.shields.io/badge/license-MIT-green)](LICENSE)
 [![Status](https://img.shields.io/badge/status-alpha-orange)](#roadmap)
 
-```mermaid
-flowchart LR
-    HW["I²C sensors · SCPI supplies<br/>robots · SSH benches · HTTP services"] --> S["SHAL graph<br/>one YAML topology"]
-    S --> T["hal.tool_schemas()<br/>typed · gated tools"]
-    T --> A["AI agent<br/>Claude · GPT"]
-    style S fill:#1f6feb,color:#fff
-    style T fill:#1f6feb,color:#fff
-```
+<picture>
+  <source srcset="docs/assets/SHAL_banner.webp" type="image/webp">
+  <img alt="SHAL turns your lab and services into one YAML topology — controlled from Python or exposed to an AI agent as typed, gated tools" src="docs/assets/SHAL_banner.png" width="100%">
+</picture>
+
 
 ### [→ Try it in 60 seconds — no hardware required](#quick-start)
 
