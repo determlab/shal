@@ -3,11 +3,15 @@ name: shal-build-bus
 description: Implement a new SHAL bus family (a transport hop - serial, mqtt, CAN, cloud APIs, container exec...). Use when a device must be reached over a link no bundled bus covers, or when reviewing/fixing a bus implementation.
 ---
 
-# Build a SHAL bus (DRAFT)
+# Build a SHAL bus
 
 A bus is a `Driver` that is also a `Transport` and implements one or more
 **transport kinds**. Complexity flows toward bus authors so users and driver
 authors stay simple — read this whole checklist before writing code.
+
+Pick the bus's `compatible` id and target domain library (`buses/embedded`,
+`buses/net`, `buses/fieldbus`, …) from [docs/CATALOG.md](../../../docs/CATALOG.md)
+— claim it there so two authors don't collide.
 
 ## Skeleton
 
@@ -33,7 +37,8 @@ class MyBus(Driver, Transport, MessageTransport):
 
 1. **Pick kinds honestly.** `ByteTransport.txn(addr, ops)->bytes`,
    `CommandTransport.run(argv, stdin)->Completed`,
-   `MessageTransport.exchange(addr, msg)->Mapping`. Validation uses `kinds()`
+   `MessageTransport.exchange(addr, msg)->Mapping`, and `Stream.subscribe(addr,
+   topic)->ChannelHandle` (held async push — Phase 2). Validation uses `kinds()`
    (an isinstance sweep) — never add a method you don't fully implement.
 2. **No shell strings. Ever.** A `CommandTransport` carries argv vectors. A bus
    that renders onto an upstream `CommandTransport` builds a `list[str]`
@@ -70,6 +75,11 @@ class MyBus(Driver, Transport, MessageTransport):
 9. **Per-child buses** (mux-style): the driver implements
    `provide_child_bus(child) -> Transport`; per-mux shared state lives in one
    state object guarded by one lock — never on the parent bus.
+10. **A bus is not an agent tool.** Transport methods (`txn`/`run`/`exchange`/
+   `subscribe`) are framework plumbing: they are in `Driver._PLUMBING`, so they
+   are NOT wrapped, audited, or emitted by `hal.tool_schemas()`. Buses provide
+   transport, not capabilities — keep device semantics (and any `@shal.op`) out
+   of a bus. The agent only ever sees the *driver* capabilities above the bus.
 
 ## Registration
 

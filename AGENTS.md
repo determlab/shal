@@ -67,6 +67,21 @@ Don't edit the core to add a device or link. Publish a driver/bus via the
 `pyproject.toml`). Step-by-step guides live in `.claude/skills/`:
 `shal-build-yaml`, `shal-build-bus`, `shal-build-driver`.
 
+## Keep the skills in sync (required)
+The build guides in `.claude/skills/` are part of the public contract — agents and
+contributors follow them to author drivers, buses, and topologies. **Any code change
+that affects how something is authored MUST update the relevant skill in the same
+PR/issue that ships the change.** A skill that lags shipped code is a bug, not a
+follow-up. This covers, at least:
+- a new/changed YAML node key (also update the JSON Schema + loader) → `shal-build-yaml`
+- a transport-kind change, registration/registry behavior, address grammar, locking,
+  or error/retry semantics → `shal-build-bus`
+- `@op`/capability/`@idempotent` metadata, the LLM tool surface, or the authoring
+  `catalog()` surface → `shal-build-driver` (and `shal-build-bus` if buses are affected)
+
+Add "update the relevant `.claude/skills/` guide" to the acceptance criteria of any
+such issue. Document only **shipped** behavior — flag not-yet-built API as proposed.
+
 ## The non-negotiables (security & safety — locked)
 These are invariants, not preferences. A change that violates one is wrong:
 - **`yaml.safe_load` only** — never construct arbitrary objects from a topology file
@@ -103,6 +118,9 @@ These are invariants, not preferences. A change that violates one is wrong:
   don't guess
 - Don't add a YAML node key without adding it to both the JSON Schema
   (`src/shal/schema/`) and the loader's `_NODE_KEYS`
+- A change that affects authoring (node keys, transport kinds, registration, address
+  grammar, the `@op`/tool/`catalog()` surface) without a matching `.claude/skills/`
+  update is **incomplete** — see "Keep the skills in sync"
 
 ## Asking Questions
 Open an issue at https://github.com/hemipaska-maker/shal/issues and tag @hemipaska.

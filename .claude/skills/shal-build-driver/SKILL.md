@@ -3,11 +3,15 @@ name: shal-build-driver
 description: Implement a new SHAL device driver (sensor, actuator, robot...) bound by a compatible string. Use when adding support for a specific device on top of an existing bus/transport kind, or when reviewing a driver.
 ---
 
-# Build a SHAL driver (DRAFT)
+# Build a SHAL driver
 
 A driver is the code bound to a node by its `compatible` id. It talks through
 the PARENT bus's transport kind and exposes typed **capabilities** — user code
 depends on the capability Protocol, never on your class.
+
+Pick the device's `compatible` id and target domain library (`drivers/sensors`,
+`drivers/instruments`, `drivers/data`, …) from
+[docs/CATALOG.md](../../../docs/CATALOG.md) — claim it there before you start.
 
 ## Skeleton
 
