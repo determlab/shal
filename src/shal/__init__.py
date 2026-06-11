@@ -6,7 +6,9 @@
 """
 from . import logging  # opt-in observability: shal.logging.{Console,JSON}Formatter, capture
 from .capabilities import (
+    ADC,
     DigitalMultimeter,
+    GPIOExpander,
     PowerMonitor,
     PowerSupply,
     TemperatureSensor,
@@ -36,5 +38,5 @@ __all__ = [
     "Transport", "ByteTransport", "CommandTransport", "MessageTransport",
     "Stream", "Op", "Read", "Write", "Completed",
     "TemperatureSensor", "PowerMonitor", "PowerSupply", "DigitalMultimeter",
-    "__version__",
+    "ADC", "GPIOExpander", "__version__",
 ]

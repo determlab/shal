@@ -226,7 +226,7 @@ src/shal/
 | TI TMP117 | `ti,tmp117` | TemperatureSensor | P1 | high-accuracy |
 | Maxim DS18B20 | `maxim,ds18b20` | TemperatureSensor | P1 | 1-Wire; hobby staple (popular, not beachhead) |
 | NXP/TI LM75 | `nxp,lm75` | TemperatureSensor | P1 | ubiquitous clone target |
-| Microchip MCP9808 | `microchip,mcp9808` | TemperatureSensor | P1 | ±0.25 °C |
+| Microchip MCP9808 | `microchip,mcp9808` | TemperatureSensor | P1 | ✅ shipped; ±0.25 °C |
 | Maxim MAX31855 | `maxim,max31855` | TemperatureSensor | P1 | thermocouple amp (SPI) |
 | Maxim MAX6675 | `maxim,max6675` | TemperatureSensor | P1 | K-type thermocouple |
 | Sensirion SHT31 | `sensirion,sht31` | HumiditySensor | P1 | temp+RH reference part |
@@ -299,7 +299,7 @@ src/shal/
 | TI INA260 | `ti,ina260` | PowerMonitor | P1 | integrated shunt |
 | TI INA3221 | `ti,ina3221` | PowerMonitor | P2 | 3-channel |
 | Allegro ACS712 | `allegro,acs712` | CurrentSensor | P1 | hall current (analog) |
-| TI ADS1115 | `ti,ads1115` | ADC | P0 | 16-bit 4-ch; ubiquitous |
+| TI ADS1115 | `ti,ads1115` | ADC | P0 | ✅ shipped; 16-bit 4-ch; ubiquitous |
 | TI ADS1015 | `ti,ads1015` | ADC | P1 | 12-bit |
 | Microchip MCP3008 | `microchip,mcp3008` | ADC | P0 | 8-ch SPI; Pi staple |
 | Microchip MCP3208 | `microchip,mcp3208` | ADC | P1 | 12-bit |
@@ -318,7 +318,7 @@ src/shal/
 | Device | `compatible` | Capability | Pri | Notes |
 |---|---|---|---|---|
 | NXP PCA9548 | `nxp,pca9548` | I2CMux | P0 | ✅ shipped mux (8-ch) |
-| Microchip MCP23017 | `microchip,mcp23017` | GPIOExpander | P0 | 16-bit I²C; very common |
+| Microchip MCP23017 | `microchip,mcp23017` | GPIOExpander | P0 | ✅ shipped; 16-bit I²C; very common |
 | Microchip MCP23008 | `microchip,mcp23008` | GPIOExpander | P1 | 8-bit |
 | NXP PCF8574 | `nxp,pcf8574` | GPIOExpander | P1 | 8-bit; LCD backpacks |
 | NXP PCA9555 | `nxp,pca9555` | GPIOExpander | P2 | 16-bit |

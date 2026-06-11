@@ -211,8 +211,11 @@ def _ensure_bundled() -> None:
         tcp,
     )
     from .drivers import (  # noqa: F401  (register their compatibles)
+        ads1115,
         ina219,
         keysight_34461a,
+        mcp9808,
+        mcp23017,
         rigol_dp832,
         tmp102,
     )

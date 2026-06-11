@@ -39,3 +39,38 @@ def test_ina219_in_catalog():
     assert d["capability"] == "PowerMonitor"
     assert {o["name"] for o in d["ops"]} == {"read_voltage", "read_current", "read_power"}
     assert d["address_schema"]["examples"] == [64]
+
+
+def test_mcp9808_reads_temperature(tmp_path):
+    with _load(tmp_path, "0x18", "microchip,mcp9808") as hal:
+        hal.get_node("bench").driver.model_for(0x18).temp_c = 22.5
+        assert hal.get_device("dev").read_celsius() == pytest.approx(22.5, abs=0.07)
+        assert isinstance(hal.get_device("dev"), shal.TemperatureSensor)
+
+
+def test_ads1115_reads_channels(tmp_path):
+    with _load(tmp_path, "0x48", "ti,ads1115") as hal:
+        m = hal.get_node("bench").driver.model_for(0x48)
+        m.voltages = {0: 1.0, 1: 2.0, 3: -1.0}
+        dev = hal.get_device("dev")
+        assert dev.read_voltage(0) == pytest.approx(1.0, abs=0.002)
+        assert dev.read_voltage(1) == pytest.approx(2.0, abs=0.002)
+        assert dev.read_voltage(3) == pytest.approx(-1.0, abs=0.002)
+        assert isinstance(dev, shal.ADC)
+
+
+def test_mcp23017_gpio_roundtrip(tmp_path):
+    with _load(tmp_path, "0x20", "microchip,mcp23017") as hal:
+        dev = hal.get_device("dev")
+        dev.set_direction(0, output=True)
+        dev.write_pin(0, high=True)
+        assert dev.read_pin(0) is True
+        dev.write_pin(0, high=False)
+        assert dev.read_pin(0) is False
+        assert isinstance(dev, shal.GPIOExpander)
+
+
+def test_new_drivers_in_catalog():
+    assert shal.catalog("microchip,mcp9808")["capability"] == "TemperatureSensor"
+    assert shal.catalog("ti,ads1115")["capability"] == "ADC"
+    assert shal.catalog("microchip,mcp23017")["capability"] == "GPIOExpander"

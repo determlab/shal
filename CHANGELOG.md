@@ -7,6 +7,9 @@ All notable changes to this project are documented here. The format follows
 ## [Unreleased]
 
 ### Added
+- **Core I²C drivers** (#2/#3) — `microchip,mcp9808` (`TemperatureSensor`),
+  `ti,ads1115` (new `ADC` capability), `microchip,mcp23017` (new `GPIOExpander`
+  capability). All dependency-free, sim-backed (`shal,sim-i2c` models), hermetic tests.
 - **SCPI instrument stack** (#2, Wave 1) — `shal,scpi-raw` bus (SCPI over a raw TCP
   socket, the lab :5025 convention; stdlib sockets only, no VISA; plaintext with a
   required `insecure: true`), plus the first instrument drivers `rigol,dp832`
