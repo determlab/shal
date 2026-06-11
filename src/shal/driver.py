@@ -82,6 +82,15 @@ class Driver:
     def safe_state(self) -> None:  # actuator contract hook (Phase 2 watchdog)
         pass
 
+    @classmethod
+    def authoring_meta(cls) -> dict:
+        """Authoring metadata for ``shal.catalog()`` (issue #1). The catalog DERIVES
+        everything it can (compatible, kind, kinds(), capability, ops, summary); a
+        class only declares the irreducible bits here as JSON-Schema fragments:
+        ``address_schema`` (this node's address grammar), ``config_schema``, and for
+        buses optionally ``child_address_schema``. Default: nothing extra."""
+        return {}
+
     def provide_child_bus(self, child: Node) -> Transport | None:
         """A driver that exposes a distinct bus per child (mux channels)
         returns it here; None means 'use this driver if it is a Transport'."""

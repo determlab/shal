@@ -60,6 +60,8 @@ class Hal:
                     # capabilities — exclude it (same rule as the audit channel)
                     if drv is None or isinstance(drv, Transport):
                         continue
+                    if not node.exposed:  # `expose: false` -> off the agent surface
+                        continue
                     handle = node.id or _NAME_SAFE.sub("_", node.path.lstrip("/"))
                     for opname in type(drv).capability_ops():
                         idx[f"{handle}__{opname}"] = (node, opname)
@@ -85,8 +87,9 @@ class Hal:
         out = []
         for name, (node, opname) in self._tool_index().items():
             fn = type(node.driver).capability_ops()[opname]
+            eff = _effect(fn)
             out.append({"name": name, "device": node.id or node.path,
-                        "op": opname, **_effect(fn)})
+                        "op": opname, **eff, "annotations": _annotations(eff)})
         return out
 
     def call_tool(self, name: str, arguments: dict | None = None) -> dict:
@@ -169,12 +172,24 @@ def _effect(fn) -> dict:
     return {"side_effect": side, "idempotent": idem, "unit": meta.get("unit")}
 
 
+def _annotations(eff: dict) -> dict:
+    """Map SHAL's side_effect/idempotency onto MCP tool-annotation hint names so
+    agent harnesses recognize them (issue #1)."""
+    side = eff["side_effect"]
+    return {"readOnlyHint": side == "none",
+            "idempotentHint": eff["idempotent"],
+            "destructiveHint": side == "actuator"}
+
+
 def _describe(node: Node, opname: str, fn) -> str:
     meta = getattr(fn, "__shal_op__", None) or {}
     eff = _effect(fn)
     doc_first = (fn.__doc__ or "").strip().splitlines()[0].strip() if fn.__doc__ else ""
     base = meta.get("description") or doc_first or f"Invoke '{opname}'."
-    parts = [base, f"Device '{node.id or node.path}' at {node.path}."]
+    parts = [base]
+    if node.description:  # instance context from the topology (issue #1)
+        parts.append(node.description)
+    parts.append(f"Device '{node.id or node.path}' at {node.path}.")
     if eff["unit"]:
         parts.append(f"Unit: {eff['unit']}.")
     if eff["idempotent"]:

@@ -10,7 +10,7 @@ from .driver import Driver, idempotent, op
 from .errors import Busy, Error, Gap, HopError, HopTimeout, LoadError
 from .hal import Hal, load
 from .node import Node
-from .registry import register
+from .registry import catalog, register
 from .transport import (
                         ByteTransport,
                         CommandTransport,
@@ -26,7 +26,7 @@ from .transport import (
 __version__ = "0.1.0"
 
 __all__ = [
-    "load", "Hal", "Node", "Driver", "idempotent", "op", "register", "logging",
+    "load", "Hal", "Node", "Driver", "idempotent", "op", "register", "catalog", "logging",
     "Error", "LoadError", "HopError", "HopTimeout", "Busy", "Gap",
     "Transport", "ByteTransport", "CommandTransport", "MessageTransport",
     "Stream", "Op", "Read", "Write", "Completed",

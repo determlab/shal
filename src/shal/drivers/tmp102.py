@@ -19,3 +19,12 @@ class Tmp102(Driver, TemperatureSensor):
     def read_celsius(self) -> float:
         raw = self.bus.txn(self.addr, [Write(b"\x00"), Read(2)])
         return ((raw[0] << 4) | (raw[1] >> 4)) * 0.0625
+
+    @classmethod
+    def authoring_meta(cls) -> dict:  # shal.catalog() detail (issue #1)
+        return {
+            "address_schema": {"type": "integer", "minimum": 3, "maximum": 119,
+                               "description": "7-bit I2C address", "examples": [72]},
+            "config_schema": {"type": "object", "properties": {},
+                              "additionalProperties": False},
+        }

@@ -3,7 +3,7 @@ name: shal-build-yaml
 description: Author or modify a SHAL topology YAML file (shal_version 1). Use when the user wants to describe a hardware/software setup — devices, buses, muxes, remote hops — as a SHAL tree, or when a topology fails to load.
 ---
 
-# Build a SHAL topology YAML (DRAFT)
+# Build a SHAL topology YAML
 
 ## Mental model
 
@@ -45,6 +45,29 @@ root:
    import shal; shal.load("setup.yaml")
    ```
    Every failure is a `LoadError` whose message names the node path and the fix.
+
+## Agent metadata (optional)
+
+Two optional node keys shape the LLM tool surface (`hal.tool_schemas()`), not the
+topology itself:
+- `description:` — instance context blended into every tool description on that node,
+  so an agent tells *like* devices apart ("Coolant inlet, loop A" vs "Ambient room").
+- `expose: false` — omit this node's ops from the agent surface
+  (`tool_schemas` / `tool_catalog` / `call_tool`). Still fully usable from Python.
+
+```yaml
+ambient:
+  id: coolant_inlet
+  description: Coolant inlet temp, loop A. Alarm > 60 C.   # → into the tool description
+  driver: ti,tmp102
+  address: 0x48
+mux_ctrl:
+  expose: false        # plumbing the agent should never call
+  driver: ...
+```
+
+Capability/op metadata (units, side-effects) comes from the DRIVER (`@shal.op`),
+never the YAML — see shal-build-driver.
 
 ## Secrets (non-negotiable)
 

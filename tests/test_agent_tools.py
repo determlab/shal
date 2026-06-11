@@ -91,3 +91,48 @@ def test_call_tool_unknown_name():
     with shal.load(SETUP) as hal:
         with pytest.raises(shal.LoadError, match="no tool"):
             hal.call_tool("ghost__do")
+
+
+# ---- node-level agent metadata (issue #1, Part A) ------------------------------
+
+def _two_sensor_yaml(extra: str) -> str:
+    return ("shal_version: 1\n"
+            "root:\n"
+            "  bench:\n"
+            "    id: bench\n"
+            "    driver: shal,sim-i2c\n"
+            "    address: sim0\n"
+            "    children:\n"
+            "      a:\n"
+            "        id: probe\n"
+            f"{extra}"
+            "        driver: ti,tmp102\n"
+            "        address: 0x48\n")
+
+
+def test_node_description_blends_into_tool(tmp_path):
+    p = tmp_path / "s.yaml"
+    p.write_text(_two_sensor_yaml("        description: Coolant inlet loop A\n"),
+                 encoding="utf-8")
+    with shal.load(p) as hal:
+        d = next(s for s in hal.tool_schemas()
+                 if s["name"] == "probe__read_celsius")["description"]
+        assert "Coolant inlet loop A" in d
+
+
+def test_expose_false_hides_from_agent_but_not_python(tmp_path):
+    p = tmp_path / "s.yaml"
+    p.write_text(_two_sensor_yaml("        expose: false\n"), encoding="utf-8")
+    with shal.load(p) as hal:
+        assert "probe__read_celsius" not in [s["name"] for s in hal.tool_schemas()]
+        assert all("probe" not in c["name"] for c in hal.tool_catalog())
+        assert hal.get_device("probe").read_celsius() is not None   # still usable
+        with pytest.raises(shal.LoadError, match="no tool"):        # not a tool
+            hal.call_tool("probe__read_celsius")
+
+
+def test_tool_catalog_has_mcp_annotations():
+    with shal.load(SETUP) as hal:
+        c = {x["name"]: x for x in hal.tool_catalog()}["ambient_temp__read_celsius"]
+        assert c["annotations"] == {"readOnlyHint": True, "idempotentHint": True,
+                                    "destructiveHint": False}

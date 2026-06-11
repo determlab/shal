@@ -27,8 +27,9 @@ logger = logging.getLogger("shal.loader")
 _SCHEMA_PATH = Path(__file__).parent / "schema" / "shal-v1.schema.json"
 _ENV_RE = re.compile(r"^\$\{([A-Za-z_][A-Za-z0-9_]*)\}$")
 _PARAM_RE = re.compile(r"\$\{([A-Za-z_][A-Za-z0-9_]*)\}")
-_NODE_KEYS = {"id", "driver", "address", "routes", "to", "children",
-              "watchdog_ms", "verify", "insecure", "config", "from", "use", "with"}
+_NODE_KEYS = {"id", "description", "expose", "driver", "address", "routes", "to",
+              "children", "watchdog_ms", "verify", "insecure", "config", "from",
+              "use", "with"}
 
 
 def load_tree(path: str | os.PathLike) -> tuple[list[Node], dict[str, Node]]:

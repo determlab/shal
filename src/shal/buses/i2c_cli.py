@@ -62,6 +62,18 @@ class I2cCliBus(Driver, Transport, ByteTransport):
             raise LoadError(f"i2c-cli: invalid 7-bit I2C address {addr!r} "
                             f"(grammar: 0x03-0x77)")
 
+    @classmethod
+    def authoring_meta(cls) -> dict:  # shal.catalog() detail (issue #1)
+        return {
+            "address_schema": {"type": "string", "pattern": r"^/dev/i2c-\d+$",
+                               "description": "host I2C device path",
+                               "examples": ["/dev/i2c-1"]},
+            "child_address_schema": {"type": "integer", "minimum": 3, "maximum": 119,
+                                     "description": "7-bit I2C address", "examples": [72]},
+            "config_schema": {"type": "object", "properties": {},
+                              "additionalProperties": False},
+        }
+
     def txn(self, addr: int, ops: Sequence[Op]) -> bytes:
         with self.lock:
             self.ensure_ready()

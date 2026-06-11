@@ -81,6 +81,26 @@ class MyBus(Driver, Transport, MessageTransport):
    transport, not capabilities — keep device semantics (and any `@shal.op`) out
    of a bus. The agent only ever sees the *driver* capabilities above the bus.
 
+## Make it discoverable to an authoring agent (optional)
+
+`shal.catalog()` derives a bus's `compatible`, required parent `kind`, and
+`provides_kinds` from the class. Declare the irreducible bits via an optional
+`authoring_meta()` classmethod — the bus's own `address_schema`, a
+`child_address_schema` (the grammar for addresses on the bus it provides), and a
+`config_schema`, all as JSON-Schema fragments:
+
+```python
+@classmethod
+def authoring_meta(cls) -> dict:
+    return {
+        "address_schema": {"type": "string", "pattern": r"^/dev/i2c-\d+$",
+                           "examples": ["/dev/i2c-1"]},
+        "child_address_schema": {"type": "integer", "minimum": 3, "maximum": 119,
+                                 "examples": [72]},
+        "config_schema": {"type": "object", "properties": {}, "additionalProperties": False},
+    }
+```
+
 ## Registration
 
 Explicit `@shal.register` works in-process (tests, playground). A published

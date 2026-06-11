@@ -91,6 +91,28 @@ definitions, `hal.tool_catalog()` reports side-effects for gating, and
 `hal.call_tool(name, args)` dispatches (a delivery-unknown write is reported,
 never auto-retried). Input schemas come from your type hints — annotate params.
 
+## Make it discoverable to an authoring agent (optional)
+
+`shal.catalog()` lets an LLM read every registered driver/bus and construct valid
+YAML. It **derives** what it can — `compatible`, required parent `kind`, the
+capability Protocol, ops + `@shal.op` annotations, the docstring summary. You only
+declare the irreducible bit: the **address grammar as a JSON-Schema fragment** (and a
+`config_schema`) via an optional `authoring_meta()` classmethod:
+
+```python
+@classmethod
+def authoring_meta(cls) -> dict:
+    return {
+        "address_schema": {"type": "integer", "minimum": 3, "maximum": 119,
+                           "description": "7-bit I2C address", "examples": [72]},
+        "config_schema": {"type": "object", "properties": {}, "additionalProperties": False},
+    }
+```
+
+`@shal.op` side-effects map to MCP-style annotations (`readOnlyHint` /
+`idempotentHint` / `destructiveHint`) automatically. A driver without
+`authoring_meta()` still appears in the catalog — just without an address example.
+
 ## Registration
 
 ```toml

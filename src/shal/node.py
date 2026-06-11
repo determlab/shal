@@ -23,9 +23,22 @@ class Node:
         self.parent = parent
         self.children: dict[str, Node] = {}
         self.driver: Driver | None = None
+        self.spec: dict[str, Any] = {}  # schema-validated keys; set by the loader
         self.ref_target: Node | None = None  # $ref: name pointer, never routed through
         self.exposed_bus: Transport | None = None  # set when parent provides a
         # per-child bus (mux channels); otherwise parent's driver is the bus
+
+    @property
+    def description(self) -> str | None:
+        """Optional instance context from the topology (issue #1) — blended into
+        the agent tool description so deployments distinguish like devices."""
+        return self.spec.get("description")
+
+    @property
+    def exposed(self) -> bool:
+        """`expose: false` omits this node from the agent tool surface
+        (tool_schemas/tool_catalog/call_tool); still usable from Python."""
+        return self.spec.get("expose", True)
 
     @property
     def path(self) -> str:

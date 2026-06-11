@@ -7,6 +7,19 @@ All notable changes to this project are documented here. The format follows
 ## [Unreleased]
 
 ### Added
+- **Node-level agent metadata** (#1) — optional `description:` (instance context
+  blended into each tool's description, so an agent distinguishes like devices) and
+  `expose: false` (omit a node from `tool_schemas()`/`tool_catalog()`/`call_tool()`
+  while keeping it usable from Python) on any topology node. Additive; existing
+  topologies are unaffected.
+- **`shal.catalog()` authoring surface** (#1) — an introspection view of every
+  registered driver/bus so an LLM (or a human) can construct a valid topology:
+  `catalog()` returns compact summaries, `catalog(compatible)` the full detail.
+  Most fields are derived (compatible, required parent kind, capability Protocol,
+  ops); a class declares only the irreducible bits via an optional `authoring_meta()`
+  classmethod (`address_schema` / `config_schema` / `child_address_schema` as
+  JSON-Schema fragments). Op annotations map side-effects to MCP-style hint names
+  (`readOnlyHint`/`idempotentHint`/`destructiveHint`), also added to `tool_catalog()`.
 - **Topology includes** — a node may `use:` an external `template:` file to graft
   a reusable subtree (a board, a rack) without copy-paste, with `with:` parameter
   substitution (`${param}`), use-site key overrides, include chains, a cycle
