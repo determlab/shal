@@ -209,4 +209,4 @@ def _ensure_bundled() -> None:
         ssh,
         tcp,
     )
-    from .drivers import tmp102  # noqa: F401  (registers ti,tmp102)
+    from .drivers import ina219, tmp102  # noqa: F401  (register their compatibles)

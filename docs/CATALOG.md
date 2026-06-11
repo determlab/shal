@@ -294,7 +294,7 @@ src/shal/
 
 | Device | `compatible` | Capability | Pri | Notes |
 |---|---|---|---|---|
-| TI INA219 | `ti,ina219` | PowerMonitor | P0 | I²C current/power; very common |
+| TI INA219 | `ti,ina219` | PowerMonitor | P0 | ✅ shipped; I²C current/power; very common |
 | TI INA226 | `ti,ina226` | PowerMonitor | P1 | higher precision |
 | TI INA260 | `ti,ina260` | PowerMonitor | P1 | integrated shunt |
 | TI INA3221 | `ti,ina3221` | PowerMonitor | P2 | 3-channel |

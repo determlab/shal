@@ -15,3 +15,14 @@ class TemperatureSensor(Protocol):
     errors: raises shal.HopError on transport failure."""
 
     def read_celsius(self) -> float: ...
+
+
+@runtime_checkable
+class PowerMonitor(Protocol):
+    """v1.0.0 — bus voltage (volts), current (amperes), power (watts), each as
+    float. Sign convention: positive current = load draw. Errors: raises
+    shal.HopError on transport failure."""
+
+    def read_voltage(self) -> float: ...
+    def read_current(self) -> float: ...
+    def read_power(self) -> float: ...

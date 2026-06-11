@@ -48,6 +48,7 @@ Source = "https://github.com/hemipaska-maker/shal"
 # Bundled drivers, discovered the same way community drivers are (decision 3):
 [project.entry-points."shal.drivers"]
 "ti,tmp102" = "shal.drivers.tmp102:Tmp102"
+"ti,ina219" = "shal.drivers.ina219:Ina219"
 "shal,sim-i2c" = "shal.buses.sim:SimI2cBus"
 "shal,local" = "shal.buses.local:LocalBus"
 "shal,ssh-host" = "shal.buses.ssh:SshBus"

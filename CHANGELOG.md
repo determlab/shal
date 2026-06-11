@@ -7,6 +7,9 @@ All notable changes to this project are documented here. The format follows
 ## [Unreleased]
 
 ### Added
+- **Driver `ti,ina219`** (#2, Wave 1) — I²C bus-voltage / current / power monitor,
+  the first `PowerMonitor` capability. Dependency-free, sim-backed (`shal,sim-i2c`
+  gains an `ina219` model), fully hermetic tests.
 - **Node-level agent metadata** (#1) — optional `description:` (instance context
   blended into each tool's description, so an agent distinguishes like devices) and
   `expose: false` (omit a node from `tool_schemas()`/`tool_catalog()`/`call_tool()`
