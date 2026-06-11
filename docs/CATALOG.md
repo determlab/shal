@@ -14,16 +14,17 @@ device you need would live.
 
 ## How to read this
 
-**Priority** — approximate, from community-adoption signals (GitHub stars of the
-dominant driver libraries — Adafruit CircuitPython, Linux kernel, PyVISA,
-python-can, pymodbus; market share in test/automation; forum & Reddit
-frequency). Not a hard ranking; a guide to sequencing.
+**Priority — by SHAL's beachhead, not raw popularity.** Ranked by fit to the
+target user (AI-agent builders + validation/test engineers) and to SHAL's
+differentiator (one model for hardware *and* software, agent-native), then by
+leverage. A part can be hugely popular elsewhere and still be P2 here if it
+doesn't serve that wedge. Build order is sequenced in the next section.
 
 | | Meaning |
 |---|---|
-| **P0** | Ubiquitous — most users will want it; build first. |
-| **P1** | Common — frequently requested. |
-| **P2** | Specialized — niche, vendor-specific, or long tail. |
+| **P0** | Lands the beachhead — serves the target user, showcases the HW+SW+agent wedge, or unlocks many devices / the first demo. Build first. |
+| **P1** | Broadens reach once the beachhead is won. |
+| **P2** | Long tail — niche, vendor-specific, or already well-served elsewhere. |
 
 **Status** — ✅ shipped · 🟡 next up · ⬜ backlog.
 
@@ -33,6 +34,32 @@ is the source of truth once built.
 
 **Capability** — the Protocol a driver implements. Only `TemperatureSensor`
 exists today; the rest are proposed and will be ratified as capabilities land.
+
+---
+
+## Build order (beachhead first)
+
+The 80/20 to land the target user, in waves: **beachhead → differentiation →
+flywheel**. Build Wave 1 before scattering across the long tail.
+
+**Wave 1 — make "hand your bench to an agent" real** (the wedge):
+- **Buses:** `scpi-raw`, `visa`, `modbus-tcp` (on top of shipped `ssh` / `tcp` /
+  `http` / `local` / `i2c-cli`).
+- **Instruments — one per class:** PSU (`keysight,e36312a` or `rigol,dp832`),
+  DMM (`keysight,34461a`), scope (`rigol,ds1000z`), SMU (`keithley,2400`),
+  load (`siglent,sdl1020`).
+- **Software (prove HW + SW in one graph):** `postgres,db`, `redis,db`,
+  `mqtt,broker`.
+- **Onboarding sensors (2-minute quick win):** `ti,tmp102` ✅, `bosch,bme280`,
+  `ti,ina219`.
+
+**Wave 2 — broaden the lab:** more instrument models per class, `gpib` /
+`usbtmc`, `opcua`, server management (`dmtf,redfish`), CI/observability
+(`github,api`, `prometheus,tsdb`), and leverage parts (`nxp,pca9548` ✅,
+`microchip,mcp23017`, `ti,ads1115`).
+
+**Wave 3 — long tail:** hobby sensors, wireless, niche fieldbus, and
+vendor-specific instruments — mostly community-contributed via `shal-contrib-*`.
 
 ---
 
@@ -188,16 +215,21 @@ src/shal/
 
 ## Sensors — temperature & humidity (24)
 
+> Most sensors are **P1/P2 for SHAL** regardless of popularity — the hobby-sensor
+> space is well-served by CircuitPython/kernel and isn't SHAL's differentiator. A
+> marquee few (`ti,tmp102`, `bosch,bme280`, `ti,ina219`) stay **P0** as the
+> 2-minute onboarding / demo path.
+
 | Device | `compatible` | Capability | Pri | Notes |
 |---|---|---|---|---|
 | TI TMP102 | `ti,tmp102` | TemperatureSensor | P0 | ✅ shipped; the canonical first driver |
 | TI TMP117 | `ti,tmp117` | TemperatureSensor | P1 | high-accuracy |
-| Maxim DS18B20 | `maxim,ds18b20` | TemperatureSensor | P0 | 1-Wire; hobbyist staple |
+| Maxim DS18B20 | `maxim,ds18b20` | TemperatureSensor | P1 | 1-Wire; hobby staple (popular, not beachhead) |
 | NXP/TI LM75 | `nxp,lm75` | TemperatureSensor | P1 | ubiquitous clone target |
 | Microchip MCP9808 | `microchip,mcp9808` | TemperatureSensor | P1 | ±0.25 °C |
 | Maxim MAX31855 | `maxim,max31855` | TemperatureSensor | P1 | thermocouple amp (SPI) |
 | Maxim MAX6675 | `maxim,max6675` | TemperatureSensor | P1 | K-type thermocouple |
-| Sensirion SHT31 | `sensirion,sht31` | HumiditySensor | P0 | temp+RH reference part |
+| Sensirion SHT31 | `sensirion,sht31` | HumiditySensor | P1 | temp+RH reference part |
 | Sensirion SHT40 | `sensirion,sht40` | HumiditySensor | P1 | newer gen |
 | Silabs Si7021 | `silabs,si7021` | HumiditySensor | P1 | common temp+RH |
 | Bosch BME280 | `bosch,bme280` | EnvironmentSensor | P0 | temp/RH/pressure |
@@ -219,7 +251,7 @@ src/shal/
 
 | Device | `compatible` | Capability | Pri | Notes |
 |---|---|---|---|---|
-| InvenSense MPU6050 | `invensense,mpu6050` | IMU | P0 | 6-axis; hobby staple |
+| InvenSense MPU6050 | `invensense,mpu6050` | IMU | P1 | 6-axis; hobby staple |
 | InvenSense MPU9250 | `invensense,mpu9250` | IMU | P1 | 9-axis |
 | InvenSense ICM-20948 | `invensense,icm20948` | IMU | P1 | 9-axis, low power |
 | InvenSense ICM-42688 | `invensense,icm42688` | IMU | P1 | high-perf 6-axis |
@@ -229,7 +261,7 @@ src/shal/
 | ST LSM6DSOX | `st,lsm6dsox` | IMU | P1 | 6-axis + ML core |
 | ST LSM9DS1 | `st,lsm9ds1` | IMU | P1 | 9-axis |
 | ST LIS3DH | `st,lis3dh` | Accelerometer | P1 | 3-axis accel |
-| ADI ADXL345 | `adi,adxl345` | Accelerometer | P0 | classic 3-axis |
+| ADI ADXL345 | `adi,adxl345` | Accelerometer | P1 | classic 3-axis |
 | ADI ADXL355 | `adi,adxl355` | Accelerometer | P2 | low-noise |
 | NXP FXOS8700 | `nxp,fxos8700` | IMU | P2 | accel+mag |
 | AMS AS5600 | `ams,as5600` | AngleSensor | P1 | magnetic rotary encoder |
@@ -242,7 +274,7 @@ src/shal/
 | AMS TSL2591 | `ams,tsl2591` | LightSensor | P1 | high dynamic range |
 | Rohm BH1750 | `rohm,bh1750` | LightSensor | P1 | cheap lux |
 | Vishay VEML7700 | `vishay,veml7700` | LightSensor | P2 | ambient light |
-| ST VL53L0X | `st,vl53l0x` | DistanceSensor | P0 | ToF, popular |
+| ST VL53L0X | `st,vl53l0x` | DistanceSensor | P1 | ToF, popular |
 | ST VL53L1X | `st,vl53l1x` | DistanceSensor | P1 | longer range ToF |
 | AMS APDS9960 | `ams,apds9960` | GestureSensor | P2 | gesture/color/proximity |
 | Sharp GP2Y0A | `sharp,gp2y0a` | DistanceSensor | P2 | analog IR |
@@ -319,7 +351,7 @@ src/shal/
 
 | Device | `compatible` | Capability | Pri | Notes |
 |---|---|---|---|---|
-| Maxim DS3231 | `maxim,ds3231` | RTC | P0 | TCXO RTC; very common |
+| Maxim DS3231 | `maxim,ds3231` | RTC | P1 | TCXO RTC; very common |
 | Maxim DS1307 | `maxim,ds1307` | RTC | P1 | basic RTC |
 | NXP PCF8523 | `nxp,pcf8523` | RTC | P2 | low power |
 | NXP PCF8563 | `nxp,pcf8563` | RTC | P2 | common clone |
@@ -334,14 +366,14 @@ src/shal/
 
 | Device | `compatible` | Capability | Pri | Notes |
 |---|---|---|---|---|
-| Solomon SSD1306 | `solomon,ssd1306` | Display | P0 | 128×64 OLED; everywhere |
+| Solomon SSD1306 | `solomon,ssd1306` | Display | P1 | 128×64 OLED; everywhere |
 | Solomon SSD1331 | `solomon,ssd1331` | Display | P2 | color OLED |
 | Sitronix ST7789 | `sitronix,st7789` | Display | P1 | IPS TFT |
 | Sitronix ST7735 | `sitronix,st7735` | Display | P1 | small TFT |
 | Ilitek ILI9341 | `ilitek,ili9341` | Display | P1 | 320×240 TFT |
 | Hitachi HD44780 | `hitachi,hd44780` | CharDisplay | P0 | 16×2 char LCD |
 | Maxim MAX7219 | `maxim,max7219` | LEDMatrix | P1 | 7-seg / 8×8 matrix |
-| WS2812 / NeoPixel | `worldsemi,ws2812` | AddressableLED | P0 | addressable RGB |
+| WS2812 / NeoPixel | `worldsemi,ws2812` | AddressableLED | P1 | addressable RGB |
 | SK6812 | `opsco,sk6812` | AddressableLED | P1 | RGBW variant |
 | APA102 / DotStar | `apa,apa102` | AddressableLED | P1 | SPI addressable |
 | TM1637 | `titan,tm1637` | LEDDisplay | P2 | 4-digit 7-seg |
@@ -427,7 +459,7 @@ src/shal/
 |---|---|---|---|---|
 | Keysight EL34243A | `keysight,el34243a` | ElectronicLoad | P1 | dual input |
 | Rigol DL3021 | `rigol,dl3021` | ElectronicLoad | P1 | value DC load |
-| Siglent SDL1020 | `siglent,sdl1020` | ElectronicLoad | P1 | programmable |
+| Siglent SDL1020 | `siglent,sdl1020` | ElectronicLoad | P0 | programmable; build-first DC load |
 | BK Precision 8600 | `bk-precision,8600` | ElectronicLoad | P2 | — |
 
 ### Function / arbitrary generators (6)
@@ -456,7 +488,7 @@ src/shal/
 | Device | `compatible` | Capability | Pri | Notes |
 |---|---|---|---|---|
 | Keysight N9000 CXA | `keysight,n9000` | SpectrumAnalyzer | P1 | — |
-| Rigol DSA800 | `rigol,dsa800` | SpectrumAnalyzer | P1 | value SA |
+| Rigol DSA800 | `rigol,dsa800` | SpectrumAnalyzer | P0 | value SA; build-first |
 | Siglent SSA3000X | `siglent,ssa3000x` | SpectrumAnalyzer | P1 | — |
 | R&S FSV | `rohde-schwarz,fsv` | SpectrumAnalyzer | P2 | high-end |
 | Keysight E5071C | `keysight,e5071c` | NetworkAnalyzer | P2 | VNA |
@@ -590,17 +622,22 @@ src/shal/
 
 ## Prioritization methodology
 
-Priorities are a **sequencing aid**, not a benchmark. Signals weighed:
+Priorities follow a **marketing lens, not a popularity contest**:
 
-- **Driver-library popularity** — GitHub stars/forks of the dominant libraries
-  (Adafruit CircuitPython bundle, Linux kernel `drivers/`, `python-can`,
-  `pymodbus`, PyVISA instrument coverage, `bleak`).
-- **Market share** — bench/lab share for instruments (Keysight, Tektronix,
-  Rigol, Siglent); PLC share (Siemens, Rockwell) for industrial.
-- **Community frequency** — recurring asks on r/embedded, r/PLC, r/homelab,
-  EEVblog, and the SHAL issue tracker.
-- **Ecosystem leverage** — parts that unlock many boards (I²C expanders, muxes,
-  ADCs) rank up.
+- **Beachhead first (Theory of Constraints).** Win one user — AI-agent builders +
+  validation/test engineers — before broadening. Their stack (instruments, power,
+  DUTs, software services) ranks above the general long tail.
+- **Differentiation over coverage.** SHAL wins on the HW+SW, agent-native wedge, so
+  instruments and software services that *showcase* it outrank parts already
+  well-served elsewhere (the hobby-sensor space is owned by CircuitPython/kernel).
+- **Leverage / flywheel.** Parts that unlock many devices (muxes, I/O expanders,
+  ADCs) or power the first demo rank up — each landed user becomes a case study and
+  a future driver contributor.
+- **Pareto (80/20).** The Build order near the top is the vital 20% that covers most
+  beachhead use cases; everything else sequences after it.
+- **Quick win / activation.** A few cheap, sim-able sensors stay P0 purely as the
+  2-minute onboarding path.
 
-Contributions that re-rank items with better data are welcome — open a PR
-against this file.
+Raw adoption data (CircuitPython / PyVISA / pymodbus stars, bench & PLC market
+share) is an *input*, not the ranking — it orders items within a tier. Re-rank with
+better data via a PR against this file.
