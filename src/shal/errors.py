@@ -40,6 +40,23 @@ class HopTimeout(HopError):
         self.which = which
 
 
+class LimitError(Error):
+    """An argument violated a declared operating limit (issue #10).
+
+    Raised by the FRAMEWORK wrapper before any bus I/O — by construction the
+    device never saw the command, so there is no `delivered` ambiguity.
+    Deliberately NOT a HopError: nothing hopped. The message restates the limit
+    so an LLM agent can self-correct; `violations` carries the structured form.
+    """
+
+    def __init__(self, msg: str, *, path: str = "?", op: str = "?",
+                 violations: list | tuple = ()) -> None:
+        super().__init__(msg)
+        self.path = path
+        self.op = op
+        self.violations = list(violations)
+
+
 class Busy(Error):
     """A mux channel is pinned by an active subscription (Phase 2)."""
 
