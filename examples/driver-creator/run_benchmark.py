@@ -18,17 +18,25 @@ ROOT = Path(__file__).resolve().parent
 CASES = ["sht31", "scpi-psu", "http-service", "deebot"]
 
 
+def _pytest(targets: list[str]) -> bool:
+    # each invocation is its own process: the harness and the generated tests each
+    # force their OWN sim model into the registry, so they MUST NOT share a process
+    r = subprocess.run([sys.executable, "-m", "pytest", "-q", *targets],
+                       cwd=ROOT.parents[1])
+    return r.returncode == 0
+
+
 def run_case(case: str) -> bool:
     harness = ROOT / case / "harness"
     generated = ROOT / case / "generated"
     status = "generated" if (generated / "driver.py").exists() else "NOT generated"
     print(f"\n=== {case}  ({status}) " + "=" * (50 - len(case) - len(status)))
-    targets = [str(harness)]
-    if (generated).exists():
-        targets += [str(p) for p in generated.glob("test_*.py")]
-    r = subprocess.run([sys.executable, "-m", "pytest", "-q", *targets],
-                       cwd=ROOT.parents[1])
-    return r.returncode == 0
+    # 1) the independent harness (the real gate — generator never saw it)
+    ok = _pytest([str(p) for p in harness.glob("test_*.py")])
+    # 2) the generated driver's own tests (separate process — see note above)
+    for gen_test in sorted(generated.glob("test_*.py")):
+        ok = _pytest([str(gen_test)]) and ok
+    return ok
 
 
 def main() -> int:

@@ -1,0 +1,11 @@
+shal_version: 1
+root:
+  bench:
+    id: bench
+    driver: shal,sim-i2c
+    address: sim0
+    children:
+      sht31:
+        id: sht31
+        driver: "sensirion,sht31"
+        address: 0x44
