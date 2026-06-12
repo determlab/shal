@@ -1,0 +1,15 @@
+# Stage-1 harness topology: the GENERATED ecovacs,deebot-n20 driver behind the
+# untouched GOLDEN playground sim cloud (playground/deebot/sim_cloud.py must be
+# imported before load).
+shal_version: 1
+
+root:
+  cloud:
+    id: cloud
+    driver: playground,sim-cloud
+    address: sim
+    children:
+      bot:
+        id: dut
+        driver: ecovacs,deebot-n20
+        address: bot1

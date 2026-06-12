@@ -1,0 +1,19 @@
+# Stage-2 harness topology: the GENERATED ecovacs,cloud-n20 bus pointed at the
+# harness fake portal (ECOVACS_PORTAL_URL is set by the test before load),
+# carrying the stage-1 GENERATED ecovacs,deebot-n20 driver.
+shal_version: 1
+
+root:
+  cloud:
+    id: cloud
+    driver: ecovacs,cloud-n20
+    address: us
+    config:
+      user: ${ECOVACS_EMAIL}
+      password: ${ECOVACS_PASSWORD}
+      portal_url: ${ECOVACS_PORTAL_URL}
+    children:
+      bot:
+        id: dut
+        driver: ecovacs,deebot-n20
+        address: bot1

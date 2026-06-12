@@ -1,0 +1,11 @@
+shal_version: 1
+root:
+  bench:
+    id: bench
+    driver: shal,sim-i2c
+    address: sim0
+    children:
+      sht31:
+        id: dut
+        driver: "sensirion,sht31"
+        address: 0x44          # ADDR pin low (datasheet default)
