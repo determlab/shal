@@ -210,6 +210,8 @@ def _ensure_bundled() -> None:
         mux,
         scpi_raw,
         sim,
+        sim_msg,
+        sim_scpi,
         spi_cli,
         ssh,
         tcp,
