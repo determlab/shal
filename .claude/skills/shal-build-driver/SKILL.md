@@ -53,6 +53,10 @@ structured fields as kwargs: `self.log.debug("conv ready", event="...")`).
    - Everything else (relative moves, counters, fire-and-forget commands) stays
      unmarked: a `HopError(delivered="unknown")` reaches the USER, who decides.
      Never catch-and-retry transport errors inside a driver.
+   - A `write`/`actuator` op you want **audited** must NOT be `@idempotent` — the
+     audit trail logs only non-idempotent commands, and the conformance kit fails
+     a write that produces no audit record. Mark reads idempotent; leave
+     writes/actuators unmarked (even absolute setpoints).
 3. **Payloads are yours; transport is not.** You know your device's register
    map / JSON commands; you never open sockets, spawn processes, or build
    shell strings. If you need a new way to reach hardware, that's a bus

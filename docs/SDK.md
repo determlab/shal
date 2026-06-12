@@ -138,6 +138,33 @@ bus speaking it, including its sim twin):
 | `shal,scpi-raw` / `shal,sim-scpi` | `{"scpi": ":MEAS:VOLT? CH1", "query": True}` (omit `query` for writes) | `{"reply": "3.2999"}` (`""` for writes) |
 | `shal,sim-msg` | any dict (your protocol) | whatever the sim model returns |
 
+**Units** are free strings — celsius/volts/amperes/watts/ohms are conventions,
+not a closed set; use the device's unit (`percent`, `pascal`, `lux`, …).
+
+## 3b. Using a loaded topology (the runtime API)
+
+`shal.load("topology.yaml")` returns a `Hal` (a context manager — use `with`).
+Everything is **lazy**: nothing connects until the first capability call, so
+there is **no `activate()`** and you never open hops yourself.
+
+```python
+import shal
+with shal.load("tests/sim.yaml") as hal:
+    dev = hal.get_device("dut")          # by id (or "/path/to/node", or path=...)
+    dev.read_celsius()                   # first call opens the path on demand
+    # agent surface for the same tree:
+    hal.tool_schemas(); hal.tool_catalog(); hal.call_tool("dut__read_celsius", {})
+```
+
+| `Hal` method | Returns |
+|---|---|
+| `get_device(id_or_path)` | the bound **driver** (or the **bus** object if the node is a bus — that's how tests reach sim hooks like `fail_next` / `model_for`) |
+| `get_node(id)` | the topology `Node` (`.path`, `.id`, `.driver`, `.spec`) |
+| `close()` | teardown leaf→root (the `with` block does this for you) |
+
+In tests, reach a sim bus's hooks via the bus node:
+`bus = hal.get_node("bench").driver; bus.fail_next = 1; bus.model_for(addr).temp_c = 30`.
+
 ## 4. Operating limits (declare once — advertised AND enforced)
 
 If the documentation states a safe operating range for a write parameter,
@@ -188,6 +215,14 @@ state-dependent rules): check imperatively in the method body and raise a
   SHAL exists to prevent.
 - `@idempotent` only on ops safe to run twice (reads; absolute setpoints
   re-asserted). Relative moves / counters / toggles: never.
+- **A write/actuator op you want audited must NOT be `@idempotent`.** The audit
+  trail records state-changing *commands*, and the audit fires only for
+  **non-idempotent** ops (so a retried read isn't logged as a command). So even
+  an absolute setpoint like `set_voltage` — although technically retry-safe —
+  is left **unmarked** when it has `side_effect="write"`, so it lands in the
+  audit log. The conformance kit enforces this (a write op that produces no
+  audit record fails). Rule of thumb: mark reads `@idempotent`; leave
+  writes/actuators unmarked.
 - **Device-said-no ≠ transport failure.** If the transport succeeded but the
   device returned an error code, raise your own `shal.Error` subclass — the
   retry machinery must not see it.
@@ -269,6 +304,21 @@ drops connection AND session state. Every public transport method body:
 honest `delivered`. Network buses: TLS by default, plaintext requires the node
 to declare `insecure: true` (check in `__init__`). Never shell strings.
 Secrets come from `config:`/env and never appear in logs or error text.
+
+A bus's `__init__` takes the `node` and calls `Transport.__init__(self, node)`,
+which gives you these attributes:
+
+| Attr | What |
+|---|---|
+| `self.host` | the bus's own node (`self.host.path`, `self.host.address`) |
+| `self.lock` | the per-bus `RLock` — wrap every transport method body |
+| `self._active` | connection-state flag (`is_active()` reads it; flip it in `activate()`/`close()`) |
+| `self.upstream` | the parent bus when this bus is nested (e.g. renders argv onto a `CommandTransport`); `None` at root |
+
+Config/secrets: read `node.spec.get("config", {})` in `__init__` — the loader
+has already resolved any `${ENV_VAR}` references. A leaf network bus (opens its
+own socket) sets `kind = None`; a bus that renders onto a parent sets `kind` to
+the parent kind it needs.
 
 ## 10. The agent surface (what your metadata becomes)
 
