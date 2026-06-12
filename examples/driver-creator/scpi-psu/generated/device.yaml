@@ -1,0 +1,88 @@
+id: device://vexar/power_supply/vx3210
+identity:
+  vendor: Vexar
+  model: VX3210
+  category: power_supply
+compatible: vexar,vx3210
+capabilities:
+- PowerSupply
+transport:
+  kind: MessageTransport
+  protocols:
+  - scpi
+  - tcp
+  address_schema:
+    type: string
+    description: 'SCPI-raw endpoint: host:port (instrument TCP socket, default port
+      5025).'
+    examples:
+    - 192.168.1.50:5025
+authentication:
+  type: none
+  required_secrets: []
+commands:
+- name: output
+  description: Enable (True) or disable (False) the output relay, connecting or disconnecting
+    the output terminals. Disable to make the output safe.
+  side_effect: actuator
+  idempotent: false
+  unit: null
+  parameters:
+    'on':
+      type: boolean
+      examples:
+      - false
+- name: read_current
+  description: Measure the current drawn by the load now, in amperes. Depends on the
+    connected load (not the current-limit setpoint); reads 0.000 with the output OFF.
+  side_effect: none
+  idempotent: true
+  unit: ampere
+  parameters: null
+- name: read_voltage
+  description: Measure the voltage at the output terminals now, in volts. With the
+    output ON this equals the programmed setpoint; with the output OFF it reads 0.000.
+    This is the measured output, not the setpoint.
+  side_effect: none
+  idempotent: true
+  unit: volt
+  parameters: null
+- name: set_current_limit
+  description: Program the current-limit setpoint (absolute, in amperes). This is
+    the constant-current trip point, not the measured load current. The firmware silently
+    clamps out-of-range values, so the declared range is enforced client-side before
+    transmission.
+  side_effect: write
+  idempotent: true
+  unit: ampere
+  parameters:
+    amps:
+      type: number
+      minimum: 0.0
+      maximum: 5.0
+- name: set_voltage
+  description: Program the output voltage setpoint (absolute, in volts). Call before
+    enabling the output, or to change the regulated voltage. The firmware silently
+    clamps out-of-range values, so the declared range is enforced client-side and
+    a rejected call never reaches the instrument.
+  side_effect: write
+  idempotent: true
+  unit: volt
+  parameters:
+    volts:
+      type: number
+      minimum: 0.0
+      maximum: 32.0
+safety_constraints:
+- command: set_current_limit
+  parameter: amps
+  unit: ampere
+  minimum: 0.0
+  maximum: 5.0
+- command: set_voltage
+  parameter: volts
+  unit: volt
+  minimum: 0.0
+  maximum: 32.0
+documentation:
+- examples/driver-creator/scpi-psu/docs/vx3210-manual.md

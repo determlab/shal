@@ -1,0 +1,84 @@
+id: device://ecovacs/vacuum/deebot-n20
+identity:
+  vendor: Ecovacs
+  model: Deebot N20
+  category: vacuum
+compatible: ecovacs,deebot-n20
+capabilities:
+- VacuumRobot
+transport:
+  kind: MessageTransport
+  protocols:
+  - ecovacs-cloud
+  address_schema:
+    type: string
+    description: robot device id (did) on the message bus
+    examples:
+    - did-bot1
+authentication:
+  type: cloud_account
+  required_secrets:
+  - ECOVACS_EMAIL
+  - ECOVACS_PASSWORD
+  transport_compatible: ecovacs,cloud-n20
+commands:
+- name: dock
+  description: Send the robot back to its charging dock (state -> 'goCharging'). If
+    it is already docked this still succeeds. Call to recall the robot.
+  side_effect: actuator
+  idempotent: false
+  unit: null
+  parameters: null
+- name: get_battery_percent
+  description: Read the robot's battery state of charge, in percent (0-100). Call
+    to check whether the robot needs to dock and charge.
+  side_effect: none
+  idempotent: true
+  unit: percent
+  parameters: null
+- name: get_clean_state
+  description: 'Read the robot''s current activity state: one of ''idle'', ''clean'',
+    ''pause'', ''goCharging''. Call to learn what the robot is doing now.'
+  side_effect: none
+  idempotent: true
+  unit: null
+  parameters: null
+- name: locate
+  description: Play the locate chime ('I am here') on the robot's speaker to find
+    it. Does not change the activity state.
+  side_effect: actuator
+  idempotent: false
+  unit: null
+  parameters: null
+- name: pause
+  description: Pause the current cleaning cycle in place (state -> 'pause'). Call
+    to temporarily suspend cleaning; resume() continues it.
+  side_effect: actuator
+  idempotent: false
+  unit: null
+  parameters: null
+- name: resume
+  description: Resume a paused cleaning cycle (state -> 'clean'). Call only when the
+    robot is paused.
+  side_effect: actuator
+  idempotent: false
+  unit: null
+  parameters: null
+- name: start_cleaning
+  description: Start an automatic whole-area cleaning cycle. The robot leaves the
+    dock and begins cleaning (state -> 'clean'). Call to begin cleaning.
+  side_effect: actuator
+  idempotent: false
+  unit: null
+  parameters: null
+- name: stop_cleaning
+  description: Abandon the current cleaning cycle (state -> 'idle'). The robot stops
+    cleaning but does not return to the dock; use dock() for that.
+  side_effect: actuator
+  idempotent: false
+  unit: null
+  parameters: null
+safety_constraints: []
+documentation:
+- examples/driver-creator/deebot/docs/deebot-protocol.md
+- examples/driver-creator/deebot/docs/deebot-cloud-transport.md

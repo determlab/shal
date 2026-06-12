@@ -1,0 +1,17 @@
+id: device://ecovacs/vacuum/deebot-n20
+vendor: Ecovacs
+model: Deebot N20
+category: vacuum
+protocols:
+- ecovacs-cloud
+compatible: ecovacs,deebot-n20
+documentation:
+- examples/driver-creator/deebot/docs/deebot-protocol.md
+- examples/driver-creator/deebot/docs/deebot-cloud-transport.md
+verification:
+  level: generated
+  authors:
+  - shal-generate-driver (AI)
+  reviewers: []
+  source: device documentation
+  harness_validated: true

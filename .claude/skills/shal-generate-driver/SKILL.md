@@ -83,14 +83,41 @@ comment (e.g. a genuinely unbounded parameter).
 ## Step 6 — Deliverables
 
 ```
-<case>/
+<case>/generated/
   driver.py        # the generated driver (+ local capability Protocol if any)
   sim.py           # the sim model (separate file from the driver)
   test_<part>.py   # the tests
   topology.yaml    # the sim topology used by tests/conformance
+  device.yaml      # registry definition (see Step 7) — emitted, not hand-written
+  metadata.yaml    # registry manifest (see Step 7) — emitted, not hand-written
   NOTES.md         # doc sections used, decisions made, anything ambiguous,
                    # and any SDK/skill gap you hit (verbatim, honest)
 ```
+
+## Step 7 — Registry-convention manifests
+
+Every generated device ships two declarative manifests following the SHAL
+Registry conventions (the registry *infrastructure* — search/install/CI — is
+out of scope; only the artifact format applies here):
+
+- **`metadata.yaml`** — identity + provenance: a `device://vendor/category/model`
+  id, vendor, model, category, protocols, the `compatible` binding id,
+  documentation references, and a `verification` block whose `level` is
+  **`generated`** (the ladder is `draft → generated → reviewed → tested →
+  certified`).
+- **`device.yaml`** — the declarative definition DERIVED from the driver:
+  capabilities, commands (name/description/side_effect/idempotent/unit/
+  parameters), `safety_constraints` (the declared `params=` limits), transport
+  requirement, and `authentication` — credential **requirements only**
+  (`type`, `required_secrets`), **never secrets**.
+
+Don't hand-write these — they must not drift from the driver. Emit them from
+`shal.catalog(compatible)` plus a per-case seed (the `device://` id, category,
+display names, doc refs, auth requirements). See
+`examples/driver-creator/emit_manifest.py` for the emitter; add a seed entry for
+your case and run it. `metadata.yaml` keeps `level: generated` even though the
+driver passed conformance + the harness (`harness_validated: true`); the
+registry-ladder `tested` level is reserved for registry CI.
 
 ## Generating a BUS instead (device on a new transport)
 

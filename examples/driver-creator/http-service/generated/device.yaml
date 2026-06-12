@@ -1,0 +1,75 @@
+id: device://lumen/environmental_chamber/chamberlink
+identity:
+  vendor: Lumen
+  model: ChamberLink
+  category: environmental_chamber
+compatible: lumen,chamber-api
+capabilities:
+- TemperatureSensor
+transport:
+  kind: MessageTransport
+  protocols:
+  - http
+  address_schema:
+    type: string
+    description: HTTP service path / sim address the RPC dict is delivered to. On
+      shal,http this is the URL path under the base; on shal,sim-msg any stable string.
+    examples:
+    - chamber
+authentication:
+  type: none
+  required_secrets: []
+commands:
+- name: read_celsius
+  description: Read the chamber's measured air temperature right now. Call to watch
+    the ramp or confirm the chamber has settled to its setpoint.
+  side_effect: none
+  idempotent: true
+  unit: celsius
+  parameters: null
+- name: read_status
+  description: 'Read the full live chamber state: measured temperature, active setpoint,
+    door interlock, and run state. Read-only, safe to poll (up to 10 Hz). Call to
+    confirm setpoint acceptance or check the door.'
+  side_effect: none
+  idempotent: true
+  unit: null
+  parameters: null
+- name: set_temperature
+  description: Program the chamber's active temperature setpoint (absolute, in degrees
+    Celsius). The conditioning system must be started for the chamber to drive the
+    air toward this value.
+  side_effect: write
+  idempotent: false
+  unit: celsius
+  parameters:
+    celsius:
+      type: number
+      minimum: -40.0
+      maximum: 180.0
+- name: start
+  description: 'Start conditioning: energize the compressor and heater and drive the
+    air toward the active setpoint. A physical electromechanical action; calling while
+    already running is a harmless no-op. Avoid rapid start/stop cycling (shortens
+    compressor life).'
+  side_effect: actuator
+  idempotent: false
+  unit: null
+  parameters: null
+- name: stop
+  description: 'Stop conditioning: de-energize the compressor and heater. The setpoint
+    is retained; the chamber drifts toward ambient. A physical action; calling while
+    already stopped is a harmless no-op.'
+  side_effect: actuator
+  idempotent: false
+  unit: null
+  parameters: null
+safety_constraints:
+- command: set_temperature
+  parameter: celsius
+  unit: celsius
+  minimum: -40.0
+  maximum: 180.0
+documentation:
+- examples/driver-creator/http-service/docs/chamberlink-openapi.yaml
+- examples/driver-creator/http-service/docs/chamberlink-notes.md

@@ -10,7 +10,23 @@ Every artifact in this tree is one of three kinds:
 |---|---|---|
 | `<case>/docs/` | benchmark (human/infra side) | the device documentation — the ONLY device knowledge the generator gets |
 | `<case>/harness/` | benchmark (human/infra side) | the **independent** validation: a behavioral sim written from the same docs + pytest that the generated driver must pass. Never shown to the generator. |
-| `<case>/generated/` | a generation agent | the regenerable output: `driver.py`, `sim.py`, `test_*.py`, `topology.yaml`, `NOTES.md` |
+| `<case>/generated/` | a generation agent | the regenerable output: `driver.py`, `sim.py`, `test_*.py`, `topology.yaml`, the registry manifests `device.yaml` + `metadata.yaml`, and `NOTES.md` |
+
+## Registry-convention manifests
+
+Each `generated/` device carries two declarative manifests following the SHAL
+Registry artifact conventions (the registry *infrastructure* is out of scope —
+only the format applies): **`metadata.yaml`** (a `device://vendor/category/model`
+id, provenance, and a `verification.level` — `generated` here, on the
+`draft→generated→reviewed→tested→certified` ladder) and **`device.yaml`** (the
+declarative definition: capabilities, commands, `safety_constraints` = the
+declared limits, and `authentication` credential *requirements* only — never
+secrets). They are **emitted** from `shal.catalog(compatible)` so they can't
+drift from the driver:
+
+```sh
+python examples/driver-creator/emit_manifest.py        # (re)generate all manifests
+```
 
 There is deliberately **no hand-written driver catalog here** — drivers exist
 only as generation outputs (regenerate them any time; `RECIPE.md` in each case
