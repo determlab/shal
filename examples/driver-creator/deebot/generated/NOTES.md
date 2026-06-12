@@ -126,3 +126,47 @@ signature vectors locked to their published digests.
 
 None of these required modifying `src/shal` — the design fits the framework
 cleanly. **No STOP-rule design gap was hit.**
+
+## SDK gaps (regeneration for #12)
+
+none — docs/SDK.md (esp. §3 MessageTransport, §5 errors/retry, §9 "Buses in
+one box") plus the `shal-build-bus` skill were sufficient to regenerate the
+cloud bus from scratch. No `src/shal/**` reads and no runtime introspection
+(`dir()`/`inspect`/`help()`) were used or needed.
+
+Everything load-bearing was spelled out by the contract:
+
+- Bus shape `Driver + Transport + MessageTransport`, `kind = None` for a leaf
+  network bus — SDK §9 ("A leaf network bus … sets `kind = None`") + skill
+  skeleton.
+- Base attributes from `Transport.__init__(self, node)`: `self.host`,
+  `self.lock`, `self._active`, `self.upstream` — SDK §9 table.
+- Imports `Driver, HopError, LoadError, MessageTransport, Transport, register`
+  from `shal`; `bus_logger, current_txn` from `shal.log`; `Node` from
+  `shal.node` — given verbatim in the `shal-build-bus` skeleton.
+- Config arrival: `node.spec.get("config", {})` with `${ENV_VAR}` already
+  resolved by the loader — SDK §9. Env fallbacks (`ECOVACS_EMAIL`,
+  `ECOVACS_PASSWORD`, `ECOVACS_PORTAL_URL`, `ECOVACS_CONTINENT`) are read from
+  `os.environ` in `__init__`, per the transport doc §2/§9.
+- Lazy lifecycle: parse/validate in `__init__`, connect in `activate()`,
+  cheap-local `is_active()`, `close()` drops connection + session; every
+  transport body is `with self.lock: self.ensure_ready(); …`. `ensure_ready()`
+  is documented as inherited and the thing that calls `activate()` — SDK §9 +
+  skill points 4-5.
+- `exchange(addr, msg) -> Mapping` is the `MessageTransport` method (SDK §3,
+  skill point 1).
+- `HopError(msg, path=…, hop=…, txn=…, delivered=…)` with `delivered` in
+  {"no","unknown"} and the retry semantics — SDK §5 + skill point 6. The
+  `.delivered` attribute being readable on the raised error is exercised by the
+  generated tests and behaved as documented.
+- `validate_address` for child-address grammar, `LoadError` for the bus's own
+  bad address — SDK §9, skill point 3.
+- `authoring_meta()` with `address_schema` / `child_address_schema` /
+  `config_schema` — `shal-build-bus` "make it discoverable" section.
+
+Minor friction (NOT an SDK gap — documentation was correct and warned about it):
+quoting `${...}` / `vendor,part` strings inside YAML *flow* maps is a YAML
+quirk called out in `shal-build-yaml`; an unquoted `driver: ecovacs,deebot-n20`
+inside a `{...}` flow map parses as two keys. Fixed by using block style /
+quoting. The skill explicitly says "quote ${...} inside flow maps", so the
+contract covered it.
