@@ -8,10 +8,9 @@ compatible: lumen,chamber-api
 documentation:
 - examples/driver-creator/http-service/docs/chamberlink-openapi.yaml
 - examples/driver-creator/http-service/docs/chamberlink-notes.md
+authors:
+- shal-generate-driver (AI)
+reviewers: []
 verification:
   level: generated
-  authors:
-  - shal-generate-driver (AI)
-  reviewers: []
-  source: device documentation
-  harness_validated: true
+  evidence: passed shal.conformance and an independent harness

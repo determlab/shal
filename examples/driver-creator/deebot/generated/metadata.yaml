@@ -8,10 +8,9 @@ compatible: ecovacs,deebot-n20
 documentation:
 - examples/driver-creator/deebot/docs/deebot-protocol.md
 - examples/driver-creator/deebot/docs/deebot-cloud-transport.md
+authors:
+- shal-generate-driver (AI)
+reviewers: []
 verification:
   level: generated
-  authors:
-  - shal-generate-driver (AI)
-  reviewers: []
-  source: device documentation
-  harness_validated: true
+  evidence: passed shal.conformance and an independent harness

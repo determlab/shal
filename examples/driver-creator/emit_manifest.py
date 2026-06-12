@@ -55,10 +55,13 @@ _SEED = {
         "id": "device://ecovacs/vacuum/deebot-n20",
         "vendor": "Ecovacs", "model": "Deebot N20",
         "category": "vacuum", "protocols": ["ecovacs-cloud"],
-        # the device is reached over a cloud transport that needs an account;
-        # requirements only — secrets live in env/vault, never the definition
-        "authentication": {"type": "cloud_account",
-                           "required_secrets": ["ECOVACS_EMAIL", "ECOVACS_PASSWORD"],
+        # reached over a cloud transport needing an account login. Per the
+        # registry doc: required_secrets are LOGICAL names, never values; the
+        # SHAL env binding is recorded separately in secret_env.
+        "authentication": {"type": "username_password",
+                           "required_secrets": ["username", "password"],
+                           "secret_env": {"username": "ECOVACS_EMAIL",
+                                          "password": "ECOVACS_PASSWORD"},
                            "transport_compatible": "ecovacs,cloud-n20"},
         "documentation": [
             "examples/driver-creator/deebot/docs/deebot-protocol.md",
@@ -128,16 +131,17 @@ def emit(case: str) -> None:
         "id": seed["id"],
         "vendor": seed["vendor"], "model": seed["model"],
         "category": seed["category"], "protocols": seed["protocols"],
-        "compatible": seed["compatible"],
+        "compatible": seed["compatible"],          # SHAL binding (links definition -> driver)
         "documentation": seed["documentation"],
+        # ownership/trust block — authors/reviewers are top-level siblings of
+        # verification, per the registry doc
+        "authors": ["shal-generate-driver (AI)"],
+        "reviewers": [],
         "verification": {
             "level": "generated",   # draft -> generated -> reviewed -> tested -> certified
-            "authors": ["shal-generate-driver (AI)"],
-            "reviewers": [],
-            "source": "device documentation",
-            # honest extra: it passed the independent harness + conformance, but
-            # the registry-ladder 'tested' level is reserved for registry CI
-            "harness_validated": True,
+            # provenance: passed shal.conformance + an independent harness at
+            # generation time; the ladder's 'tested' level is reserved for registry CI
+            "evidence": "passed shal.conformance and an independent harness",
         },
     }
     for name, doc in (("device.yaml", device), ("metadata.yaml", metadata)):

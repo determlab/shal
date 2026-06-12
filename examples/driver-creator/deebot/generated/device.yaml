@@ -16,10 +16,13 @@ transport:
     examples:
     - did-bot1
 authentication:
-  type: cloud_account
+  type: username_password
   required_secrets:
-  - ECOVACS_EMAIL
-  - ECOVACS_PASSWORD
+  - username
+  - password
+  secret_env:
+    username: ECOVACS_EMAIL
+    password: ECOVACS_PASSWORD
   transport_compatible: ecovacs,cloud-n20
 commands:
 - name: dock
