@@ -27,3 +27,10 @@ Thumbs.db
 # SHAL local artifacts
 debug.jsonl
 *.local.yaml
+
+# Third-party agent skills (e.g. `npx skills add mattpocock/skills`) — local tooling,
+# not part of SHAL. Keep the project's own shal-* skills tracked.
+/.agents/
+/.claude/skills/*
+!/.claude/skills/shal-*/
+skills-lock.json
