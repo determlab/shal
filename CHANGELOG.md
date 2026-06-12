@@ -7,6 +7,24 @@ All notable changes to this project are documented here. The format follows
 ## [Unreleased]
 
 ### Added
+- **Declared operating limits** (#10) — `@shal.op(params=...)` takes JSON-Schema
+  fragments per parameter; the merged schema is advertised verbatim in
+  `tool_schemas()`/`catalog()` AND enforced by the framework before any bus I/O
+  (`shal.LimitError`; rejected writes are audited `outcome=rejected`). Two
+  narrow-only layers stack on top: `driver.op_limits()` for address-dependent
+  ratings and YAML `config.limits` for installation policy — widening fails the
+  load naming both numbers.
+- **Conformance kit** (#10) — `shal.conformance.check_driver()` self-certifies a
+  driver: static checks (llm_ready, @op metadata, schema well-formedness) plus
+  live probes on a sim topology (limits actually reject pre-I/O, writes actually
+  hit the audit channel, capabilities actually isinstance).
+- **Generic sim buses** (#10) — `shal,sim-scpi` (`@scpi_sim_model`) and
+  `shal,sim-msg` (`@msg_sim_model`) mirror sim-i2c's model registry for the
+  MessageTransport families; ships a DP832 model for hermetic SCPI coverage.
+- **Driver SDK guide** (#10) — `docs/SDK.md`: the complete authoring contract
+  (driver anatomy, capabilities, transport dialects, limits, sims, conformance);
+  with the skills, writing a driver requires reading zero SHAL internals. New
+  `shal-generate-driver` skill: the documentation→driver generation recipe.
 - **Core I²C drivers** (#2/#3) — `microchip,mcp9808` (`TemperatureSensor`),
   `ti,ads1115` (new `ADC` capability), `microchip,mcp23017` (new `GPIOExpander`
   capability). All dependency-free, sim-backed (`shal,sim-i2c` models), hermetic tests.

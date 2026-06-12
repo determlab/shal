@@ -91,6 +91,51 @@ definitions, `hal.tool_catalog()` reports side-effects for gating, and
 `hal.call_tool(name, args)` dispatches (a delivery-unknown write is reported,
 never auto-retried). Input schemas come from your type hints — annotate params.
 
+## Operating limits (declare once — advertised AND enforced)
+
+If the documentation states a safe range for a settable parameter, declare it
+as a JSON-Schema fragment on the op — MANDATORY wherever a documented range
+exists:
+
+```python
+@op("Set this channel's output voltage (absolute setpoint).",
+    unit="volt", side_effect="write",
+    params={"volts": {"minimum": 0.0, "maximum": 32.0}})   # from the datasheet
+def set_voltage(self, volts: float) -> None: ...           # body stays check-free
+```
+
+One declaration gives you all of: the constraint advertised verbatim in the
+tool schema (the model self-polices), FRAMEWORK enforcement before any bus I/O
+(`shal.LimitError`; the device never sees the command; the attempt is audited
+`outcome=rejected`), and a `catalog()` manifest entry. Allowed keywords:
+`minimum`/`maximum`/`exclusiveMinimum`/`exclusiveMaximum`/`enum`/`const`/
+`multipleOf`/`type`/`description`/`examples`. `enum` covers mode strings.
+
+Address-dependent ratings (PSU channel 3 is the 5 V rail) — override the
+narrow-only hook:
+
+```python
+def op_limits(self):
+    return {"set_voltage": {"volts": {"maximum": 5.3}}} if self.ch == 3 else {}
+```
+
+Rig owners tighten further per node in YAML (`config: {limits: ...}` — see
+shal-build-yaml); both layers may only TIGHTEN, widening fails the load.
+Cross-parameter envelopes (V×I ≤ W) stay imperative in the body via a
+`shal.Error` subclass — say so in the op description.
+
+## Certify (the definition of done)
+
+```python
+from shal import conformance
+report = conformance.check_driver("vendor,my-temp", topology="tests/sim.yaml")
+assert report.ok, str(report)
+```
+
+Static checks (llm_ready, @op metadata, schema well-formedness, unbounded-
+numeric-write warnings) plus live probes on the sim (limits actually reject
+pre-I/O, writes actually hit the audit log, capabilities actually isinstance).
+
 ## Make it discoverable to an authoring agent (optional)
 
 `shal.catalog()` lets an LLM read every registered driver/bus and construct valid
@@ -128,10 +173,18 @@ In-process `@shal.register` is fine for tests and local work.
 
 ## Tests to write (minimum)
 
-- A sim model for `shal,sim-i2c` (`@sim_model("vendor,my-temp")`) or a fake
-  MessageTransport bus, so the driver runs with zero hardware.
-- One test per capability op against the sim, checking VALUES (decode math).
+- A sim model so the driver runs with zero hardware — register it for the bus
+  family that matches your `kind`: `@sim_model` (`shal,sim-i2c`, ByteTransport),
+  `@scpi_sim_model` (`shal,sim-scpi`, SCPI dialect), or `@msg_sim_model`
+  (`shal,sim-msg`, any MessageTransport dialect).
+- One test per capability op against the sim, checking VALUES (decode math —
+  use the documentation's worked examples as test vectors).
 - Retry behavior: idempotent op survives one `fail_next`; non-idempotent op
   propagates `delivered="unknown"` untouched.
+- One `LimitError` test per declared bound (call past it; sim state unchanged).
 - `isinstance(driver, <CapabilityProtocol>)` — the runtime_checkable contract.
 - Load-time: wrong parent kind fails with a clear LoadError.
+
+Generating a driver from device documentation with no human-written code?
+Follow [shal-generate-driver](../shal-generate-driver/SKILL.md) — the doc→
+driver recipe built on this contract plus [docs/SDK.md](../../../docs/SDK.md).
