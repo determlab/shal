@@ -119,7 +119,12 @@ def get_approver() -> Approver:
 
 
 def set_approver(approver: Approver) -> Token:
-    """Install ``approver`` as the active policy. Returns a token for ``reset``."""
+    """Install ``approver`` as the active policy. Returns a token for ``reset``.
+
+    Note: the policy lives in a :class:`~contextvars.ContextVar`. A newly spawned
+    OS thread does NOT inherit the caller's context, so it falls back to the safe
+    default (deny-when-headless) until you call ``set_approver`` inside that
+    thread. ``asyncio`` tasks created with the running loop DO inherit it."""
     return _current.set(approver)
 
 

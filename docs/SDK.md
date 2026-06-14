@@ -209,10 +209,12 @@ state-dependent rules): check imperatively in the method body and raise a
 
 ## 4b. Actuation approval — "ask before it moves" (issue #14)
 
-Mark an op that causes **physical motion** `side_effect="actuator"`. The
-framework then consults the active `Approver` *after* the limit check and
-*before* any bus I/O — so an impossible call is rejected by limits without ever
-asking, and an approved call is the only thing that reaches the device.
+Mark an op that causes **physical motion** `side_effect="actuator"`, or a
+**destructive / configuration** write (factory-reset, erase, firmware push)
+`side_effect="config"`. The framework then consults the active `Approver`
+*after* the limit check and *before* any bus I/O — so an impossible call is
+rejected by limits without ever asking, and an approved call is the only thing
+that reaches the device.
 
 ```python
 @op("Send the robot out cleaning.", side_effect="actuator")
@@ -235,9 +237,9 @@ def start_cleaning(self) -> None:
 - A denied call raises `shal.ApprovalDenied` (nothing sent, like `LimitError`);
   `call_tool` returns `{"ok": False, "rejected": "approval"}`. Every decision is
   written to `shal.audit` (`outcome` = `approved` | `denied`).
-- Use `actuator` for motion/dispense/anything you'd want a human to confirm;
-  use `write` for non-physical state changes (a register, a setpoint) — those are
-  audited but **not** gated.
+- Use `actuator` for motion/dispense and `config` for destructive/configuration
+  writes — anything you'd want a human to confirm. Plain `write` (a register, a
+  setpoint) is audited but **not** gated, so a benign write never prompts.
 
 ## 5. Errors & the retry contract (memorize this)
 

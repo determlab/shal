@@ -7,9 +7,9 @@ All notable changes to this project are documented here. The format follows
 ## [Unreleased]
 
 ### Added
-- **Human-in-the-loop actuation gate** (#14) — actuator ops (`@shal.op(side_effect=
-  "actuator")`) now stop for an injectable `Approver` *after* the limit check and
-  *before* any bus I/O. The gate lives in the capability-wrapper, so neither the
+- **Human-in-the-loop actuation gate** (#14) — actuator and destructive/config
+  ops (`@shal.op(side_effect="actuator"|"config")`) now stop for an injectable
+  `Approver` *after* the limit check and *before* any bus I/O. The gate lives in the capability-wrapper, so neither the
   tool surface (`call_tool`) nor the raw path (`get_device().method()`) can bypass
   it. SHAL ships the mechanism + a safe default (`ConsoleApprover`: prompt when
   interactive, deny when headless) plus `AutoApprove`/`DenyAll`/`CallableApprover`;

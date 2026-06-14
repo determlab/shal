@@ -125,8 +125,9 @@ any node for its sim and **nothing in your code changes**.
 ## Features
 
 - **Agent-native** — every device op becomes a gated LLM tool.
-- **Asks before it moves** — actuator ops stop for a host-supplied approver (CLI
-  prompt, an agent, or auto in sim/CI); the gate is pre-I/O and unbypassable.
+- **Asks before it moves** — actuator & destructive/config ops stop for a
+  host-supplied approver (CLI prompt, an agent, or auto in sim/CI); the gate is
+  pre-I/O and unbypassable.
 - **Hardware + software, one graph** — a sensor and an HTTP service are the same node.
 - **Capabilities, not wires** — call `read_celsius()`, never I²C.
 - **Retry you can trust** — reads auto-retry; risky writes never silently repeat.
