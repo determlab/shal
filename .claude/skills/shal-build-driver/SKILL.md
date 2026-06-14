@@ -15,25 +15,33 @@ Pick the device's `compatible` id and target domain library (`drivers/sensors`,
 
 ## Skeleton
 
+`llm_ready = True` + `@op` are **required for device drivers** — the agent surface
+is the product, and `conformance.check_driver` (the definition of done) rejects a
+device driver without them. They are in the skeleton on purpose; copy it verbatim
+and it certifies.
+
 ```python
-from typing import Protocol, runtime_checkable
-from shal import Driver, idempotent, register
+from shal import Driver, TemperatureSensor, idempotent, op, register
 from shal.transport import ByteTransport, Read, Write
 
-@runtime_checkable
-class TemperatureSensor(Protocol):          # capability: semantic contract
-    def read_celsius(self) -> float: ...    # UNIT IN THE NAME, always
-
-@register                                    # or shal.drivers entry point
-class MyTemp(Driver, TemperatureSensor):
+@register                                    # or a shal.drivers entry point
+class MyTemp(Driver, TemperatureSensor):     # reuse the BLESSED capability
     compatible = "vendor,my-temp"            # lowercase vendor,part
     kind = ByteTransport                     # what the parent bus MUST provide
+    llm_ready = True                         # REQUIRED: bind FAILS if any op lacks @op
 
     @idempotent                              # reads: safe to auto-retry
+    @op("Read the current temperature. Call when you need a fresh reading.",
+        unit="celsius", side_effect="none")
     def read_celsius(self) -> float:
         raw = self.bus.txn(self.addr, [Write(b"\x00"), Read(2)])
         return ((raw[0] << 4) | (raw[1] >> 4)) * 0.0625
 ```
+
+`TemperatureSensor` is exported from `shal` — **reuse an existing capability**
+(`shal.capabilities`), never redefine a blessed name (Rule 5). Only if nothing
+fits, define a local `@runtime_checkable Protocol` (units in the method names) and
+inherit it, as [shal-generate-driver](../shal-generate-driver/SKILL.md) Step 1 shows.
 
 ## Framework-injected attributes (after bind)
 
@@ -72,39 +80,35 @@ structured fields as kwargs: `self.log.debug("conv ready", event="...")`).
    answered with an error code, raise a driver-level error (subclass
    `shal.Error`) — delivery was certain, so the retry machinery must not see it.
 
-## Make it LLM-callable (optional)
+## The agent tool surface (`@op` metadata)
 
-To expose ops as tools an LLM agent can discover and call, add `@shal.op`
-metadata and opt into enforcement:
+`llm_ready = True` makes the bind FAIL if any op lacks `@op` — that is how the
+agent surface stays a guarantee, not an afterthought. Every op carries a
+`description` (say WHEN to call it) and a `side_effect`:
 
-```python
-class MyTemp(Driver, TemperatureSensor):
-    compatible = "vendor,my-temp"
-    kind = ByteTransport
-    llm_ready = True              # bind FAILS if any op lacks @shal.op
-
-    @idempotent
-    @op("Read the current temperature. Call when you need it now.",
-        unit="celsius", side_effect="none")
-    def read_celsius(self) -> float: ...
-```
-
-`side_effect` is `"none"` (read), `"write"`, or `"actuator"` — if omitted it's
-inferred from `@idempotent`. Then `hal.tool_schemas()` emits Anthropic tool-use
-definitions, `hal.tool_catalog()` reports side-effects for gating, and
+`side_effect` is `"none"` (read), `"write"` (a benign state change), `"actuator"`
+(physical motion), or `"config"` (a destructive/configuration write) — if omitted
+it's inferred from `@idempotent`. Then `hal.tool_schemas()` emits Anthropic
+tool-use definitions, `hal.tool_catalog()` reports side-effects for gating, and
 `hal.call_tool(name, args)` dispatches (a delivery-unknown write is reported,
 never auto-retried). Input schemas come from your type hints — annotate params.
 
-**`actuator` ops are gated (issue #14).** Mark physical-motion ops
-`side_effect="actuator"` and the framework consults the active `Approver` after
-the limit check and before any bus I/O — on both the tool surface and the raw
-`get_device().method()` path (unbypassable). You write nothing extra in the body;
-a refusal raises `shal.ApprovalDenied` (nothing sent) and every decision is
-audited (`outcome` = `approved`/`denied`). The host installs the policy
-(`shal.set_approver(...)` / `with shal.approver(...)`); SHAL ships `AutoApprove`
-(for sim/CI/tests), `DenyAll`, `CallableApprover`, and the default
-`ConsoleApprover`. Use `actuator` for motion/dispense; `write` is audited but not
-gated. Order is always limits → approval → I/O.
+**Hiding an op from agents is the only opt-out, and it lives in the topology, not
+the driver:** set `expose: false` on a node to keep its ops out of
+`tool_schemas()`/`tool_catalog()`/`call_tool()` while they stay callable from
+Python. The driver still declares `llm_ready` + `@op`.
+
+**`actuator`/`config` ops are gated (issue #14).** Mark physical-motion ops
+`side_effect="actuator"` and destructive/configuration writes `side_effect="config"`;
+the framework consults the active `Approver` after the limit check and before any
+bus I/O — on both the tool surface and the raw `get_device().method()` path
+(unbypassable). You write nothing extra in the body; a refusal raises
+`shal.ApprovalDenied` (nothing sent) and every decision is audited (`outcome` =
+`approved`/`denied`). The host installs the policy (`shal.set_approver(...)` /
+`with shal.approver(...)`); SHAL ships `AutoApprove` (for sim/CI/tests), `DenyAll`,
+`CallableApprover`, and the default `ConsoleApprover`. Use `actuator` for
+motion/dispense and `config` for destructive writes; plain `write` is audited but
+not gated. Order is always limits → approval → I/O.
 
 ## Operating limits (declare once — advertised AND enforced)
 

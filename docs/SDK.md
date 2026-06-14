@@ -101,6 +101,12 @@ class HumiditySensor(Protocol):
     def read_humidity_percent(self) -> float: ...
 ```
 
+**Actuators: the `safe_state()` hook.** A driver that drives motion may override
+`def safe_state(self) -> None` to command its device to a known-safe resting state
+(stop, de-energize, retract). It is a no-op on `Driver` today; the Phase-2 actuator
+watchdog will call it on disconnect/timeout. Define it now for any actuator so the
+driver is watchdog-ready (the call is framework-owned — never invoke it yourself).
+
 ## 3. Talking to the bus: the three transport kinds
 
 Your `kind` declares which ONE of these the parent bus must provide; `self.bus`
@@ -260,9 +266,10 @@ def start_cleaning(self) -> None:
 - **Device-said-no ≠ transport failure.** If the transport succeeded but the
   device returned an error code, raise your own `shal.Error` subclass — the
   retry machinery must not see it.
-- Buses (not drivers) raise `HopError(msg, path=..., hop=..., delivered=...)`:
-  `"no"` = certainly not delivered (refused/never sent); `"unknown"` = anything
-  after send. Unsure → `"unknown"`.
+- Buses (not drivers) raise `HopError(msg, path=..., hop=..., txn=..., delivered=...)`
+  (`txn` optional — pass the current transaction id when you have it):
+  `delivered="no"` = certainly not delivered (refused/never sent); `"unknown"` =
+  anything after send. Unsure → `"unknown"`.
 - `shal.LimitError` is raised by the framework, never by you.
 
 ## 6. Sims — prove it with zero hardware
