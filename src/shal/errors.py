@@ -57,6 +57,24 @@ class LimitError(Error):
         self.violations = list(violations)
 
 
+class ApprovalDenied(Error):
+    """A side-effecting (actuator) op was denied by the active Approver (issue #14).
+
+    Like LimitError, the gate is pre-I/O — by construction the device never saw
+    the command, so there is no `delivered` ambiguity, and it is deliberately NOT
+    a HopError (nothing hopped). Carries op/path/params so the refusal lands in
+    the audit trail and an agent gets a structured reason it can act on.
+    """
+
+    def __init__(self, msg: str, *, path: str = "?", op: str = "?",
+                 side_effect: str = "actuator", params: dict | None = None) -> None:
+        super().__init__(msg)
+        self.path = path
+        self.op = op
+        self.side_effect = side_effect
+        self.params = dict(params or {})
+
+
 class Busy(Error):
     """A mux channel is pinned by an active subscription (Phase 2)."""
 

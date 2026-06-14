@@ -95,6 +95,17 @@ definitions, `hal.tool_catalog()` reports side-effects for gating, and
 `hal.call_tool(name, args)` dispatches (a delivery-unknown write is reported,
 never auto-retried). Input schemas come from your type hints — annotate params.
 
+**`actuator` ops are gated (issue #14).** Mark physical-motion ops
+`side_effect="actuator"` and the framework consults the active `Approver` after
+the limit check and before any bus I/O — on both the tool surface and the raw
+`get_device().method()` path (unbypassable). You write nothing extra in the body;
+a refusal raises `shal.ApprovalDenied` (nothing sent) and every decision is
+audited (`outcome` = `approved`/`denied`). The host installs the policy
+(`shal.set_approver(...)` / `with shal.approver(...)`); SHAL ships `AutoApprove`
+(for sim/CI/tests), `DenyAll`, `CallableApprover`, and the default
+`ConsoleApprover`. Use `actuator` for motion/dispense; `write` is audited but not
+gated. Order is always limits → approval → I/O.
+
 ## Operating limits (declare once — advertised AND enforced)
 
 If the documentation states a safe range for a settable parameter, declare it

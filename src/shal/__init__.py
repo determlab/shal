@@ -5,6 +5,17 @@
         print(hal.get_device("ambient_temp").read_celsius())
 """
 from . import logging  # opt-in observability: shal.logging.{Console,JSON}Formatter, capture
+from .approval import (
+    ApprovalRequest,
+    Approver,
+    AutoApprove,
+    CallableApprover,
+    ConsoleApprover,
+    DenyAll,
+    approver,
+    get_approver,
+    set_approver,
+)
 from .capabilities import (
     ADC,
     DigitalMultimeter,
@@ -14,27 +25,39 @@ from .capabilities import (
     TemperatureSensor,
 )
 from .driver import Driver, idempotent, op
-from .errors import Busy, Error, Gap, HopError, HopTimeout, LimitError, LoadError
+from .errors import (
+    ApprovalDenied,
+    Busy,
+    Error,
+    Gap,
+    HopError,
+    HopTimeout,
+    LimitError,
+    LoadError,
+)
 from .hal import Hal, load
 from .node import Node
 from .registry import catalog, register
 from .transport import (
-                        ByteTransport,
-                        CommandTransport,
-                        Completed,
-                        MessageTransport,
-                        Op,
-                        Read,
-                        Stream,
-                        Transport,
-                        Write,
+    ByteTransport,
+    CommandTransport,
+    Completed,
+    MessageTransport,
+    Op,
+    Read,
+    Stream,
+    Transport,
+    Write,
 )
 
 __version__ = "0.1.0"
 
 __all__ = [
     "load", "Hal", "Node", "Driver", "idempotent", "op", "register", "catalog", "logging",
-    "Error", "LoadError", "HopError", "HopTimeout", "LimitError", "Busy", "Gap",
+    "Approver", "ApprovalRequest", "AutoApprove", "DenyAll", "CallableApprover",
+    "ConsoleApprover", "set_approver", "get_approver", "approver",
+    "Error", "LoadError", "HopError", "HopTimeout", "LimitError", "ApprovalDenied",
+    "Busy", "Gap",
     "Transport", "ByteTransport", "CommandTransport", "MessageTransport",
     "Stream", "Op", "Read", "Write", "Completed",
     "TemperatureSensor", "PowerMonitor", "PowerSupply", "DigitalMultimeter",

@@ -44,6 +44,11 @@ def main() -> int:
 
     logging.basicConfig(level=logging.DEBUG if args.verbose else logging.INFO)
 
+    # This is a REAL robot: every motion command asks for confirmation on the
+    # terminal before it is sent (issue #14). ConsoleApprover denies automatically
+    # if stdin is not a TTY, so a piped/cron run never moves the robot unattended.
+    shal.set_approver(shal.ConsoleApprover())
+
     try:
         hal = shal.load(HERE / "deebot_real.yaml")
     except shal.LoadError as e:  # e.g. credentials missing — message carries the fix
@@ -67,6 +72,10 @@ def main() -> int:
                 bot.locate(); print("robot is announcing itself")
             print(f"battery : {bot.get_battery_percent()} %")
             print(f"state   : {bot.get_clean_state()}")
+        except shal.ApprovalDenied as e:
+            print(f"not approved — nothing was sent to the robot.\n  {e}",
+                  file=sys.stderr)
+            return 1
         except shal.HopError as e:
             if e.delivered == "unknown":
                 print(f"delivery UNKNOWN — the command may or may not have reached "

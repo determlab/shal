@@ -21,8 +21,13 @@ venv/
 .vscode/
 .idea/
 *.swp
+*.code-workspace
 .DS_Store
 Thumbs.db
+
+# Personal scratch — not part of the project
+/notes/
+/teach-shal/
 
 # SHAL local artifacts
 debug.jsonl

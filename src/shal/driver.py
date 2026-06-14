@@ -13,6 +13,7 @@ record for write ops on device drivers.
 from __future__ import annotations
 
 import functools
+import inspect
 import logging
 import time
 from collections.abc import Callable
@@ -182,6 +183,14 @@ class Driver:
         self._op_schemas[op] = schema
         guard = (_limits.Guard(fn, schema, path=self.node.path, opname=op)
                  if constrained else None)
+        # human-in-the-loop gate (issue #14): only physical-motion ops, and only
+        # device drivers (a bus provides transport, not actuation — same rule as
+        # audit). The approver is consulted at CALL time, so a host can inject a
+        # policy after load. side_effect: explicit @op wins, else inferred.
+        meta = getattr(fn, "__shal_op__", None) or {}
+        side_effect = meta.get("side_effect") or ("none" if retry else "write")
+        gated = side_effect == "actuator" and not isinstance(self, Transport)
+        sig = inspect.signature(fn) if gated else None
 
         @functools.wraps(fn)
         def call(*args, **kwargs):
@@ -202,6 +211,8 @@ class Driver:
                                                "outcome": "rejected",
                                                "txn": _log.current_txn.get()})
                         raise
+                if gated:  # limits passed -> ask before moving (pre-I/O, unbypassable)
+                    _approve_or_raise(self, op, side_effect, sig, args, kwargs, audited)
                 try:
                     result = fn(self, *args, **kwargs)
                 except HopError as e:
@@ -246,6 +257,33 @@ class Driver:
 
         call.__shal_wrapped__ = True
         return call
+
+
+def _approve_or_raise(driver, op: str, side_effect: str, sig, args, kwargs,
+                      audited: bool) -> None:
+    """Consult the active Approver for one actuator call. Audits the decision and
+    raises ApprovalDenied (pre-I/O, nothing sent) on refusal (issue #14)."""
+    from .approval import ApprovalRequest, get_approver
+    from .errors import ApprovalDenied
+    bound = sig.bind(driver, *args, **kwargs)
+    bound.apply_defaults()
+    params = {k: v for k, v in bound.arguments.items() if k != "self"}
+    node = driver.node
+    txn = _log.current_txn.get()
+    allowed = bool(get_approver().approve(ApprovalRequest(
+        op=op, path=node.path, id=node.id or "", side_effect=side_effect,
+        params=params, txn=txn)))
+    if audited:  # every approval decision is on the record (deterministic/replayable)
+        outcome = "approved" if allowed else "denied"
+        _audit.info("%s %s %s by approval", node.id or node.path, op, outcome,
+                    extra={"event": "audit", "id": node.id or "",
+                           "path": node.path, "op": op, "outcome": outcome,
+                           "side_effect": side_effect, "txn": txn})
+    if not allowed:
+        raise ApprovalDenied(
+            f"{node.path}  {op} denied by the approval policy "
+            f"— nothing was sent to the device",
+            path=node.path, op=op, side_effect=side_effect, params=params)
 
 
 def _is_capability(fn: Callable) -> bool:

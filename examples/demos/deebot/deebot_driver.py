@@ -18,7 +18,7 @@ from __future__ import annotations
 
 from typing import Optional, Protocol, runtime_checkable
 
-from shal import Driver, Error, MessageTransport, idempotent, register
+from shal import Driver, Error, MessageTransport, idempotent, op, register
 
 
 @runtime_checkable
@@ -51,23 +51,33 @@ class Deebot(Driver, VacuumRobot):
         return {"act": act, "type": "auto"} if act == "start" else {"act": act}
 
     # -- capabilities ----------------------------------------------------------
+    # Motion ops are side_effect="actuator": the framework asks the active
+    # Approver before any of them reaches the robot (issue #14). locate (a sound)
+    # is the only one that does NOT move the robot.
 
+    @op("Start an auto-clean run. Call to send the robot out cleaning.",
+        side_effect="actuator")
     def start_cleaning(self) -> None:
         self._command(self._CLEAN, self._clean_args("start"))
 
+    @op("Pause the current clean run.", side_effect="actuator")
     def pause(self) -> None:
         self._command(self._CLEAN, self._clean_args("pause"))
 
+    @op("Resume a paused clean run.", side_effect="actuator")
     def resume(self) -> None:
         self._command(self._CLEAN, self._clean_args("resume"))
 
+    @op("Stop the current clean run.", side_effect="actuator")
     def stop_cleaning(self) -> None:
         self._command(self._CLEAN, self._clean_args("stop"))
 
+    @op("Send the robot back to its charging dock.", side_effect="actuator")
     def dock(self) -> None:
         # 30007 = already charging: docking to the dock you sit on is success
         self._command("charge", {"act": "go"}, ok_codes=(0, 30007))
 
+    @op("Play the 'I am here' sound (does not move the robot).", side_effect="write")
     def locate(self) -> None:
         """Robot plays the 'I am here' sound."""
         self._command("playSound", {"sid": 30})

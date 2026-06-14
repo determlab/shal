@@ -7,6 +7,16 @@ All notable changes to this project are documented here. The format follows
 ## [Unreleased]
 
 ### Added
+- **Human-in-the-loop actuation gate** (#14) — actuator ops (`@shal.op(side_effect=
+  "actuator")`) now stop for an injectable `Approver` *after* the limit check and
+  *before* any bus I/O. The gate lives in the capability-wrapper, so neither the
+  tool surface (`call_tool`) nor the raw path (`get_device().method()`) can bypass
+  it. SHAL ships the mechanism + a safe default (`ConsoleApprover`: prompt when
+  interactive, deny when headless) plus `AutoApprove`/`DenyAll`/`CallableApprover`;
+  install one with `shal.set_approver(...)` or the `shal.approver(...)` context
+  manager. Refusal raises `shal.ApprovalDenied` (nothing sent) and `call_tool`
+  returns `{"ok": False, "rejected": "approval"}`. Every decision (approved/denied)
+  is written to `shal.audit`. Order is always limits → approval → I/O.
 - **Declared operating limits** (#10) — `@shal.op(params=...)` takes JSON-Schema
   fragments per parameter; the merged schema is advertised verbatim in
   `tool_schemas()`/`catalog()` AND enforced by the framework before any bus I/O

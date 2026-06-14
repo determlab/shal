@@ -123,5 +123,19 @@ These are invariants, not preferences. A change that violates one is wrong:
   grammar, the `@op`/tool/`catalog()` surface) without a matching `.claude/skills/`
   update is **incomplete** — see "Keep the skills in sync"
 
+## Agent skills
+
+### Issue tracker
+
+Issues and PRDs live in this repo's **GitHub Issues** (via the `gh` CLI). See `docs/agents/issue-tracker.md`.
+
+### Triage labels
+
+Canonical triage vocabulary, used as-is (`needs-triage`, `needs-info`, `ready-for-agent`, `ready-for-human`, `wontfix`). See `docs/agents/triage-labels.md`.
+
+### Domain docs
+
+**Single-context** repo; locked decisions live in `docs/DESIGN V2.md` + `docs/DECISIONS - V2.1.md` (the de-facto ADRs), glossary in module docstrings. See `docs/agents/domain.md`.
+
 ## Asking Questions
 Open an issue at https://github.com/hemipaska-maker/shal/issues and tag @hemipaska.

@@ -5,7 +5,7 @@ import logging
 import re
 
 from . import limits
-from .errors import Error, HopError, LimitError, LoadError
+from .errors import ApprovalDenied, Error, HopError, LimitError, LoadError
 from .loader import load_tree
 from .node import Node
 from .transport import Transport
@@ -109,6 +109,12 @@ class Hal:
             # the violations let an agent self-correct in one step (issue #10)
             return {"ok": False, "error": str(e), "rejected": "limits",
                     "violations": e.violations}
+        except ApprovalDenied as e:
+            # human-in-the-loop refusal: pre-I/O, nothing sent (no `delivered`
+            # key) — distinct from a limit rejection so an agent can tell why
+            # it was stopped and route to a human (issue #14)
+            return {"ok": False, "error": str(e), "rejected": "approval",
+                    "op": e.op, "device": node.id or node.path}
         except HopError as e:
             return {"ok": False, "error": str(e), "delivered": e.delivered}
         except Error as e:

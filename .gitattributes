@@ -1,0 +1,5 @@
+# Generated registry manifests are re-emitted by CI and asserted byte-identical
+# ("re-emit -> no diff"). Pin them to LF so a Windows-authored file matches a
+# Linux re-emit. emit_manifest.py writes LF; this keeps git from storing CRLF.
+examples/driver-creator/**/device.yaml   text eol=lf
+examples/driver-creator/**/metadata.yaml text eol=lf
