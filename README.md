@@ -125,6 +125,9 @@ any node for its sim and **nothing in your code changes**.
 ## Features
 
 - **Agent-native** — every device op becomes a gated LLM tool.
+- **Asks before it moves** — actuator & destructive/config ops stop for a
+  host-supplied approver (CLI prompt, an agent, or auto in sim/CI); the gate is
+  pre-I/O and unbypassable.
 - **Hardware + software, one graph** — a sensor and an HTTP service are the same node.
 - **Capabilities, not wires** — call `read_celsius()`, never I²C.
 - **Retry you can trust** — reads auto-retry; risky writes never silently repeat.
@@ -261,7 +264,8 @@ hal.get_device("ambient_temp").read_celsius()   # by semantic id — no wires le
 ## Real-World Use Cases
 
 - **AI agents with real-world access** — expose a lab or robot to an LLM as
-  gated tools; writes require approval, reads don't.
+  gated tools; every actuator call stops for a human (or policy) to approve
+  before it fires, and a delivery-unknown write is never silently retried.
 - **Validation & test racks** — one model for eval boards, instruments, and the
   results database; test against sims in CI before hardware.
 - **Manufacturing lines** — same capability calls across stations; one audit
@@ -301,12 +305,14 @@ hardware — swap in a real transport later, and your code doesn't change.
   `tcp` (TLS), `http`, `nxp,pca9548` mux
 - ✅ Capability model, driver plugin registry, trustworthy retry policy
 - ✅ Agent tool surface: `tool_schemas()` / `tool_catalog()` / `call_tool()`
+- ✅ Human-in-the-loop actuation gate: actuator ops stop for an injectable
+  `Approver` (pre-I/O, unbypassable, every decision audited)
 - ✅ Structured observability + `capture()` flight recorder
 
 **Designed, in progress — Phase 2:**
 
 - 🚧 Async / streaming (`subscribe`, held channels) — [spec](docs/DESIGN%20-%20PHASE%202%20ASYNC.md)
-- 🚧 Actuator watchdog & safe-state
+- 🚧 Actuator watchdog & safe-state (timeouts, auto safe-state on disconnect)
 - 🚧 Route failover for multi-path devices
 
 ---

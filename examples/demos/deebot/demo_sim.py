@@ -21,6 +21,10 @@ logging.basicConfig(level=logging.INFO)  # the APP configures logging, never the
 
 
 def main() -> None:
+    # actuator ops (start_cleaning, dock, ...) are gated (issue #14); in a pure
+    # simulation there is nothing to protect, so auto-approve. The real robot
+    # demo (demo_real.py) installs an interactive approver instead.
+    shal.set_approver(shal.AutoApprove())
     with shal.load(HERE / "deebot_sim.yaml") as hal:
         bot = hal.get_device("cleaner")
         assert isinstance(bot, VacuumRobot)  # capability, not driver, is the contract

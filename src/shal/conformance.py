@@ -18,6 +18,7 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from . import registry
+from .approval import AutoApprove, approver
 from .errors import LimitError
 from .transport import Transport
 
@@ -213,7 +214,11 @@ def _probe_audit(hal, node, report: Report) -> None:
         kwargs = {p: _sample(s) for p, s in schema["properties"].items()
                   if p in (schema.get("required") or [])}
         try:
-            getattr(node.driver, target)(**kwargs)
+            # conformance is the sim/CI definition-of-done: auto-approve so a gated
+            # (actuator/config) op actually reaches I/O and audits its real outcome,
+            # rather than the default policy denying it headlessly (issue #14).
+            with approver(AutoApprove()):
+                getattr(node.driver, target)(**kwargs)
         except Exception:  # noqa: BLE001 - outcome irrelevant; the RECORD matters
             pass
         if any(getattr(r, "op", "") == target for r in records):

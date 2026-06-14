@@ -145,8 +145,11 @@ def emit(case: str) -> None:
         },
     }
     for name, doc in (("device.yaml", device), ("metadata.yaml", metadata)):
+        # newline="\n": always emit LF so a Windows-authored manifest is byte-for-byte
+        # identical to one CI re-emits on Linux (the "re-emit -> no diff" gate).
         (gen / name).write_text(
-            yaml.safe_dump(doc, sort_keys=False, allow_unicode=True), encoding="utf-8")
+            yaml.safe_dump(doc, sort_keys=False, allow_unicode=True),
+            encoding="utf-8", newline="\n")
     sys.path.remove(str(gen))
     print(f"  {case}: {seed['id']}  ({len(commands)} commands, "
           f"{len(safety)} safety constraints)")

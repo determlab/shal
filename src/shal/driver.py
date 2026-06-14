@@ -13,6 +13,7 @@ record for write ops on device drivers.
 from __future__ import annotations
 
 import functools
+import inspect
 import logging
 import time
 from collections.abc import Callable
@@ -35,7 +36,11 @@ def idempotent(fn: Callable) -> Callable:
     return fn
 
 
-_SIDE_EFFECTS = frozenset({"none", "write", "actuator"})
+_SIDE_EFFECTS = frozenset({"none", "write", "actuator", "config"})
+# effects that require human-in-the-loop approval before I/O (issue #14): physical
+# motion ("actuator") and destructive/configuration writes ("config"). A plain
+# "write" (a benign setpoint/register) is audited but NOT gated.
+_GATED_EFFECTS = frozenset({"actuator", "config"})
 
 
 def op(description: str, *, unit: str | None = None,
@@ -44,8 +49,11 @@ def op(description: str, *, unit: str | None = None,
     """Attach LLM-facing metadata to a capability op (DESIGN V2 'agent bus').
 
     `description` should say WHEN to call it, not just what it does — that is what
-    a model keys on. `side_effect` is "none" (a read), "write", or "actuator"
-    (physical motion); if omitted it is inferred from @idempotent. The metadata
+    a model keys on. `side_effect` is "none" (a read), "write" (a benign state
+    change), "actuator" (physical motion), or "config" (a destructive/
+    configuration write); if omitted it is inferred from @idempotent. "actuator"
+    and "config" ops are gated by the approval interlock (issue #14) — they stop
+    for the active Approver before any bus I/O. The metadata
     feeds `hal.tool_schemas()` and is required on every public op of a driver that
     sets `llm_ready = True` (checked at bind — fail loudly, never at call time).
 
@@ -182,6 +190,14 @@ class Driver:
         self._op_schemas[op] = schema
         guard = (_limits.Guard(fn, schema, path=self.node.path, opname=op)
                  if constrained else None)
+        # human-in-the-loop gate (issue #14): actuator/config ops, and only device
+        # drivers (a bus provides transport, not actuation — same rule as audit).
+        # The approver is consulted at CALL time, so a host can inject a policy
+        # after load. side_effect: explicit @op wins, else inferred.
+        meta = getattr(fn, "__shal_op__", None) or {}
+        side_effect = meta.get("side_effect") or ("none" if retry else "write")
+        gated = side_effect in _GATED_EFFECTS and not isinstance(self, Transport)
+        sig = inspect.signature(fn) if gated else None
 
         @functools.wraps(fn)
         def call(*args, **kwargs):
@@ -202,6 +218,8 @@ class Driver:
                                                "outcome": "rejected",
                                                "txn": _log.current_txn.get()})
                         raise
+                if gated:  # limits passed -> ask before moving (pre-I/O, unbypassable)
+                    _approve_or_raise(self, op, side_effect, sig, args, kwargs)
                 try:
                     result = fn(self, *args, **kwargs)
                 except HopError as e:
@@ -246,6 +264,34 @@ class Driver:
 
         call.__shal_wrapped__ = True
         return call
+
+
+def _approve_or_raise(driver, op: str, side_effect: str, sig, args, kwargs) -> None:
+    """Consult the active Approver for one gated (actuator/config) call. ALWAYS
+    audits the decision — independent of the op's idempotency, since an
+    @idempotent actuator is still gated — and raises ApprovalDenied (pre-I/O,
+    nothing sent) on refusal (issue #14)."""
+    from .approval import ApprovalRequest, get_approver
+    from .errors import ApprovalDenied
+    bound = sig.bind(driver, *args, **kwargs)
+    bound.apply_defaults()
+    params = {k: v for k, v in bound.arguments.items() if k != "self"}
+    node = driver.node
+    txn = _log.current_txn.get()
+    allowed = bool(get_approver().approve(ApprovalRequest(
+        op=op, path=node.path, id=node.id or "", side_effect=side_effect,
+        params=params, txn=txn)))
+    # every approval decision is on the record (deterministic/replayable)
+    outcome = "approved" if allowed else "denied"
+    _audit.info("%s %s %s by approval", node.id or node.path, op, outcome,
+                extra={"event": "audit", "id": node.id or "",
+                       "path": node.path, "op": op, "outcome": outcome,
+                       "side_effect": side_effect, "txn": txn})
+    if not allowed:
+        raise ApprovalDenied(
+            f"{node.path}  {op} denied by the approval policy "
+            f"— nothing was sent to the device",
+            path=node.path, op=op, side_effect=side_effect, params=params)
 
 
 def _is_capability(fn: Callable) -> bool:

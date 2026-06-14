@@ -207,6 +207,40 @@ What's NOT expressible declaratively (cross-parameter envelopes like V×I ≤ W,
 state-dependent rules): check imperatively in the method body and raise a
 `shal.Error` subclass — and say so in the op description.
 
+## 4b. Actuation approval — "ask before it moves" (issue #14)
+
+Mark an op that causes **physical motion** `side_effect="actuator"`, or a
+**destructive / configuration** write (factory-reset, erase, firmware push)
+`side_effect="config"`. The framework then consults the active `Approver`
+*after* the limit check and *before* any bus I/O — so an impossible call is
+rejected by limits without ever asking, and an approved call is the only thing
+that reaches the device.
+
+```python
+@op("Send the robot out cleaning.", side_effect="actuator")
+def start_cleaning(self) -> None:
+    self.bus.exchange(self.addr, {"cmd": "clean", "data": {"act": "start"}})
+```
+
+- **You write nothing else.** No prompt, no flag, no check in the body — the
+  wrapper owns the gate, exactly like limits and audit. It fires on *both* call
+  paths (`call_tool` and raw `get_device().method()`); there is no bypass.
+- **The host supplies the decision**, not the driver. SHAL ships `AutoApprove`,
+  `DenyAll`, `CallableApprover`, and the default `ConsoleApprover` (prompts when
+  interactive, denies when headless). Install one:
+
+  ```python
+  shal.set_approver(shal.AutoApprove())          # sim / CI / tests
+  with shal.approver(MyAgentApprover()): ...      # scoped policy
+  ```
+
+- A denied call raises `shal.ApprovalDenied` (nothing sent, like `LimitError`);
+  `call_tool` returns `{"ok": False, "rejected": "approval"}`. Every decision is
+  written to `shal.audit` (`outcome` = `approved` | `denied`).
+- Use `actuator` for motion/dispense and `config` for destructive/configuration
+  writes — anything you'd want a human to confirm. Plain `write` (a register, a
+  setpoint) is audited but **not** gated, so a benign write never prompts.
+
 ## 5. Errors & the retry contract (memorize this)
 
 - **Never catch transport errors. Never retry anything yourself.** The

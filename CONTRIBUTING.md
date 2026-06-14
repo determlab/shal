@@ -20,7 +20,8 @@ proposing core changes; the invariants there are not up for re-litigation in a P
 src/shal/        the package (importable as `shal`)
 tests/           pytest suite
 docs/            design + decision records
-playground/      runnable examples (Deebot cloud, microservice mesh) — not shipped
+examples/demos/  runnable showcases (Deebot cloud, microservice mesh) — not shipped
+examples/driver-creator/  the doc→driver generation benchmark — not shipped
 ```
 
 ## Dev setup

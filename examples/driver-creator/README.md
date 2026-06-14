@@ -42,7 +42,7 @@ says how).
 3. **`http-service/`** — "Lumen ChamberLink" environmental-chamber REST API
    from an OpenAPI spec — a software node, same model as hardware.
 4. **`deebot/`** — robot vacuum from protocol documentation. Stage 1: driver
-   only (validated against the untouched golden `playground/deebot/sim_cloud`).
+   only (validated against the untouched golden `examples/demos/deebot/sim_cloud`).
    Stage 2: the **cloud bus too** (`ecovacs_bus.py` hidden) — the full
    "new device on a new transport" contributor journey, validated against a
    local fake portal implementing the documented protocol.
@@ -52,7 +52,7 @@ says how).
 - Inputs: `<case>/docs/` + [docs/SDK.md](../../docs/SDK.md) +
   `.claude/skills/shal-*` (especially
   [shal-generate-driver](../../.claude/skills/shal-generate-driver/SKILL.md)).
-- **Zero reads of `src/shal/**`**, of `playground/deebot/*driver*|*bus*`, of
+- **Zero reads of `src/shal/**`**, of `examples/demos/deebot/*driver*|*bus*`, of
   other cases, and of `<case>/harness/` — list every file you read in
   `NOTES.md`.
 - All trust mechanisms intact: `llm_ready`, `@op` metadata, declared limits for
