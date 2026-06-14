@@ -25,8 +25,8 @@ Python 3.10+ required.
 | Lint | `ruff check src tests` |
 | Auto-fix lint | `ruff check src tests --fix` |
 | Build | `python -m build` (sdist + wheel) |
-| Sim demo | `python playground/mesh/demo_mesh.py` (microservice mesh) |
-| | `python playground/deebot/demo_sim.py` (simulated robot vacuum) |
+| Sim demo | `python examples/demos/mesh/demo_mesh.py` (microservice mesh) |
+| | `python examples/demos/deebot/demo_sim.py` (simulated robot vacuum) |
 
 There is **no CLI entry point yet** (`shal` on the command line is not wired) and
 **no mypy gate** — the code is fully type-hinted and the design is mypy-clean by
@@ -45,7 +45,8 @@ intent, but mypy is not in CI. Don't reference either as if it exists.
 - `src/shal/drivers/` — `tmp102` (the canonical driver)
 - `src/shal/schema/shal-v1.schema.json` — the canonical topology schema
 - `tests/` — pytest suite (mirrors `src/` concerns)
-- `playground/` — runnable examples (Deebot cloud, microservice mesh); **not shipped**
+- `examples/demos/` — runnable showcases (Deebot cloud, microservice mesh); **not shipped**
+- `examples/driver-creator/` — the doc→driver generation benchmark; **not shipped**
 - `docs/` — `DESIGN V2.md` (architecture, locked decisions), `DECISIONS - V2.1.md`
 
 Read `docs/DESIGN V2.md` and `docs/DECISIONS - V2.1.md` before any core change.
@@ -112,7 +113,7 @@ These are invariants, not preferences. A change that violates one is wrong:
 ## Common Pitfalls
 - Don't bypass any non-negotiable above to make a test pass — fix the root cause
 - Run `ruff check src tests` before pushing (CI fails otherwise)
-- `playground/` and `docs/` are not part of the distribution — don't add runtime
+- `examples/` and `docs/` are not part of the distribution — don't add runtime
   deps for them or import them from `src/shal`
 - A failure that needs a *design decision* rather than a bug fix → open an issue,
   don't guess

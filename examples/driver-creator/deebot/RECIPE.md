@@ -17,7 +17,7 @@ define it driver-locally per SDK §2): `start_cleaning()`, `pause()`,
 subclass. The sim model registers via `@msg_sim_model("ecovacs,deebot-n20")`
 and implements the documented state machine with the documented bench
 power-on defaults. Read nothing outside the three inputs (no `src/shal/**`,
-no `playground/**`, no `harness/**`).
+no `examples/demos/**`, no `harness/**`).
 
 **Stage 2 — the bus.** Same rules, one more input:
 `examples/driver-creator/deebot/docs/deebot-cloud-transport.md` (follow
@@ -41,7 +41,7 @@ python -m pytest examples/driver-creator/deebot/harness -q
 
 Stage-1 tests skip until `generated/driver.py` exists; stage-2 tests skip
 until `generated/bus.py` exists. The harness validates against its own
-independent sims (the golden playground sim cloud, and a local fake portal
+independent sims (the golden demos sim cloud (examples/demos/deebot/sim_cloud.py), and a local fake portal
 over real HTTP) and runs
 `shal.conformance.check_driver("ecovacs,deebot-n20", ...)` — all of it must
 be green, alongside your own generated tests.

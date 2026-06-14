@@ -15,7 +15,7 @@ HERE = Path(__file__).resolve().parent
 CASE = HERE.parent                      # examples/driver-creator/deebot
 GEN = CASE / "generated"
 REPO = CASE.parents[2]
-PLAYGROUND = REPO / "playground" / "deebot"
+PLAYGROUND = REPO / "examples" / "demos" / "deebot"   # the golden reference sim
 
 pytestmark = pytest.mark.skipif(not (GEN / "driver.py").exists(),
                                 reason="not generated yet")

@@ -9,6 +9,6 @@ recursive-include src/shal *.json py.typed
 recursive-include docs *.md
 
 # Keep examples out of the tarball.
-prune playground
+prune examples
 prune tests
 global-exclude __pycache__ *.py[cod]

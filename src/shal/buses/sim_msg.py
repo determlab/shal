@@ -3,8 +3,8 @@
 The generic scripted MessageTransport: device/service models are built from the
 children's ``compatible`` at activation and answer ``exchange(addr, msg) ->
 Mapping`` directly — the sim twin for ANY MessageTransport-kind driver
-(HTTP services, cloud devices, JSON-speaking instruments). The playground's
-hand-written ``playground,sim-cloud`` is the special case this generalizes.
+(HTTP services, cloud devices, JSON-speaking instruments). The demo
+``playground,sim-cloud`` (examples/demos/deebot) is the special case this generalizes.
 
 A model is a class registered with ``@msg_sim_model("vendor,part")`` exposing
 ``handle(msg: Mapping) -> Mapping``. One instance per child node, keyed by the
