@@ -24,16 +24,20 @@ root:
 
 ## Procedure
 
-1. **Read the schema first**: `shal/schema/shal-v1.schema.json` is the source
+1. **Read the schema first**: `src/shal/schema/shal-v1.schema.json` is the source
    of truth for allowed keys. Semantic rules (id uniqueness, address grammar,
    driver installed) are enforced by the loader, not the schema.
 2. **Walk the physical path** from the PC to each device; every hop becomes a
    nesting level. If you can't say what carries the bytes between two nodes,
    the tree is wrong.
-3. **Pick drivers by `compatible`**. Bundled: `shal,local`, `shal,ssh-host`,
-   `shal,i2c-cli`, `shal,spi-cli`, `shal,tcp`, `shal,http`, `shal,sim-i2c`,
-   `nxp,pca9548`, `ti,tmp102`. A driver must be installed (entry point group
-   `shal.drivers`) or explicitly registered — an unknown compatible fails the load.
+3. **Pick drivers by `compatible`**. Bundled buses: `shal,local`, `shal,ssh-host`,
+   `shal,i2c-cli`, `shal,spi-cli`, `shal,tcp`, `shal,http`, `shal,scpi-raw`,
+   `shal,sim-i2c`, `shal,sim-scpi`, `shal,sim-msg`, `nxp,pca9548` (mux). Bundled
+   device drivers: `ti,tmp102`, `ti,ina219`, `ti,ads1115`, `microchip,mcp9808`,
+   `microchip,mcp23017`, `rigol,dp832`, `keysight,34461a`. The **authoritative,
+   always-current** list is `shal.catalog()` (`{"buses": [...], "drivers": [...]}`).
+   A driver must be installed (entry point group `shal.drivers`) or explicitly
+   registered — an unknown compatible fails the load.
 4. **Address per bus family**: I2C `0x03`–`0x77` (int), i2c-cli `/dev/i2c-<n>`,
    spi-cli `/dev/spidevX.Y`, ssh `user@host`, tcp `host:port`, http(s) a URL.
    The PARENT validates the child's address at load.

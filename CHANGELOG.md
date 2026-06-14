@@ -6,6 +6,17 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+### Fixed
+- **Authoring-contract drift** (#15) — aligned the `shal-build-*` skills with
+  `docs/SDK.md` and the framework so a driver copied verbatim from the
+  `shal-build-driver` skeleton passes `conformance.check_driver` (now regression-
+  tested): the skeleton uses the blessed `shal.TemperatureSensor` and includes the
+  required `llm_ready` + `@op` (no longer framed as "optional"). Also fixed the
+  `src/shal/schema/` path in `shal-build-yaml`, completed its bundled-id list
+  (added `shal,scpi-raw`/`shal,sim-scpi`/`shal,sim-msg`, pointing at
+  `shal.catalog()` as authoritative), added `txn=` to the documented `HopError`
+  signature, and documented the actuator `safe_state()` hook in the SDK.
+
 ### Added
 - **Human-in-the-loop actuation gate** (#14) — actuator and destructive/config
   ops (`@shal.op(side_effect="actuator"|"config")`) now stop for an injectable
