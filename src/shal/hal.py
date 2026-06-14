@@ -5,6 +5,7 @@ import logging
 import re
 
 from . import limits
+from .driver import _GATED_EFFECTS
 from .errors import ApprovalDenied, Error, HopError, LimitError, LoadError
 from .loader import load_tree
 from .node import Node
@@ -190,7 +191,8 @@ def _annotations(eff: dict) -> dict:
     side = eff["side_effect"]
     return {"readOnlyHint": side == "none",
             "idempotentHint": eff["idempotent"],
-            "destructiveHint": side == "actuator"}
+            # destructive == gated by the approval interlock (actuator OR config)
+            "destructiveHint": side in _GATED_EFFECTS}
 
 
 def _describe(node: Node, opname: str, fn) -> str:

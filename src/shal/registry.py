@@ -17,6 +17,7 @@ from __future__ import annotations
 from importlib.metadata import entry_points, packages_distributions
 from typing import TYPE_CHECKING
 
+from .driver import _GATED_EFFECTS
 from .errors import LoadError
 
 if TYPE_CHECKING:
@@ -142,7 +143,8 @@ def _op_entries(cls: type) -> list[dict]:
             "input_schema": _limits.merged_params_schema(fn),
             "annotations": {"readOnlyHint": side == "none",
                             "idempotentHint": idem,
-                            "destructiveHint": side == "actuator"},
+                            # destructive == gated (actuator OR config) — issue #14
+                            "destructiveHint": side in _GATED_EFFECTS},
         })
     return ops
 
