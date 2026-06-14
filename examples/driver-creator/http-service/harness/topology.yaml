@@ -1,0 +1,12 @@
+shal_version: 1
+root:
+  bench:
+    id: bench
+    driver: shal,sim-msg
+    address: sim0
+    children:
+      dut:
+        id: dut
+        driver: "lumen,chamber-api"
+        address: chamber           # the HTTP bus would POST to <base>/chamber
+        description: Lumen ChamberLink CL-340 environmental chamber (simulated)

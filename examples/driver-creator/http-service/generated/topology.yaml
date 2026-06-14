@@ -1,0 +1,11 @@
+shal_version: 1
+root:
+  bench:
+    id: bench
+    driver: shal,sim-msg
+    address: sim0
+    children:
+      chamber:
+        id: chamber
+        driver: lumen,chamber-api
+        address: chamber

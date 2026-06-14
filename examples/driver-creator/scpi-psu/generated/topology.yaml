@@ -1,0 +1,11 @@
+shal_version: 1
+root:
+  bench:
+    id: bench
+    driver: shal,sim-scpi
+    address: sim0
+    children:
+      psu:
+        id: psu
+        driver: vexar,vx3210
+        address: 192.168.1.50:5025

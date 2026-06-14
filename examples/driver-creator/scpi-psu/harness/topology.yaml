@@ -1,0 +1,15 @@
+# Harness sim topology: one Vexar VX3210 on the simulated SCPI rack.
+# The harness test force-installs Vx3210HarnessModel for "vexar,vx3210"
+# before loading this file, so "dut" always talks to the referee's model.
+shal_version: 1
+root:
+  rack:
+    id: rack
+    driver: shal,sim-scpi
+    address: sim0
+    children:
+      dut:
+        id: dut
+        driver: "vexar,vx3210"
+        address: psu1
+        description: Vexar VX3210 bench PSU (simulated, harness model)

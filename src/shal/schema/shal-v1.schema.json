@@ -94,7 +94,27 @@
         "insecure": { "type": "boolean" },
         "config": {
           "type": "object",
-          "description": "Bus/driver-specific parameters. String values of the form ${ENV_VAR} resolve from the environment at load (the documented home for secrets); literals are the local-file convenience.",
+          "description": "Bus/driver-specific parameters. String values of the form ${ENV_VAR} resolve from the environment at load (the documented home for secrets); literals are the local-file convenience. The reserved `limits` key is installation safety policy consumed by the framework, never by the driver.",
+          "properties": {
+            "limits": {
+              "type": "object",
+              "description": "Installation operating limits: op name -> param name -> JSON-Schema constraint fragment. May only TIGHTEN the driver's declared device limits; widening fails the load.",
+              "additionalProperties": {
+                "type": "object",
+                "additionalProperties": {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "properties": {
+                    "minimum": { "type": "number" },
+                    "maximum": { "type": "number" },
+                    "exclusiveMinimum": { "type": "number" },
+                    "exclusiveMaximum": { "type": "number" },
+                    "enum": { "type": "array" }
+                  }
+                }
+              }
+            }
+          },
           "additionalProperties": {
             "oneOf": [
               { "type": "string" },

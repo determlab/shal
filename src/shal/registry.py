@@ -127,6 +127,7 @@ def _provides_kinds(cls: type) -> list[str]:
 
 
 def _op_entries(cls: type) -> list[dict]:
+    from . import limits as _limits
     ops = []
     for name, fn in cls.capability_ops().items():
         meta = getattr(fn, "__shal_op__", None) or {}
@@ -136,6 +137,9 @@ def _op_entries(cls: type) -> list[dict]:
             "name": name,
             "description": meta.get("description"),
             "unit": meta.get("unit"),
+            # class-level merged schema: the device envelope (a bound node may
+            # narrow it further via op_limits()/config.limits — issue #10)
+            "input_schema": _limits.merged_params_schema(fn),
             "annotations": {"readOnlyHint": side == "none",
                             "idempotentHint": idem,
                             "destructiveHint": side == "actuator"},
@@ -206,6 +210,8 @@ def _ensure_bundled() -> None:
         mux,
         scpi_raw,
         sim,
+        sim_msg,
+        sim_scpi,
         spi_cli,
         ssh,
         tcp,

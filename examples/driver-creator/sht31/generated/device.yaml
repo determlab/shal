@@ -1,0 +1,42 @@
+id: device://sensirion/environmental_sensor/sht31
+identity:
+  vendor: Sensirion
+  model: SHT31-DIS
+  category: environmental_sensor
+compatible: sensirion,sht31
+capabilities:
+- TemperatureSensor
+transport:
+  kind: ByteTransport
+  protocols:
+  - i2c
+  address_schema:
+    type: integer
+    minimum: 68
+    maximum: 69
+    description: '7-bit I2C address: 0x44 (ADDR low, default) or 0x45 (ADDR high).'
+    examples:
+    - 68
+authentication:
+  type: none
+  required_secrets: []
+commands:
+- name: read_celsius
+  description: Read the ambient temperature now. Triggers a fresh single-shot, high
+    repeatability measurement and returns degrees Celsius. Call whenever a current
+    temperature reading is needed.
+  side_effect: none
+  idempotent: true
+  unit: celsius
+  parameters: null
+- name: read_humidity_percent
+  description: Read the relative humidity now. Triggers a fresh single-shot, high
+    repeatability measurement and returns percent relative humidity (0..100 %RH).
+    Call whenever a current humidity reading is needed.
+  side_effect: none
+  idempotent: true
+  unit: percent
+  parameters: null
+safety_constraints: []
+documentation:
+- examples/driver-creator/sht31/docs/sht31-datasheet.md

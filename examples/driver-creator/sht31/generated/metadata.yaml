@@ -1,0 +1,15 @@
+id: device://sensirion/environmental_sensor/sht31
+vendor: Sensirion
+model: SHT31-DIS
+category: environmental_sensor
+protocols:
+- i2c
+compatible: sensirion,sht31
+documentation:
+- examples/driver-creator/sht31/docs/sht31-datasheet.md
+authors:
+- shal-generate-driver (AI)
+reviewers: []
+verification:
+  level: generated
+  evidence: passed shal.conformance and an independent harness

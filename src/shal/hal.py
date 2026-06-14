@@ -1,19 +1,17 @@
 """Lookup API + lifecycle (DESIGN V2 'Lookup API' / 'Lifecycle')."""
 from __future__ import annotations
 
-import inspect
 import logging
 import re
-import typing
 
-from .errors import Error, HopError, LoadError
+from . import limits
+from .errors import Error, HopError, LimitError, LoadError
 from .loader import load_tree
 from .node import Node
 from .transport import Transport
 
 logger = logging.getLogger("shal.loader")
 
-_JSON_TYPES = {int: "integer", float: "number", str: "string", bool: "boolean"}
 _NAME_SAFE = re.compile(r"[^a-zA-Z0-9_-]")
 
 
@@ -74,10 +72,13 @@ class Hal:
         out = []
         for name, (node, opname) in self._tool_index().items():
             fn = type(node.driver).capability_ops()[opname]
+            # the BOUND effective schema (class ⊕ op_limits ⊕ config.limits) when
+            # available — advertised == enforced, per node (issue #10)
+            bound = getattr(node.driver, "_op_schemas", {}).get(opname)
             out.append({
                 "name": name,
                 "description": _describe(node, opname, fn),
-                "input_schema": _params_schema(fn),
+                "input_schema": bound or _params_schema(fn),
             })
         return out
 
@@ -103,6 +104,11 @@ class Hal:
         method = getattr(node.driver, opname)
         try:
             result = method(**(arguments or {}))
+        except LimitError as e:
+            # structured refusal: nothing was sent (no `delivered` key on purpose) —
+            # the violations let an agent self-correct in one step (issue #10)
+            return {"ok": False, "error": str(e), "rejected": "limits",
+                    "violations": e.violations}
         except HopError as e:
             return {"ok": False, "error": str(e), "delivered": e.delivered}
         except Error as e:
@@ -201,31 +207,7 @@ def _describe(node: Node, opname: str, fn) -> str:
 
 
 def _params_schema(fn) -> dict:
-    """JSON Schema for an op's parameters, from its type hints."""
-    sig = inspect.signature(fn)
-    try:
-        hints = typing.get_type_hints(fn)
-    except Exception:  # pragma: no cover - unresolvable annotation
-        hints = {}
-    props: dict[str, dict] = {}
-    required: list[str] = []
-    for pname, p in sig.parameters.items():
-        if pname == "self" or p.kind in (p.VAR_POSITIONAL, p.VAR_KEYWORD):
-            continue
-        props[pname] = _json_type(hints.get(pname))
-        if p.default is inspect.Parameter.empty:
-            required.append(pname)
-    schema: dict = {"type": "object", "properties": props, "additionalProperties": False}
-    if required:
-        schema["required"] = required
-    return schema
-
-
-def _json_type(hint) -> dict:
-    if hint in _JSON_TYPES:
-        return {"type": _JSON_TYPES[hint]}
-    # Optional[X] / X | None -> the inner type
-    args = [a for a in typing.get_args(hint) if a is not type(None)]
-    if len(args) == 1 and args[0] in _JSON_TYPES:
-        return {"type": _JSON_TYPES[args[0]]}
-    return {"type": "string"}
+    """JSON Schema for an op's parameters: the type-hint skeleton merged with the
+    op's declared limits (issue #10). ONE artifact — what the model is shown here
+    is byte-for-byte what the framework enforces before any bus I/O."""
+    return limits.merged_params_schema(fn)

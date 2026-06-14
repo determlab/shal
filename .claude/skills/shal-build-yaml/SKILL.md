@@ -82,12 +82,33 @@ config:
   password: ${ECOVACS_PASSWORD}
 ```
 
+## Installation safety limits: `config.limits` (rig policy, tighten-only)
+
+A node may TIGHTEN a driver's declared operating limits — the rig owner caps a
+32 V-capable PSU feeding a 3.3 V board, with no driver edit:
+
+```yaml
+psu_3v3:
+  driver: rigol,dp832
+  address: 1
+  config:
+    limits:                 # reserved key: consumed by the framework, not the driver
+      set_voltage:
+        volts: {maximum: 5.0}   # 5.0 <= the driver's 32.0 -> loads; effective max 5.0
+```
+
+The effective (tightest) limit is what agents see in `tool_schemas()` and what
+the framework enforces before any I/O. **Widening fails the load** naming both
+numbers — YAML can never make a rig more dangerous than the datasheet. Keys
+must name real ops/params of the bound driver (checked at load).
+
 ## Things that fail the load by design
 
 - `routes:` (failover) — parses but rejects: Phase 2.
 - `insecure: true` missing on a plaintext `http://` or tcp bus.
 - Duplicate `id`, unknown `compatible`, malformed address, unresolved `$ref`,
   unknown node keys (schema is `additionalProperties: false`).
+- `config.limits` that widens a declared limit, or names unknown ops/params.
 
 ## Reusing a board: `use:` includes
 

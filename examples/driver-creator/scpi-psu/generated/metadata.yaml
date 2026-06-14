@@ -1,0 +1,16 @@
+id: device://vexar/power_supply/vx3210
+vendor: Vexar
+model: VX3210
+category: power_supply
+protocols:
+- scpi
+- tcp
+compatible: vexar,vx3210
+documentation:
+- examples/driver-creator/scpi-psu/docs/vx3210-manual.md
+authors:
+- shal-generate-driver (AI)
+reviewers: []
+verification:
+  level: generated
+  evidence: passed shal.conformance and an independent harness

@@ -1,0 +1,245 @@
+openapi: 3.0.3
+info:
+  title: Lumen ChamberLink Controller API
+  version: "1.4.0"
+  description: |
+    REST control surface for the Lumen Instruments **ChamberLink CL-340**
+    environmental test chamber controller.
+
+    ## Wire contract (read this first)
+
+    The controller exposes a **single RPC endpoint**: every operation is a
+    `POST` to `/chamber` with a JSON object body. The body always carries an
+    `"op"` field naming the operation, plus that operation's parameters. The
+    controller answers with a JSON object. The operation is selected by the
+    body — **never** by the URL path or query string. There are exactly four
+    operations: `get_status`, `set_temperature`, `start`, `stop`.
+
+    On any failure (unknown op, missing/invalid parameter, interlock open)
+    the controller replies HTTP 200 with `{"ok": false, "error": "<reason>"}`
+    so that thin clients never need to branch on HTTP status codes.
+
+    No authentication is required on the local bench network (see the
+    accompanying API guide, chamberlink-notes.md).
+  contact:
+    name: Lumen Instruments Application Engineering
+    email: appeng@lumen-instruments.example
+servers:
+  - url: http://chamberlink.local:8080
+    description: Default factory address on the bench LAN
+paths:
+  /chamber:
+    post:
+      operationId: chamberRpc
+      summary: Execute one chamber operation (op selected by request body)
+      description: |
+        Single-endpoint RPC. Send one of the four request shapes below; the
+        `op` field discriminates. Replies are listed per-operation under the
+        200 response. `get_status` is read-only and safe to poll at any rate
+        up to 10 Hz. `set_temperature` changes the active setpoint.
+        `start`/`stop` switch the conditioning system (compressor + heater)
+        on or off.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              oneOf:
+                - $ref: '#/components/schemas/GetStatusRequest'
+                - $ref: '#/components/schemas/SetTemperatureRequest'
+                - $ref: '#/components/schemas/StartRequest'
+                - $ref: '#/components/schemas/StopRequest'
+              discriminator:
+                propertyName: op
+                mapping:
+                  get_status: '#/components/schemas/GetStatusRequest'
+                  set_temperature: '#/components/schemas/SetTemperatureRequest'
+                  start: '#/components/schemas/StartRequest'
+                  stop: '#/components/schemas/StopRequest'
+            examples:
+              get_status:
+                summary: Poll the chamber state
+                value: {"op": "get_status"}
+              set_temperature:
+                summary: Program a new setpoint of 85.5 degC
+                value: {"op": "set_temperature", "celsius": 85.5}
+              start:
+                summary: Start conditioning
+                value: {"op": "start"}
+              stop:
+                summary: Stop conditioning
+                value: {"op": "stop"}
+      responses:
+        '200':
+          description: |
+            Operation result. Shape depends on the requested `op`; failures of
+            any operation use the ErrorReply shape with `"ok": false`.
+          content:
+            application/json:
+              schema:
+                oneOf:
+                  - $ref: '#/components/schemas/StatusReply'
+                  - $ref: '#/components/schemas/SetTemperatureReply'
+                  - $ref: '#/components/schemas/StartReply'
+                  - $ref: '#/components/schemas/StopReply'
+                  - $ref: '#/components/schemas/ErrorReply'
+              examples:
+                get_status:
+                  summary: >
+                    Reply to {"op": "get_status"} while soaking at 65 degC
+                    with the conditioning system running and the door closed
+                  value:
+                    temp_c: 65.0
+                    setpoint_c: 65.0
+                    door_open: false
+                    running: true
+                set_temperature:
+                  summary: >
+                    Reply to {"op": "set_temperature", "celsius": 85.5} —
+                    the accepted setpoint is echoed back
+                  value:
+                    ok: true
+                    setpoint_c: 85.5
+                start:
+                  summary: 'Reply to {"op": "start"}'
+                  value:
+                    ok: true
+                    running: true
+                stop:
+                  summary: 'Reply to {"op": "stop"}'
+                  value:
+                    ok: true
+                    running: false
+                rejected_setpoint:
+                  summary: >
+                    Reply to {"op": "set_temperature", "celsius": 200} —
+                    out of the safe envelope, refused, setpoint unchanged
+                  value:
+                    ok: false
+                    error: "setpoint 200.0 outside safe envelope [-40, 180]"
+components:
+  schemas:
+    GetStatusRequest:
+      type: object
+      required: [op]
+      additionalProperties: false
+      properties:
+        op:
+          type: string
+          enum: [get_status]
+          description: Read the live chamber state. No parameters. Safe to poll.
+    SetTemperatureRequest:
+      type: object
+      required: [op, celsius]
+      additionalProperties: false
+      properties:
+        op:
+          type: string
+          enum: [set_temperature]
+          description: Program the chamber temperature setpoint.
+        celsius:
+          type: number
+          minimum: -40
+          maximum: 180
+          description: >
+            Target air temperature in degrees Celsius. Range is the chamber
+            safe operating envelope; controller MUST refuse out-of-range
+            setpoints client-side (clients are expected to reject before
+            transmitting; the controller additionally refuses them with an
+            ErrorReply and leaves the active setpoint unchanged).
+          example: 85.5
+    StartRequest:
+      type: object
+      required: [op]
+      additionalProperties: false
+      properties:
+        op:
+          type: string
+          enum: [start]
+          description: >
+            Start conditioning: energizes the compressor and heater and begins
+            driving the air temperature toward the active setpoint.
+    StopRequest:
+      type: object
+      required: [op]
+      additionalProperties: false
+      properties:
+        op:
+          type: string
+          enum: [stop]
+          description: >
+            Stop conditioning: de-energizes the compressor and heater. The
+            setpoint is retained; the chamber drifts toward ambient.
+    StatusReply:
+      type: object
+      required: [temp_c, setpoint_c, door_open, running]
+      properties:
+        temp_c:
+          type: number
+          description: Measured chamber air temperature, degrees Celsius.
+        setpoint_c:
+          type: number
+          description: Active temperature setpoint, degrees Celsius.
+        door_open:
+          type: boolean
+          description: True when the chamber door interlock is open.
+        running:
+          type: boolean
+          description: True while the conditioning system is energized.
+      example:
+        temp_c: 65.0
+        setpoint_c: 65.0
+        door_open: false
+        running: true
+    SetTemperatureReply:
+      type: object
+      required: [ok, setpoint_c]
+      properties:
+        ok:
+          type: boolean
+          enum: [true]
+        setpoint_c:
+          type: number
+          description: The newly active setpoint, echoed back for confirmation.
+      example:
+        ok: true
+        setpoint_c: 85.5
+    StartReply:
+      type: object
+      required: [ok, running]
+      properties:
+        ok:
+          type: boolean
+          enum: [true]
+        running:
+          type: boolean
+          enum: [true]
+      example:
+        ok: true
+        running: true
+    StopReply:
+      type: object
+      required: [ok, running]
+      properties:
+        ok:
+          type: boolean
+          enum: [true]
+        running:
+          type: boolean
+          enum: [false]
+      example:
+        ok: true
+        running: false
+    ErrorReply:
+      type: object
+      required: [ok, error]
+      properties:
+        ok:
+          type: boolean
+          enum: [false]
+        error:
+          type: string
+          description: Human-readable refusal reason. The chamber state is unchanged.
+      example:
+        ok: false
+        error: "setpoint 200.0 outside safe envelope [-40, 180]"
