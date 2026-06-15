@@ -16,7 +16,7 @@ from typing import Any
 from .. import registry
 from ..driver import Driver
 from ..errors import HopError, LoadError
-from ..log import bus_logger, current_txn
+from ..log import bus_logger, current_txn, redact_url
 from ..node import Node
 from ..transport import MessageTransport, Transport
 
@@ -56,7 +56,8 @@ class TcpBus(Driver, Transport, MessageTransport):
         except OSError as e:
             raise HopError(f"connect failed: {e}", path=self.host.path, hop="tcp",
                            txn=current_txn.get(), delivered="no") from e
-        self.log.info("connect %s:%d tls=%s", self.tcp_host, self.tcp_port,
+        # log the endpoint, never any userinfo a ${ENV} address may carry (issue #20)
+        self.log.info("connect %s tls=%s", redact_url(f"{self.tcp_host}:{self.tcp_port}"),
                       not self.insecure, event="connect",
                       duration_ms=round((time.perf_counter() - t0) * 1000, 1))
 
