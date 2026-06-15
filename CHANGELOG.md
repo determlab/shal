@@ -6,6 +6,14 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+_Next release in progress — nothing here yet._
+
+## [0.1.0] - 2026-06-15
+
+First PyPI release ([`pyshal`](https://pypi.org/project/pyshal/) — import name `shal`).
+The Phase 1 synchronous core plus the driver/instrument, conformance/SDK,
+declared-limits, and human-in-the-loop approval work that landed before publishing.
+
 ### Fixed
 - **Authoring-contract drift** (#15) — aligned the `shal-build-*` skills with
   `docs/SDK.md` and the framework so a driver copied verbatim from the
@@ -88,11 +96,6 @@ All notable changes to this project are documented here. The format follows
   never silently retried. Buses are excluded (they provide transport, not
   capabilities).
 
-## [0.1.0] - 2026-06-10
-
-Phase 1: the synchronous core.
-
-### Added
 - Topology loader: versioned YAML (`shal_version: 1`) with JSON Schema
   validation, global id uniqueness, address-grammar validation at load,
   `$ref` back-links, `${ENV_VAR}` resolution for addresses and `config:` values.
