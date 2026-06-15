@@ -1,0 +1,61 @@
+name: "Feature / task (agent-ready)"
+description: "A scoped piece of work an agent or a human can pick up. Fill every field."
+labels: ["needs-triage"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Keep it **scoped**. One outcome per issue. The agent-loop only runs on
+        issues with a clear goal + testable acceptance criteria. Vague or huge?
+        Split it first. When it's ready, a maintainer adds the `agent:go` label.
+  - type: textarea
+    id: goal
+    attributes:
+      label: Goal
+      description: One or two sentences — what should be true when this is done, and why.
+      placeholder: "Users can export a report as CSV, so they can open it in Excel."
+    validations:
+      required: true
+  - type: textarea
+    id: acceptance
+    attributes:
+      label: Acceptance criteria
+      description: Testable checkboxes. The reviewer checks the diff against these, one by one.
+      value: |
+        - [ ]
+        - [ ]
+        - [ ]
+    validations:
+      required: true
+  - type: textarea
+    id: constraints
+    attributes:
+      label: Constraints
+      description: Don't-touch areas, perf/compat limits, conventions to follow.
+      placeholder: "Don't change the public API. Keep it Python 3.10-compatible."
+    validations:
+      required: false
+  - type: textarea
+    id: out_of_scope
+    attributes:
+      label: Out of scope
+      description: Explicitly what NOT to do, so the agent doesn't expand scope.
+      placeholder: "No UI changes. No new dependencies."
+    validations:
+      required: false
+  - type: textarea
+    id: context
+    attributes:
+      label: Context / starting points
+      description: Files, functions, links, prior art the implementer should start from.
+      placeholder: "See src/export/, the existing JSON exporter is the closest pattern."
+    validations:
+      required: false
+  - type: markdown
+    attributes:
+      value: |
+        ---
+        **Hard-stops:** if this work needs a public-API change, a schema/data
+        migration, a new dependency, or touches security/auth, the agent-loop will
+        stop and flag a human instead of proceeding. Note it here if you already
+        know it will.

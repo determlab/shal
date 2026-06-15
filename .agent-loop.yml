@@ -1,0 +1,51 @@
+# .agent-loop.yml — per-repo config for the agent-loop autopilot.
+# `/agent-loop:init` generates this with detected values. Commit it. Edit freely.
+version: 1
+
+# Branch the loop targets and PRs against.
+branch_base: main
+
+# Max CODER<->REVIEWER rounds before the loop gives up and flags a human.
+max_rounds: 4
+
+# Merge behaviour when the reviewer PASSES.
+#   auto_merge: true  -> arm GitHub auto-merge (merges only when required CI is green)
+#   auto_merge: false -> stop at "ready to merge"; a human merges
+# NOTE: auto-merge is REFUSED unless branch protection has a required status check.
+auto_merge: true
+merge_method: squash        # squash | merge | rebase
+
+# Commands the coder/reviewer run. Detected from pyproject.toml + .github/workflows/ci.yml.
+commands:
+  install: "pip install -e \".[dev]\""
+  test:    "python -m pytest"
+  lint:    "ruff check src tests"
+  build:   "python -m build"
+
+# What forces a human flag (see reference/hard-stops.md). Tune per repo.
+hard_stops:
+  # Editing any of these = a dependency change -> flag.
+  dependency_files:
+    - pyproject.toml
+    - requirements*.txt
+    - package.json
+    - go.mod
+    - Cargo.toml
+  # Globs that are always security/schema-sensitive -> flag if touched.
+  protected_paths:
+    - "**/auth/**"
+    - "**/security/**"
+    - "**/migrations/**"
+    - "**/*schema*"
+    - "**/approval.py"
+  # Deleting a file the branch didn't create -> flag.
+  flag_on_file_delete: true
+  # Reviewer semantically flags public API / interface changes -> flag.
+  flag_on_public_api_change: true
+
+# What the reviewer reads.
+review:
+  standards_sources:          # the "Standards" axis (auto-detected; keep what exists)
+    - AGENTS.md
+    - docs/agents/
+  spec_source: issue          # the "Spec" axis = the originating issue

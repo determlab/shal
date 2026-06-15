@@ -1,0 +1,59 @@
+# agent-loop — cloud mode (DORMANT until you enable it).
+#
+# Local mode (running /agent-loop:run or :watch from Claude Code on your machine)
+# needs NONE of this. This file lets the SAME loop run in GitHub Actions, triggered
+# when a maintainer labels an issue `agent:go`.
+#
+# To enable:
+#   1. Settings → Secrets and variables → Actions: add secret ANTHROPIC_API_KEY.
+#   2. Same page → Variables: add AGENT_LOOP_ENABLED = true.
+#   3. Make the loop contract available to the runner (pick one):
+#        a. Vendor the plugin's reference/*.md into the repo and have the prompt Read
+#           them, OR
+#        b. install the agent-loop plugin in the runner.
+#   4. VERIFY the action inputs below against the CURRENT anthropics/claude-code-action
+#      README — input names (prompt / claude_args / github_token) and the way to
+#      restrict tools change between versions. This file is a STARTER, not a
+#      guaranteed-current config.
+#   5. Ensure branch protection has a required CI check, or auto-merge stays off.
+
+name: agent-loop
+on:
+  issues:
+    types: [labeled]
+
+permissions:
+  contents: write
+  issues: write
+  pull-requests: write
+
+jobs:
+  run:
+    if: >-
+      github.event.label.name == 'agent:go' &&
+      vars.AGENT_LOOP_ENABLED == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Run the agent-loop on this issue
+        uses: anthropics/claude-code-action@v1
+        with:
+          anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          prompt: >-
+            Run the agent-loop on issue #${{ github.event.issue.number }} for this
+            repository, following the loop contract in reference/loop-contract.md,
+            coder-protocol.md, reviewer-rubric.md, and hard-stops.md (read them).
+            Load .agent-loop.yml for config. A CODER subagent and a separate REVIEWER
+            subagent loop up to max_rounds; on reviewer PASS plus a green required CI
+            check, arm auto-merge on the PR (squash) and label the issue agent:done;
+            HARD-STOP and label agent:needs-human (with an explaining comment) on any
+            public-API change, schema/data migration, new dependency, security/auth
+            change, or deletion of a file this branch did not create. NEVER auto-merge
+            without a required CI check. Post a final summary comment on the issue.
+          # Tool restriction in cloud mode is set via the action's current mechanism
+          # (e.g. a `claude_args: "--allowed-tools ..."` input). Configure it per the
+          # action README before enabling — do NOT rely on an undeclared input.
