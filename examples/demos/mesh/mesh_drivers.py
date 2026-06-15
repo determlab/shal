@@ -8,7 +8,7 @@ from __future__ import annotations
 
 from typing import Protocol, runtime_checkable
 
-from shal import Driver, Error, MessageTransport, idempotent, register
+from shal import Driver, Error, MessageTransport, idempotent, op, register
 
 
 @runtime_checkable
@@ -53,6 +53,7 @@ class UserService(_MeshDriver):
 class OrderService(_MeshDriver):
     compatible = "acme,order-service"
 
+    @op("Place an order for an item (a benign service write).", side_effect="write")
     def place_order(self, item: str, qty: int) -> str:
         """A WRITE: re-firing this places a second order. Never auto-retried."""
         return self._call(cmd="place_order", item=item, qty=qty)["order_id"]
@@ -66,6 +67,7 @@ class OrderService(_MeshDriver):
 class JobRunner(_MeshDriver):
     compatible = "acme,job-runner"
 
+    @op("Submit a job to run (a benign service write).", side_effect="write")
     def submit_job(self, job: str) -> str:
         """A WRITE: a lost reply means the job MAY be running. User decides."""
         return self._call(cmd="submit", job=job)["job_id"]
