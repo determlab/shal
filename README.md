@@ -9,7 +9,7 @@ Control it from Python, or hand it to an LLM as **typed, permission-gated tools*
 No transport code. No glue.
 
 <!-- BADGES -->
-[![GitHub stars](https://img.shields.io/github/stars/hemipaska-maker/shal?style=social)](https://github.com/hemipaska-maker/shal)
+[![GitHub stars](https://img.shields.io/github/stars/determlab/shal?style=social)](https://github.com/determlab/shal)
 [![PyPI](https://img.shields.io/badge/PyPI-coming_soon-blue)](#install)
 [![Python](https://img.shields.io/badge/python-3.10+-blue)](#install)
 [![License](https://img.shields.io/badge/license-MIT-green)](LICENSE)
@@ -145,10 +145,10 @@ any node for its sim and **nothing in your code changes**.
 > source:
 
 ```bash
-pip install git+https://github.com/hemipaska-maker/shal
+pip install git+https://github.com/determlab/shal
 
 # or, for development
-git clone https://github.com/hemipaska-maker/shal && cd shal
+git clone https://github.com/determlab/shal && cd shal
 pip install -e ".[dev]"                                  # pytest, ruff
 ```
 

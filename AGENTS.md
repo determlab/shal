@@ -138,4 +138,4 @@ Canonical triage vocabulary, used as-is (`needs-triage`, `needs-info`, `ready-fo
 **Single-context** repo; locked decisions live in `docs/DESIGN V2.md` + `docs/DECISIONS - V2.1.md` (the de-facto ADRs), glossary in module docstrings. See `docs/agents/domain.md`.
 
 ## Asking Questions
-Open an issue at https://github.com/hemipaska-maker/shal/issues and tag @hemipaska.
+Open an issue at https://github.com/determlab/shal/issues and tag @hemipaska.
