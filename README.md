@@ -147,11 +147,18 @@ any node for its sim and **nothing in your code changes**.
 > SHAL is in **alpha** (Phase 1).
 
 ```bash
-pip install pyshal        # the import name is `shal`
+pip install pyshal      # package is `pyshal`; you import it as `shal`
+```
 
-# or, from source for development
+```python
+import shal
+```
+
+For development:
+
+```bash
 git clone https://github.com/determlab/shal && cd shal
-pip install -e ".[dev]"                                  # pytest, ruff
+pip install -e ".[dev]"   # pytest, ruff
 ```
 
 Requires **Python ≥ 3.10**. Dependencies: `pyyaml`, `jsonschema`.
