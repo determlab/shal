@@ -9,8 +9,8 @@ This is a **single-context** repo (one library, not a monorepo).
 This repo predates the `CONTEXT.md` / `docs/adr/` convention, so its locked design
 knowledge lives in equivalents:
 
-- **`docs/DESIGN V2.md`** — the locked architecture (the de-facto system ADR set).
-- **`docs/DECISIONS - V2.1.md`** — the decision record; treat each entry like an ADR.
+- **`docs/design/DESIGN V2.md`** — the locked architecture (the de-facto system ADR set).
+- **`docs/design/DECISIONS - V2.1.md`** — the decision record; treat each entry like an ADR.
 - **`docs/SDK.md`** — the authoring contract (how drivers/buses/topologies are written).
 - **Module docstrings in `src/shal/*.py`** — each states the file's invariants; this is
   the de-facto glossary. Read the docstring of any module you touch.
@@ -26,9 +26,10 @@ Single-context repo:
 /
 ├── AGENTS.md                         ← project guide + this Agent skills config
 ├── docs/
-│   ├── DESIGN V2.md                  ← locked architecture (de-facto ADRs)
-│   ├── DECISIONS - V2.1.md           ← decision records
 │   ├── SDK.md                        ← authoring contract
+│   ├── design/                       ← design + decisions (in-repo only, not packaged)
+│   │   ├── DESIGN V2.md              ← locked architecture (de-facto ADRs)
+│   │   └── DECISIONS - V2.1.md       ← decision records
 │   └── agents/                       ← this skill's output
 └── src/shal/                         ← the package (module docstrings = glossary)
 ```
@@ -46,7 +47,7 @@ either you're inventing language the project doesn't use (reconsider) or there's
 
 ## Flag decision conflicts
 
-The decisions in `docs/DESIGN V2.md` / `docs/DECISIONS - V2.1.md` are **locked**. If your
+The decisions in `docs/design/DESIGN V2.md` / `docs/design/DECISIONS - V2.1.md` are **locked**. If your
 output contradicts one, surface it explicitly rather than silently overriding:
 
 > _Contradicts the "delivery-unknown writes are never auto-retried" decision — but worth

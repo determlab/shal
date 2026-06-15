@@ -10,8 +10,8 @@ core is deliberately high; extending it via drivers and buses is meant to be eas
 Three audiences, in order of how rare they are: **bus authors** (core/experts) →
 **driver authors** (the community) → **end users** (write YAML, call
 capabilities). A change that pushes complexity toward end users is rejected.
-The locked design lives in [docs/DESIGN V2.md](docs/DESIGN%20V2.md) and
-[docs/DECISIONS - V2.1.md](docs/DECISIONS%20-%20V2.1.md) — read them before
+The locked design lives in [docs/design/DESIGN V2.md](docs/design/DESIGN%20V2.md) and
+[docs/design/DECISIONS - V2.1.md](docs/design/DECISIONS%20-%20V2.1.md) — read them before
 proposing core changes; the invariants there are not up for re-litigation in a PR.
 
 ## Project layout

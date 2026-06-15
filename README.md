@@ -313,7 +313,7 @@ hardware — swap in a real transport later, and your code doesn't change.
 
 **Designed, in progress — Phase 2:**
 
-- 🚧 Async / streaming (`subscribe`, held channels) — [spec](docs/DESIGN%20-%20PHASE%202%20ASYNC.md)
+- 🚧 Async / streaming (`subscribe`, held channels) — [spec](docs/design/DESIGN%20-%20PHASE%202%20ASYNC.md)
 - 🚧 Actuator watchdog & safe-state (timeouts, auto safe-state on disconnect)
 - 🚧 Route failover for multi-path devices
 
@@ -321,9 +321,9 @@ hardware — swap in a real transport later, and your code doesn't change.
 
 ## Documentation
 
-- [Architecture & locked decisions](docs/DESIGN%20V2.md)
-- [Phase 1 implementation decisions](docs/DECISIONS%20-%20V2.1.md)
-- [Phase 2 async + watchdog spec](docs/DESIGN%20-%20PHASE%202%20ASYNC.md)
+- [Architecture & locked decisions](docs/design/DESIGN%20V2.md)
+- [Phase 1 implementation decisions](docs/design/DECISIONS%20-%20V2.1.md)
+- [Phase 2 async + watchdog spec](docs/design/DESIGN%20-%20PHASE%202%20ASYNC.md)
 - Build guides: write a [driver](.claude/skills/shal-build-driver/SKILL.md),
   a [bus](.claude/skills/shal-build-bus/SKILL.md), or a
   [topology](.claude/skills/shal-build-yaml/SKILL.md)

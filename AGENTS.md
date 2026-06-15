@@ -47,9 +47,9 @@ intent, but mypy is not in CI. Don't reference either as if it exists.
 - `tests/` — pytest suite (mirrors `src/` concerns)
 - `examples/demos/` — runnable showcases (Deebot cloud, microservice mesh); **not shipped**
 - `examples/driver-creator/` — the doc→driver generation benchmark; **not shipped**
-- `docs/` — `DESIGN V2.md` (architecture, locked decisions), `DECISIONS - V2.1.md`
+- `docs/design/` — `DESIGN V2.md` (architecture, locked decisions), `DECISIONS - V2.1.md`
 
-Read `docs/DESIGN V2.md` and `docs/DECISIONS - V2.1.md` before any core change.
+Read `docs/design/DESIGN V2.md` and `docs/design/DECISIONS - V2.1.md` before any core change.
 The design decisions there are **locked** — don't re-litigate them in a PR.
 
 ## Conventions
@@ -135,7 +135,7 @@ Canonical triage vocabulary, used as-is (`needs-triage`, `needs-info`, `ready-fo
 
 ### Domain docs
 
-**Single-context** repo; locked decisions live in `docs/DESIGN V2.md` + `docs/DECISIONS - V2.1.md` (the de-facto ADRs), glossary in module docstrings. See `docs/agents/domain.md`.
+**Single-context** repo; locked decisions live in `docs/design/DESIGN V2.md` + `docs/design/DECISIONS - V2.1.md` (the de-facto ADRs), glossary in module docstrings. See `docs/agents/domain.md`.
 
 ## Asking Questions
 Open an issue at https://github.com/determlab/shal/issues and tag @hemipaska.
