@@ -13,7 +13,7 @@ for approval before they reach the device; reads don't. No transport code, no gl
 
 <!-- BADGES -->
 [![GitHub stars](https://img.shields.io/github/stars/determlab/shal?style=social)](https://github.com/determlab/shal)
-[![PyPI](https://img.shields.io/badge/PyPI-coming_soon-blue)](#install)
+[![PyPI](https://img.shields.io/pypi/v/pyshal)](https://pypi.org/project/pyshal/)
 [![Python](https://img.shields.io/badge/python-3.10+-blue)](#install)
 [![License](https://img.shields.io/badge/license-MIT-green)](LICENSE)
 [![Status](https://img.shields.io/badge/status-alpha-orange)](#roadmap)
@@ -144,13 +144,12 @@ any node for its sim and **nothing in your code changes**.
 
 ## Install
 
-> SHAL is in **alpha** (Phase 1). A PyPI release is coming; for now install from
-> source:
+> SHAL is in **alpha** (Phase 1).
 
 ```bash
-pip install git+https://github.com/determlab/shal
+pip install pyshal        # the import name is `shal`
 
-# or, for development
+# or, from source for development
 git clone https://github.com/determlab/shal && cd shal
 pip install -e ".[dev]"                                  # pytest, ruff
 ```
