@@ -5,6 +5,7 @@ __pycache__/
 build/
 dist/
 .eggs/
+/pyshal-*/        # sdist build-staging dir left by `python -m build`
 
 # Tooling caches
 .pytest_cache/
