@@ -225,5 +225,6 @@ def _ensure_bundled() -> None:
         mcp9808,
         mcp23017,
         rigol_dp832,
+        sonos,
         tmp102,
     )

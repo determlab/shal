@@ -6,7 +6,14 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
-_Next release in progress — nothing here yet._
+### Added
+- **Sonos hero driver** (#28) — `sonos,speaker`, the first "wrap an existing
+  Python library" driver: a **root** driver (`kind=None`) wrapping `soco` (an
+  optional extra, `pip install pyshal[sonos]`, imported lazily). Play / pause /
+  stop / next / previous / volume as benign writes; now-playing / state / volume
+  as free reads — implementing a new `MediaPlayer` capability. **Sim-first**:
+  address `sim` selects a built-in in-memory model (no `soco`, no hardware), so
+  the whole "control my Sonos" flow validates with zero dependencies.
 
 ## [0.1.0] - 2026-06-15
 
