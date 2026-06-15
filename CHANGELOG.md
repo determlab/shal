@@ -23,6 +23,13 @@ All notable changes to this project are documented here. The format follows
   as free reads — implementing a new `MediaPlayer` capability. **Sim-first**:
   address `sim` selects a built-in in-memory model (no `soco`, no hardware), so
   the whole "control my Sonos" flow validates with zero dependencies.
+- **Curated zero-config entry** (#29) — `shal-mcp --device sonos` finds a bundled
+  hero device on the LAN (per-device discovery via the device's own library) and
+  serves it with **no YAML and no code**; `--address <ip>` skips the scan and
+  `--address sim` runs against the simulator. Falls back to one clear message if
+  nothing is found. (Deliberately per-device, *not* a general auto-discovery
+  engine.) `shal.load()` now also accepts an **in-memory topology dict**, not just
+  a file path — the shape the curated entry (and a future setup flow) builds.
 
 ## [0.1.0] - 2026-06-15
 

@@ -169,8 +169,9 @@ class Hal:
             pass
 
 
-def load(path) -> Hal:
-    roots, ids = load_tree(path)
+def load(source) -> Hal:
+    """Load a topology from a YAML file path or an in-memory mapping (dict)."""
+    roots, ids = load_tree(source)
     return Hal(roots, ids)
 
 

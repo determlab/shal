@@ -32,16 +32,28 @@ _NODE_KEYS = {"id", "description", "expose", "driver", "address", "routes", "to"
               "use", "with"}
 
 
-def load_tree(path: str | os.PathLike) -> tuple[list[Node], dict[str, Node]]:
-    top = Path(path).resolve()
-    raw = top.read_text(encoding="utf-8")
-    doc = yaml.safe_load(raw)  # safe_load only — invariant
-    _validate_schema(doc, source=str(path))
+def load_tree(source: str | os.PathLike | Mapping) -> tuple[list[Node], dict[str, Node]]:
+    """Load a topology from a YAML file path, or from an in-memory mapping (the
+    shape produced by curated/zero-config entry and a future setup flow). A dict
+    is taken as the already-parsed document; includes (`use:`) in a dict topology
+    resolve from the current working directory."""
+    if isinstance(source, Mapping):
+        doc: Any = source
+        src_label = "<dict>"
+        base_dir = Path.cwd()
+        seen: tuple[Path, ...] = ()
+    else:
+        top = Path(source).resolve()
+        doc = yaml.safe_load(top.read_text(encoding="utf-8"))  # safe_load only — invariant
+        src_label = str(source)
+        base_dir = top.parent
+        seen = (top,)
+    _validate_schema(doc, source=src_label)
 
     roots: list[Node] = []
     ids: dict[str, Node] = {}
     refs: list[tuple[Node, str]] = []
-    ctx = _IncludeCtx(top_root=top.parent, base_dir=top.parent, seen=(top,))
+    ctx = _IncludeCtx(top_root=base_dir, base_dir=base_dir, seen=seen)
 
     for name, spec in doc["root"].items():
         roots.append(_build(name, spec, parent=None, ids=ids, refs=refs, ctx=ctx))
@@ -59,7 +71,7 @@ def load_tree(path: str | os.PathLike) -> tuple[list[Node], dict[str, Node]]:
     n_nodes = sum(1 for r in roots for _ in r.walk())
     logger.info("topology loaded: %d nodes, %d ids, %d refs",
                 n_nodes, len(ids), len(refs),
-                extra={"event": "loaded", "file": str(path)})
+                extra={"event": "loaded", "file": src_label})
     return roots, ids
 
 

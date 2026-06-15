@@ -222,6 +222,16 @@ Now tell the agent *"read the DUT temperature"* (runs immediately) or *"set
 human approves the `shal_approve` tool before anything reaches hardware. Opt into
 free writes with `--approve auto` (the choice is recorded in the audit log).
 
+**Zero config for a device you already own:**
+
+```bash
+pip install "pyshal[mcp,sonos]"
+shal-mcp --device sonos      # finds your Sonos on the LAN — no YAML, no code
+```
+
+`shal-mcp --device sonos --address sim` runs the whole flow against the built-in
+simulator (no hardware needed).
+
 ---
 
 ## Write a driver in 30 seconds
