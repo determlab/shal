@@ -1,0 +1,61 @@
+name: "Bug (agent-ready)"
+description: "A defect with a reproduction. Fill every field so an agent can fix it."
+labels: ["needs-triage", "bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        A bug the agent-loop can fix needs a **reproduction** and a clear
+        **expected vs actual**. The fix's acceptance criterion is usually "the repro
+        now passes as a regression test." A maintainer adds `agent:go` when ready.
+  - type: textarea
+    id: summary
+    attributes:
+      label: Summary
+      description: One sentence — what's broken.
+    validations:
+      required: true
+  - type: textarea
+    id: repro
+    attributes:
+      label: Steps to reproduce
+      description: Exact steps or a minimal snippet/command. The smaller, the better.
+      value: |
+        1.
+        2.
+        3.
+    validations:
+      required: true
+  - type: textarea
+    id: expected_actual
+    attributes:
+      label: Expected vs actual
+      value: |
+        **Expected:**
+        **Actual:**
+    validations:
+      required: true
+  - type: textarea
+    id: acceptance
+    attributes:
+      label: Acceptance criteria
+      description: How we'll know it's fixed. Default to a regression test.
+      value: |
+        - [ ] A regression test reproduces the bug and now passes
+        - [ ]
+    validations:
+      required: true
+  - type: input
+    id: env
+    attributes:
+      label: Environment
+      description: OS / version / commit, if relevant.
+    validations:
+      required: false
+  - type: textarea
+    id: context
+    attributes:
+      label: Suspected area / context
+      description: Files or functions you suspect, links, logs.
+    validations:
+      required: false
