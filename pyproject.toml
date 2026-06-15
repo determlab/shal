@@ -3,7 +3,7 @@ requires = ["setuptools>=68"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "shal"
+name = "pyshal"
 version = "0.1.0"
 description = "System/Software Hardware Abstraction Layer — device-tree-inspired, dynamic, user-space, network-capable"
 readme = "README.md"
