@@ -2,11 +2,14 @@
 
 # SHAL
 
-### Turn your whole lab — hardware *and* software — into safe tools for an AI agent.
+### Give an AI agent real hardware — gated, so it asks before it moves.
 
-Describe any setup — sensors, instruments, robots, services — in **one YAML file**.
-Control it from Python, or hand it to an LLM as **typed, permission-gated tools**.
-No transport code. No glue.
+Describe your whole lab — sensors, instruments, robots, services — in **one YAML
+file**, and hand it to an LLM as **typed, permission-gated tools**: writes stop
+for approval before they reach the device; reads don't. No transport code, no glue.
+
+> In a blind test, an agent wrote working, safety-checked drivers for **4 of 4**
+> devices from documentation alone — then drove a **real robot, gated**.
 
 <!-- BADGES -->
 [![GitHub stars](https://img.shields.io/github/stars/determlab/shal?style=social)](https://github.com/determlab/shal)
