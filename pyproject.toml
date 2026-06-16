@@ -45,7 +45,8 @@ dev = [
 ]
 
 [project.scripts]
-shal-mcp = "shal.mcp.server:main"
+shal = "shal.cli:main"
+shal-mcp = "shal.mcp.server:main"   # legacy alias of `shal mcp`
 
 [project.urls]
 Documentation = "https://github.com/determlab/shal#readme"

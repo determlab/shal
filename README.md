@@ -227,8 +227,8 @@ few lines — see the ready-to-edit examples in [examples/demos/](https://github
 (a Sonos speaker, a Deebot vacuum), then point SHAL at your topology:
 
 ```bash
-shal-mcp my-setup.yaml --probe   # one-shot: print your devices' state, then exit
-shal-mcp my-setup.yaml           # or serve it to an AI host (writes gated)
+shal probe my-setup.yaml   # one-shot: print your devices' state, then exit
+shal mcp   my-setup.yaml   # or serve it to an AI host (writes gated)
 ```
 
 ---
