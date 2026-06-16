@@ -72,6 +72,35 @@ framework (txn id, retry policy, audit, limits, tool surface). Prefix helpers
 with `_` to keep them private. ~40–80 lines is a normal driver; >200 means
 you're doing the framework's job.
 
+## 1b. Reads must be live — a value, or a raise (never a stale default)
+
+A read's return value is a **promise that the device answered this call**. SHAL's
+whole value is "trust what the agent reads," so:
+
+> **A read returns a value only if the device actually responded. Otherwise it
+> raises `shal.HopError` — never a cached, seeded, or default value dressed up as live.**
+
+For a bus-based driver this is automatic: `self.bus.txn(...)` raises on a transport
+failure, so you only reach the parse when real bytes came back. The trap is
+**wrapping a third-party library** (a cloud / async client) that returns a *default*
+before it has heard from the device — hand that back and an agent will trust a number
+the device never sent. Guard it:
+
+```python
+@idempotent
+@op("Read the battery percent.", unit="percent", side_effect="none")
+def read_battery_percent(self) -> int:
+    resp = self._client.request(GetBattery())          # your library call
+    if resp is None or not getattr(resp, "fresh", True):   # no live answer this call
+        raise shal.HopError("battery: no response from device",
+                            path=self.node.path, hop="cloud", delivered="unknown")
+    return int(resp.value)
+```
+
+Rule of thumb: if you can't point to *this call's* response, **raise** — don't return a
+guess. SHAL enforces this for its own buses; for a wrapped library only you can —
+`conformance.check_driver()` cannot see inside someone else's client. (#53, ARCHITECTURE D12.)
+
 ## 2. Capabilities
 
 Code depends on capabilities, never on driver classes. **Use a blessed protocol
