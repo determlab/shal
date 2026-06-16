@@ -17,6 +17,14 @@ All notable changes to this project are documented here. The format follows
   stays at two dependencies. The SHAL→MCP mapping lives in a dependency-free
   `shal.mcp.Bridge` (fully unit-tested without the SDK).
 
+### Fixed
+- **Approval gate fail-open** (#19) — an un-annotated, non-idempotent op on a
+  device driver is now inferred **fail-closed** as `"actuator"` (gated) instead of
+  `"write"` (ungated), so a forgotten `side_effect` stops for approval rather than
+  silently reaching hardware. Reads (`@idempotent`) stay ungated, and an explicit
+  `side_effect="write"` remains a benign, ungated state change. Makes the README's
+  "asks before it moves … unbypassable" claim true by default. Regression-tested.
+
 ## [0.1.0] - 2026-06-15
 
 First PyPI release ([`pyshal`](https://pypi.org/project/pyshal/) — import name `shal`).
