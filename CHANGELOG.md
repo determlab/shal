@@ -48,6 +48,11 @@ All notable changes to this project are documented here. The format follows
   restart fails closed. Regression-tested.
 
 ### Fixed
+- **Docs reachable for `pip` users** (#40) — README links were repo-relative, so
+  they 404'd on PyPI and for anyone who only `pip install`ed. They're now absolute
+  GitHub URLs. The **driver-authoring guide** (`docs/SDK.md`) — previously unlinked —
+  is now surfaced in the README's Documentation section, and `shal-mcp --help` points
+  at the docs + the SDK guide.
 - **Approval gate fail-open** (#19) — an un-annotated, non-idempotent op on a
   device driver is now inferred **fail-closed** as `"actuator"` (gated) instead of
   `"write"` (ungated), so a forgotten `side_effect` stops for approval rather than

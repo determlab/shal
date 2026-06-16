@@ -15,7 +15,7 @@ for approval before they reach the device; reads don't. No transport code, no gl
 [![GitHub stars](https://img.shields.io/github/stars/determlab/shal?style=social)](https://github.com/determlab/shal)
 [![PyPI](https://img.shields.io/pypi/v/pyshal)](https://pypi.org/project/pyshal/)
 [![Python](https://img.shields.io/badge/python-3.10+-blue)](#install)
-[![License](https://img.shields.io/badge/license-MIT-green)](LICENSE)
+[![License](https://img.shields.io/badge/license-MIT-green)](https://github.com/determlab/shal/blob/main/LICENSE)
 [![Status](https://img.shields.io/badge/status-alpha-orange)](#roadmap)
 
 <picture>
@@ -223,7 +223,7 @@ human approves the `shal_approve` tool before anything reaches hardware. Opt int
 free writes with `--approve auto` (the choice is recorded in the audit log).
 
 **Already own a device with a Python library?** Wrapping it as a SHAL driver is a
-few lines — see the ready-to-edit examples in [examples/demos/](examples/demos/)
+few lines — see the ready-to-edit examples in [examples/demos/](https://github.com/determlab/shal/tree/main/examples/demos/)
 (a Sonos speaker, a Deebot vacuum), then point SHAL at your topology:
 
 ```bash
@@ -352,7 +352,7 @@ hardware — swap in a real transport later, and your code doesn't change.
 
 **Designed, in progress — Phase 2:**
 
-- 🚧 Async / streaming (`subscribe`, held channels) — [spec](docs/design/DESIGN%20-%20PHASE%202%20ASYNC.md)
+- 🚧 Async / streaming (`subscribe`, held channels) — [spec](https://github.com/determlab/shal/blob/main/docs/design/DESIGN%20-%20PHASE%202%20ASYNC.md)
 - 🚧 Actuator watchdog & safe-state (timeouts, auto safe-state on disconnect)
 - 🚧 Route failover for multi-path devices
 
@@ -360,12 +360,14 @@ hardware — swap in a real transport later, and your code doesn't change.
 
 ## Documentation
 
-- [Architecture & locked decisions](docs/design/DESIGN%20V2.md)
-- [Phase 1 implementation decisions](docs/design/DECISIONS%20-%20V2.1.md)
-- [Phase 2 async + watchdog spec](docs/design/DESIGN%20-%20PHASE%202%20ASYNC.md)
-- Build guides: write a [driver](.claude/skills/shal-build-driver/SKILL.md),
-  a [bus](.claude/skills/shal-build-bus/SKILL.md), or a
-  [topology](.claude/skills/shal-build-yaml/SKILL.md)
+- [**Driver SDK** — the complete authoring contract](https://github.com/determlab/shal/blob/main/docs/SDK.md) (write a driver from docs alone)
+- [Driver / bus catalog](https://github.com/determlab/shal/blob/main/docs/CATALOG.md)
+- [Architecture & locked decisions](https://github.com/determlab/shal/blob/main/docs/design/DESIGN%20V2.md)
+- [Phase 1 implementation decisions](https://github.com/determlab/shal/blob/main/docs/design/DECISIONS%20-%20V2.1.md)
+- [Phase 2 async + watchdog spec](https://github.com/determlab/shal/blob/main/docs/design/DESIGN%20-%20PHASE%202%20ASYNC.md)
+- Build guides: write a [driver](https://github.com/determlab/shal/blob/main/.claude/skills/shal-build-driver/SKILL.md),
+  a [bus](https://github.com/determlab/shal/blob/main/.claude/skills/shal-build-bus/SKILL.md), or a
+  [topology](https://github.com/determlab/shal/blob/main/.claude/skills/shal-build-yaml/SKILL.md)
 
 ---
 
@@ -381,10 +383,10 @@ python -m pytest          # test suite
 ruff check src tests      # lint
 ```
 
-See [CONTRIBUTING.md](CONTRIBUTING.md) for the full guide.
+See [CONTRIBUTING.md](https://github.com/determlab/shal/blob/main/CONTRIBUTING.md) for the full guide.
 
 ---
 
 ## License
 
-[MIT](LICENSE).
+[MIT](https://github.com/determlab/shal/blob/main/LICENSE).

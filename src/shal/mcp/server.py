@@ -143,7 +143,9 @@ def _probe(bridge, which: str | None) -> int:
 def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(
         prog="shal-mcp",
-        description="Serve a SHAL topology to an MCP host as gated tools.")
+        description="Serve a SHAL topology to an MCP host as gated tools.",
+        epilog="Docs: https://github.com/determlab/shal#readme  |  "
+               "Write a driver: https://github.com/determlab/shal/blob/main/docs/SDK.md")
     ap.add_argument("topology", nargs="?", default=os.environ.get("SHAL_TOPOLOGY"),
                     help="path to the topology YAML (or set SHAL_TOPOLOGY)")
     ap.add_argument("--drivers", action="append", default=[], metavar="PATH",
