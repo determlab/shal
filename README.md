@@ -224,10 +224,11 @@ free writes with `--approve auto` (the choice is recorded in the audit log).
 
 **Already own a device with a Python library?** Wrapping it as a SHAL driver is a
 few lines — see the ready-to-edit examples in [examples/demos/](examples/demos/)
-(a Sonos speaker, a Deebot vacuum), then serve your topology the same way:
+(a Sonos speaker, a Deebot vacuum), then point SHAL at your topology:
 
 ```bash
-shal-mcp my-setup.yaml
+shal-mcp my-setup.yaml --probe   # one-shot: print your devices' state, then exit
+shal-mcp my-setup.yaml           # or serve it to an AI host (writes gated)
 ```
 
 ---
