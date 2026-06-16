@@ -21,7 +21,7 @@ import shal
 from shal import Driver, idempotent, op
 
 @shal.register                       # registers it in-process (no packaging needed)
-class MyThing(Driver, shal.MediaPlayer):   # a capability is OPTIONAL — see below
+class MyThing(Driver):                     # a capability is OPTIONAL — see below
     compatible = "community,my-thing"      # lowercase "vendor,part" — the binding key
     kind = None                            # root driver: no parent bus, wraps a lib
     llm_ready = True                       # REQUIRED: enforces @op metadata at load
@@ -81,10 +81,10 @@ root:
 ## Run it (no MCP host needed)
 
 ```bash
-shal probe my.yaml --drivers my_driver.py            # print device state and exit
-shal probe my.yaml --drivers my_driver.py thing__get_volume   # one named read
-shal tools my.yaml --drivers my_driver.py            # list the tools (read / gated)
-shal mcp   my.yaml --drivers my_driver.py            # serve to an MCP host (the adapter)
+shal probe my.yaml --drivers my_driver.py                    # print device state and exit
+shal probe my.yaml thing__get_volume --drivers my_driver.py # one named read (tool before --drivers)
+shal tools my.yaml --drivers my_driver.py                   # list the tools (read / gated)
+shal mcp   my.yaml --drivers my_driver.py                   # serve to an MCP host (the adapter)
 ```
 
 Or in Python:

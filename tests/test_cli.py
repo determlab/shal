@@ -80,3 +80,30 @@ def test_agent_guide_is_bundled_in_the_package():
     from importlib.resources import files
     text = (files("shal") / "AGENT_GUIDE.md").read_text(encoding="utf-8")
     assert "shal probe" in text
+
+
+def test_guide_symbols_and_commands_actually_work():
+    """Eval regression: the bundled guide must not teach a symbol that isn't
+    exported, nor a `shal probe` arg order that argparse rejects."""
+    import re
+    from importlib.resources import files
+
+    import shal
+    text = (files("shal") / "AGENT_GUIDE.md").read_text(encoding="utf-8")
+
+    # every `shal.<Name>` the guide names must really be importable from shal
+    for name in set(re.findall(r"\bshal\.([A-Z][A-Za-z0-9_]+)", text)):
+        assert hasattr(shal, name), f"guide references shal.{name}, which isn't exported"
+
+    # a named read must put the tool BEFORE --drivers (trailing positional after an
+    # optional is the order argparse rejects — see test_probe_named_read).
+    for line in text.splitlines():
+        cmd = line.split("#", 1)[0]  # drop trailing comments
+        m = re.search(r"shal probe \S+\s+--drivers\s+\S+\s+(\S+)", cmd)
+        assert m is None, f"guide shows a probe order argparse rejects: {line!r}"
+
+
+def test_media_player_capability_is_exported():
+    # the guide and capability list name it; subclassing it must not AttributeError
+    import shal
+    assert hasattr(shal, "MediaPlayer")
