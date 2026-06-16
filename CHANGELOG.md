@@ -59,6 +59,12 @@ All notable changes to this project are documented here. The format follows
   into the confirm call are ignored — and pending tickets are in-memory only, so a
   restart fails closed. Regression-tested.
 
+### Changed
+- **CI hardened** (#6) — a **wheel-smoke** job installs the built wheel into a clean
+  venv and runs the `shal` / `shal-mcp` CLIs + `shal docs`, and asserts the in-package
+  `AGENT_GUIDE.md` actually ships (guards entry points + package data). The test run now
+  reports coverage (`--cov`, currently ~89%).
+
 ### Fixed
 - **Unsupported device is never a dead end** (#42) — when a topology names a
   `compatible` no driver provides, the error now **signposts both ways forward**:
