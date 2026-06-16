@@ -38,6 +38,9 @@ dependencies = [
 mcp = [
     "mcp>=1.0",
 ]
+sonos = [
+    "soco>=0.27",
+]
 dev = [
     "pytest>=7",
     "ruff>=0.4",
@@ -61,6 +64,7 @@ Source = "https://github.com/determlab/shal"
 "microchip,mcp9808" = "shal.drivers.mcp9808:Mcp9808"
 "ti,ads1115" = "shal.drivers.ads1115:Ads1115"
 "microchip,mcp23017" = "shal.drivers.mcp23017:Mcp23017"
+"sonos,speaker" = "shal.drivers.sonos:SonosSpeaker"
 "shal,sim-i2c" = "shal.buses.sim:SimI2cBus"
 "shal,sim-scpi" = "shal.buses.sim_scpi:SimScpiBus"
 "shal,sim-msg" = "shal.buses.sim_msg:SimMsgBus"
