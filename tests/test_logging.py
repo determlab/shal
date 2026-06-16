@@ -19,6 +19,7 @@ class _FakeMotor(shal.Driver):
     compatible = "test,motor"
     kind = None  # root node: no parent bus needed
 
+    @shal.op("Spin the motor.", side_effect="write")  # benign, ungated write
     def spin(self, rpm: int = 100) -> str:   # write op: NOT idempotent
         return f"spinning {rpm}"
 

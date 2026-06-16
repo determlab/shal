@@ -53,6 +53,11 @@ class Rig(shal.Driver):
         RECEIVED.append(("move_at", {"dx": dx, "speed": speed}))
         return f"moved {dx}@{speed}"
 
+    @shal.op("Adjust the thing.")  # author FORGOT side_effect (issue #19 repro)
+    def unclassified(self, x: int) -> str:
+        RECEIVED.append(("unclassified", {"x": x}))
+        return f"did {x}"
+
     @shal.op("Read the sensor.", side_effect="none")
     @shal.idempotent
     def read(self) -> int:
@@ -106,6 +111,25 @@ def test_actuator_allowed_executes(hal):
     with shal.approver(shal.AutoApprove()):
         assert hal.get_device("rig").move(5) == "moved 5"
     assert RECEIVED == [("move", {"dx": 5})]
+
+
+# ---- fail-closed: an un-annotated state-changer is gated (issue #19) --------------
+
+def test_unannotated_state_changer_is_gated(hal):
+    # author wrote @op but forgot side_effect; the safe default must GATE it
+    with shal.approver(shal.DenyAll()):
+        with pytest.raises(shal.ApprovalDenied):
+            hal.get_device("rig").unclassified(1)
+    assert RECEIVED == []  # nothing reached the device
+
+
+def test_unannotated_state_changer_infers_actuator(hal):
+    spy = Spy(allow=True)
+    with shal.approver(spy):
+        hal.get_device("rig").unclassified(2)
+    (req,) = spy.seen
+    assert req.side_effect == "actuator"  # fail-closed inference, not ungated "write"
+    assert RECEIVED == [("unclassified", {"x": 2})]
 
 
 # ---- selectivity: only actuators are gated ---------------------------------------
