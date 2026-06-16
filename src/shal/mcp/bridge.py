@@ -11,6 +11,12 @@ properties live here, independent of any host:
     it to a human; the human authorizes the separate, destructive-flagged
     ``shal_approve`` tool, which executes the original call. Approval is thus an
     explicit, named, auditable step — never implicit in the action itself.
+  * **A "no" is first-class and final** (#36) — the human can authorize the
+    matching ``shal_deny`` tool, which discards the pending call. Because the
+    ticket is consumed either way, a denied (or already-run) id can never be
+    replayed as an approval. Every ticket transition — ``requested``,
+    ``approved``, ``denied`` — is written to ``shal.audit`` correlated by the
+    approval_id, so a refusal is exactly as visible as a successful action.
 
 A free-writes opt-out (#27) is available and is recorded in the audit log the
 moment it is enabled — it is a deliberate choice, never the default.
@@ -28,6 +34,7 @@ from .. import log as _log
 _audit = logging.getLogger("shal.audit")
 
 APPROVE_TOOL = "shal_approve"
+DENY_TOOL = "shal_deny"
 
 
 class Bridge:
@@ -72,6 +79,23 @@ class Bridge:
                 },
                 "annotations": {"destructiveHint": True, "readOnlyHint": False},
             })
+            defs.append({
+                "name": DENY_TOOL,
+                "description": (
+                    "Refuse a hardware action that is waiting for human approval, "
+                    "identified by approval_id. Nothing is sent and the action is "
+                    "discarded — the same approval_id can never be approved later. "
+                    "Call this when a human declines the pending action."),
+                "input_schema": {
+                    "type": "object",
+                    "properties": {"approval_id": {
+                        "type": "string",
+                        "description": "The approval_id from the approval_required result."}},
+                    "required": ["approval_id"],
+                },
+                # Denying only ever PREVENTS hardware change — safe to auto-allow.
+                "annotations": {"destructiveHint": False, "readOnlyHint": False},
+            })
         return defs
 
     # -- dispatch -------------------------------------------------------------
@@ -82,6 +106,8 @@ class Bridge:
         arguments = dict(arguments or {})
         if name == APPROVE_TOOL:
             return self._confirm(str(arguments.get("approval_id", "")))
+        if name == DENY_TOOL:
+            return self._deny(str(arguments.get("approval_id", "")))
         if name not in self._gated:
             return {"ok": False, "error": f"no tool '{name}' (see tools/list)"}
         if self.free_writes:
@@ -91,6 +117,7 @@ class Bridge:
             # gate: do NOT execute — hand back a ticket for a human to authorize
             approval_id = _log.new_txn()
             self._pending[approval_id] = (name, arguments)
+            self._audit_ticket("requested", approval_id, name)
             return {
                 "ok": False,
                 "status": "approval_required",
@@ -109,8 +136,31 @@ class Bridge:
         if pending is None:
             return {"ok": False,
                     "error": f"no pending approval '{approval_id}' "
-                             f"(it may have already run, or never existed)"}
+                             f"(it may have already run or been denied, or never existed)"}
         name, arguments = pending
+        # Execute exactly the (name, arguments) the human saw in the ticket — the
+        # approval is bound to them, NOT to anything passed alongside shal_approve.
         with shal.approver(shal.AutoApprove()):  # one-shot: the human said yes
             result = self.hal.call_tool(name, arguments)
+        self._audit_ticket("approved", approval_id, name)
         return {**result, "approved": name}
+
+    def _deny(self, approval_id: str) -> dict:
+        """Refuse a pending action (#36). Discards the ticket so nothing is sent
+        and the same id can never later be approved — a "no" is final."""
+        pending = self._pending.pop(approval_id, None)
+        if pending is None:
+            return {"ok": False,
+                    "error": f"no pending approval '{approval_id}' "
+                             f"(it may have already run or been denied, or never existed)"}
+        name, _arguments = pending
+        self._audit_ticket("denied", approval_id, name)
+        return {"ok": False, "denied": name, "approval_id": approval_id,
+                "message": f"'{name}' was denied by a human — nothing was sent."}
+
+    def _audit_ticket(self, outcome: str, approval_id: str, name: str) -> None:
+        """One audit row per ticket transition (requested/approved/denied),
+        correlated by approval_id so the no-path is as visible as the yes-path."""
+        _audit.info(f"approval ticket {outcome}: {name}",
+                    extra={"event": "audit", "op": name, "outcome": outcome,
+                           "txn": approval_id})

@@ -30,6 +30,15 @@ All notable changes to this project are documented here. The format follows
   nothing is found. (Deliberately per-device, *not* a general auto-discovery
   engine.) `shal.load()` now also accepts an **in-memory topology dict**, not just
   a file path — the shape the curated entry (and a future setup flow) builds.
+- **Approval-ticket hardening — a "no" is first-class and final** (#36) — the MCP
+  bridge gains a `shal_deny` tool that discards a pending action; because the
+  ticket is consumed on either decision, a denied (or already-run) `approval_id`
+  can never be replayed as an approval. Every ticket transition — `requested`,
+  `approved`, `denied` — is now written to `shal.audit` correlated by the
+  `approval_id`, so a refusal is exactly as visible as a successful action. The
+  approval stays bound to the `(tool, arguments)` the human saw — args smuggled
+  into the confirm call are ignored — and pending tickets are in-memory only, so a
+  restart fails closed. Regression-tested.
 
 ### Fixed
 - **Approval gate fail-open** (#19) — an un-annotated, non-idempotent op on a
