@@ -60,6 +60,11 @@ All notable changes to this project are documented here. The format follows
   restart fails closed. Regression-tested.
 
 ### Fixed
+- **Unsupported device is never a dead end** (#42) — when a topology names a
+  `compatible` no driver provides, the error now **signposts both ways forward**:
+  load a driver you already have (`--drivers`), or — for a device SHAL doesn't support
+  yet — wrap its Python library as a driver (run `shal docs`) and load it. Per
+  `docs/ARCHITECTURE.md` (the front door points at the add-a-device path).
 - **Reads must be live, not a stale default** (#53) — documented the read-freshness
   contract in the SDK (`docs/SDK.md` §1b): a read returns a value **only if the device
   answered this call**, otherwise it raises `shal.HopError` — never a cached / seeded /
