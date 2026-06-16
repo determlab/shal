@@ -7,6 +7,12 @@ All notable changes to this project are documented here. The format follows
 ## [Unreleased]
 
 ### Added
+- **In-package agent guide + `shal docs`** (#55) — a provider-neutral "add a device"
+  guide now ships **inside the wheel** (`shal/AGENT_GUIDE.md`); `shal docs` prints it. A
+  pip-only agent can author a working wrap-a-library driver — root driver, `@op`
+  side-effects, the read-freshness rule, load with `--drivers`, read with `shal probe` —
+  with no GitHub and no source-diving. The demo slice of the full Authoring Kit
+  (#22/#23/#24). Per `docs/ARCHITECTURE.md` D7 / Principle 3 (self-sufficient from the package).
 - **`shal` CLI — the base front door** (#54) — `shal probe <topology>` prints a real
   device reading and exits, `shal tools` lists the device tools (read / gated), and
   `shal mcp` serves to an MCP host (the adapter); `--drivers` loads local drivers. The
