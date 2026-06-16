@@ -54,6 +54,13 @@ All notable changes to this project are documented here. The format follows
   restart fails closed. Regression-tested.
 
 ### Fixed
+- **Reads must be live, not a stale default** (#53) — documented the read-freshness
+  contract in the SDK (`docs/SDK.md` §1b): a read returns a value **only if the device
+  answered this call**, otherwise it raises `shal.HopError` — never a cached / seeded /
+  default value dressed up as live. Guards the "trust what the agent reads" promise,
+  especially when wrapping a third-party library that returns a default before the
+  device responds (the framework can't police that — the driver author must). Per
+  `docs/ARCHITECTURE.md` D12.
 - **Docs reachable for `pip` users** (#40) — README links were repo-relative, so
   they 404'd on PyPI and for anyone who only `pip install`ed. They're now absolute
   GitHub URLs. The **driver-authoring guide** (`docs/SDK.md`) — previously unlinked —
