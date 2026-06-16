@@ -42,10 +42,11 @@ with shal.load("sonos.yaml") as hal:
     spk.pause()                                                  # benign write
 ```
 
-…or serve it to an AI host as gated tools:
+…or serve it to an AI host as gated tools (this driver is unpackaged, so point
+`--drivers` at it so `shal-mcp` registers it before loading):
 
 ```
-shal-mcp examples/demos/sonos/sonos.yaml
+shal-mcp examples/demos/sonos/sonos.yaml --drivers examples/demos/sonos/
 ```
 
 ## How it maps to SHAL concepts
