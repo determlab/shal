@@ -23,7 +23,7 @@ jobs:
       - name: Lint
         run: ruff check src tests
       - name: Test
-        run: python -m pytest
+        run: python -m pytest --cov=shal --cov-report=term-missing
 
   examples:
     # Keep examples/ alive: a src/shal change that breaks a demo or the
@@ -62,6 +62,15 @@ jobs:
       - name: sdist excludes examples/ and tests/
         run: |
           tar tzf dist/*.tar.gz | grep -E '/(examples|tests)/' && exit 1 || echo "clean"
+      - name: Wheel smoke — install the built wheel clean and run the CLI
+        run: |
+          python -m venv /tmp/ws
+          /tmp/ws/bin/pip install "$(ls dist/*.whl)"
+          /tmp/ws/bin/shal --help
+          /tmp/ws/bin/shal docs | head -1
+          /tmp/ws/bin/shal-mcp --help > /dev/null
+          # the in-package agent guide must ship (the self-sufficiency promise, #55)
+          /tmp/ws/bin/python -c "from importlib.resources import files; assert (files('shal')/'AGENT_GUIDE.md').is_file(), 'AGENT_GUIDE.md missing from the wheel'"
       - uses: actions/upload-artifact@v4
         with:
           name: dist
