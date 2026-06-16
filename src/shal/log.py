@@ -37,6 +37,23 @@ def redact(payload: bytes, limit: int = 64) -> str:
     return h + ("…" if len(payload) > limit else "")
 
 
+def redact_url(value: str) -> str:
+    """Strip credentials before a URL/endpoint reaches a log or error (rule 7).
+
+    Removes any userinfo (``user:pass@``) and URL query/fragment, keeping
+    ``scheme://host[:port]/path`` or a bare ``host:port``. A network endpoint is
+    operational context worth keeping; a credential never is. This is the single
+    sanitizer every bus routes addresses through (issue #20)."""
+    import urllib.parse
+    if "://" in value:
+        p = urllib.parse.urlsplit(value)
+        netloc = p.hostname or ""
+        if p.port is not None:
+            netloc = f"{netloc}:{p.port}"
+        return urllib.parse.urlunsplit((p.scheme, netloc, p.path, "", ""))
+    return value.rsplit("@", 1)[-1]  # bare host:port — drop any userinfo prefix
+
+
 _RESERVED_KWARGS = frozenset({"exc_info", "stack_info", "stacklevel", "extra"})
 
 

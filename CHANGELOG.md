@@ -13,6 +13,12 @@ All notable changes to this project are documented here. The format follows
   silently reaching hardware. Reads (`@idempotent`) stay ungated, and an explicit
   `side_effect="write"` remains a benign, ungated state change. Makes the README's
   "asks before it moves … unbypassable" claim true by default. Regression-tested.
+- **Secret leak in logs/errors** (#20) — credentials carried in an address
+  (`https://user:pass@host`, or userinfo on a `host:port`) and URL query strings
+  no longer reach `HopError` text or bus logs. A single `redact_url()` sanitizer
+  strips userinfo + query/fragment, keeping the bare `scheme://host[:port]/path`
+  endpoint (operational context, not a secret). Applied uniformly to the `http`,
+  `tcp`, and `scpi-raw` buses. Regression-tested.
 
 ## [0.1.0] - 2026-06-15
 
