@@ -201,6 +201,29 @@ Python doesn't change.**
 
 ---
 
+## Drive it from an agent (MCP)
+
+Expose a whole topology to an MCP host (Claude Code/Desktop, …) as gated tools —
+no glue:
+
+```bash
+pip install "pyshal[mcp]"
+shal-mcp lab.yaml            # reads run free; writes ask a human first
+```
+
+Register it with your host (example `mcpServers` block):
+
+```json
+{"mcpServers": {"shal": {"command": "shal-mcp", "args": ["lab.yaml"]}}}
+```
+
+Now tell the agent *"read the DUT temperature"* (runs immediately) or *"set
+3.3 V"* — a write **pauses**: the agent gets an `approval_required` ticket and a
+human approves the `shal_approve` tool before anything reaches hardware. Opt into
+free writes with `--approve auto` (the choice is recorded in the audit log).
+
+---
+
 ## Write a driver in 30 seconds
 
 Need a device SHAL doesn't have yet? A driver is one small class. This is the

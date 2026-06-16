@@ -6,6 +6,17 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+### Added
+- **MCP server — the agent-host front door** (#25/#26/#27) — `shal-mcp <topology.yaml>`
+  serves a SHAL topology to any MCP host (Claude Code/Desktop, …) as typed, gated
+  tools. Reads run free; a state-changing op is **never executed on first call** —
+  it returns an `approval_required` ticket that a human authorizes via the separate,
+  destructive-flagged `shal_approve` tool (host-agnostic in-band approval). `--approve
+  auto` (or `SHAL_APPROVE=auto`) opts into free writes and records the choice in the
+  audit log. The `mcp` SDK is an optional extra (`pip install pyshal[mcp]`); the core
+  stays at two dependencies. The SHAL→MCP mapping lives in a dependency-free
+  `shal.mcp.Bridge` (fully unit-tested without the SDK).
+
 ### Fixed
 - **Approval gate fail-open** (#19) — an un-annotated, non-idempotent op on a
   device driver is now inferred **fail-closed** as `"actuator"` (gated) instead of

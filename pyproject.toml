@@ -35,10 +35,17 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
+mcp = [
+    "mcp>=1.0",
+]
 dev = [
     "pytest>=7",
     "ruff>=0.4",
+    "mcp>=1.0",
 ]
+
+[project.scripts]
+shal-mcp = "shal.mcp.server:main"
 
 [project.urls]
 Documentation = "https://github.com/determlab/shal#readme"
