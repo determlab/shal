@@ -17,7 +17,7 @@ from typing import Any
 from .. import registry
 from ..driver import Driver
 from ..errors import HopError, LoadError
-from ..log import bus_logger, current_txn
+from ..log import bus_logger, current_txn, redact_url
 from ..node import Node
 from ..transport import MessageTransport, Transport
 
@@ -58,7 +58,8 @@ class ScpiRawBus(Driver, Transport, MessageTransport):
             raise HopError(f"connect failed: {e}", path=self.host.path,
                            hop="scpi-raw", txn=current_txn.get(),
                            delivered="no") from e
-        self.log.info("connect %s:%d", self.scpi_host, self.scpi_port,
+        # log the endpoint, never any userinfo a ${ENV} address may carry (issue #20)
+        self.log.info("connect %s", redact_url(f"{self.scpi_host}:{self.scpi_port}"),
                       event="connect",
                       duration_ms=round((time.perf_counter() - t0) * 1000, 1))
 

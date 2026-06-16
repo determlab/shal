@@ -6,13 +6,16 @@ import stat
 import sys
 import textwrap
 import threading
+import urllib.error
 from pathlib import Path
 
 import pytest
 
 import shal
+from shal.buses import http_bus
 from shal.buses.i2c_cli import parse_output, render_ops
 from shal.buses.ssh import ssh_argv
+from shal.log import redact_url
 from shal.transport import Read, Write
 
 
@@ -257,3 +260,41 @@ def test_tcp_exchange_roundtrip(tmp_path):
             assert reply == {"echo": {"cmd": "ping"}, "addr": "robot1"}
     finally:
         server.shutdown()
+
+
+# ---- secret redaction (issue #20): credentials never reach logs/errors -----------
+
+@pytest.mark.parametrize("raw, expected", [
+    ("https://user:secret@host.local/api/v2?token=abc", "https://host.local/api/v2"),
+    ("https://host.local:8443/x", "https://host.local:8443/x"),
+    ("user:secret@10.0.0.5:5025", "10.0.0.5:5025"),
+    ("10.0.0.5:5025", "10.0.0.5:5025"),
+])
+def test_redact_url_strips_credentials(raw, expected):
+    out = redact_url(raw)
+    assert out == expected
+    assert "secret" not in out and "token" not in out
+
+
+def test_http_error_redacts_credentials_in_url(tmp_path, monkeypatch):
+    # a credential-bearing ${ENV}-style URL must not surface in the HopError text
+    p = write(tmp_path, """
+        shal_version: 1
+        root:
+          api:
+            id: api
+            driver: shal,http
+            address: https://user:secret@device.local/api/v2?token=abc
+    """)
+    with shal.load(p) as hal:
+        bus = hal.get_node("api").driver
+
+        def boom(req, timeout=None):
+            raise urllib.error.HTTPError(req.full_url, 500, "err", {}, None)
+
+        monkeypatch.setattr(http_bus.urllib.request, "urlopen", boom)
+        with pytest.raises(shal.HopError) as ei:
+            bus.exchange("cmd", {"x": 1})
+    msg = str(ei.value)
+    assert "secret" not in msg and "token=abc" not in msg  # creds stripped
+    assert "device.local" in msg                            # endpoint kept (debuggable)

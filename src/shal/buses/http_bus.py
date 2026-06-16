@@ -17,7 +17,7 @@ from typing import Any
 from .. import registry
 from ..driver import Driver
 from ..errors import HopError, HopTimeout, LoadError
-from ..log import bus_logger, current_txn
+from ..log import bus_logger, current_txn, redact_url
 from ..node import Node
 from ..transport import MessageTransport, Transport
 
@@ -59,10 +59,11 @@ class HttpBus(Driver, Transport, MessageTransport):
                                duration_ms=round((time.perf_counter() - t0) * 1000, 1))
                 return out
             except urllib.error.HTTPError as e:
-                # server answered -> it was delivered; surface status, never retry magically
-                raise HopError(f"HTTP {e.code} from {url}", path=self.host.path,
-                               hop="http", txn=current_txn.get(),
-                               delivered="unknown") from e
+                # server answered -> it was delivered; surface status, never retry
+                # magically. redact_url strips any userinfo/query creds (issue #20)
+                raise HopError(f"HTTP {e.code} from {redact_url(url)}",
+                               path=self.host.path, hop="http",
+                               txn=current_txn.get(), delivered="unknown") from e
             except urllib.error.URLError as e:
                 reason = getattr(e, "reason", e)
                 delivered = "no" if isinstance(reason, ConnectionRefusedError) else "unknown"

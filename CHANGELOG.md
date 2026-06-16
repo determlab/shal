@@ -7,6 +7,15 @@ All notable changes to this project are documented here. The format follows
 ## [Unreleased]
 
 ### Added
+- **MCP server — the agent-host front door** (#25/#26/#27) — `shal-mcp <topology.yaml>`
+  serves a SHAL topology to any MCP host (Claude Code/Desktop, …) as typed, gated
+  tools. Reads run free; a state-changing op is **never executed on first call** —
+  it returns an `approval_required` ticket that a human authorizes via the separate,
+  destructive-flagged `shal_approve` tool (host-agnostic in-band approval). `--approve
+  auto` (or `SHAL_APPROVE=auto`) opts into free writes and records the choice in the
+  audit log. The `mcp` SDK is an optional extra (`pip install pyshal[mcp]`); the core
+  stays at two dependencies. The SHAL→MCP mapping lives in a dependency-free
+  `shal.mcp.Bridge` (fully unit-tested without the SDK).
 - **Sonos hero driver** (#28) — `sonos,speaker`, the first "wrap an existing
   Python library" driver: a **root** driver (`kind=None`) wrapping `soco` (an
   optional extra, `pip install pyshal[sonos]`, imported lazily). Play / pause /
@@ -14,6 +23,20 @@ All notable changes to this project are documented here. The format follows
   as free reads — implementing a new `MediaPlayer` capability. **Sim-first**:
   address `sim` selects a built-in in-memory model (no `soco`, no hardware), so
   the whole "control my Sonos" flow validates with zero dependencies.
+
+### Fixed
+- **Approval gate fail-open** (#19) — an un-annotated, non-idempotent op on a
+  device driver is now inferred **fail-closed** as `"actuator"` (gated) instead of
+  `"write"` (ungated), so a forgotten `side_effect` stops for approval rather than
+  silently reaching hardware. Reads (`@idempotent`) stay ungated, and an explicit
+  `side_effect="write"` remains a benign, ungated state change. Makes the README's
+  "asks before it moves … unbypassable" claim true by default. Regression-tested.
+- **Secret leak in logs/errors** (#20) — credentials carried in an address
+  (`https://user:pass@host`, or userinfo on a `host:port`) and URL query strings
+  no longer reach `HopError` text or bus logs. A single `redact_url()` sanitizer
+  strips userinfo + query/fragment, keeping the bare `scheme://host[:port]/path`
+  endpoint (operational context, not a secret). Applied uniformly to the `http`,
+  `tcp`, and `scpi-raw` buses. Regression-tested.
 
 ## [0.1.0] - 2026-06-15
 
