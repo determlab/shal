@@ -17,7 +17,7 @@ from __future__ import annotations
 from importlib.metadata import entry_points, packages_distributions
 from typing import TYPE_CHECKING
 
-from .driver import _GATED_EFFECTS
+from .driver import _GATED_EFFECTS, inferred_side_effect
 from .errors import LoadError
 
 if TYPE_CHECKING:
@@ -133,7 +133,7 @@ def _op_entries(cls: type) -> list[dict]:
     for name, fn in cls.capability_ops().items():
         meta = getattr(fn, "__shal_op__", None) or {}
         idem = bool(getattr(fn, "__shal_idempotent__", False))
-        side = meta.get("side_effect") or ("none" if idem else "write")
+        side = inferred_side_effect(fn)
         ops.append({
             "name": name,
             "description": meta.get("description"),

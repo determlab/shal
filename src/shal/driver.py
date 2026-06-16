@@ -41,6 +41,9 @@ _SIDE_EFFECTS = frozenset({"none", "write", "actuator", "config"})
 # motion ("actuator") and destructive/configuration writes ("config"). A plain
 # "write" (a benign setpoint/register) is audited but NOT gated.
 _GATED_EFFECTS = frozenset({"actuator", "config"})
+# fail-closed default (issue #19): an un-annotated, non-idempotent op infers
+# "actuator" (gated), never "write" — a forgotten side_effect must not silently
+# reach hardware. Authors opt DOWN to "write" (benign, ungated) explicitly.
 
 
 def op(description: str, *, unit: str | None = None,
@@ -51,8 +54,10 @@ def op(description: str, *, unit: str | None = None,
     `description` should say WHEN to call it, not just what it does — that is what
     a model keys on. `side_effect` is "none" (a read), "write" (a benign state
     change), "actuator" (physical motion), or "config" (a destructive/
-    configuration write); if omitted it is inferred from @idempotent. "actuator"
-    and "config" ops are gated by the approval interlock (issue #14) — they stop
+    configuration write); if omitted it is inferred FAIL-CLOSED (issue #19): an
+    @idempotent op is a read ("none"), any other op is treated as "actuator"
+    (gated) — declare "write" explicitly for a benign, ungated state change.
+    "actuator" and "config" ops are gated by the approval interlock (issue #14) — they stop
     for the active Approver before any bus I/O. The metadata
     feeds `hal.tool_schemas()` and is required on every public op of a driver that
     sets `llm_ready = True` (checked at bind — fail loudly, never at call time).
@@ -79,6 +84,21 @@ def op(description: str, *, unit: str | None = None,
                           "side_effect": side_effect, "params": params or None}
         return fn
     return deco
+
+
+def inferred_side_effect(fn: Callable) -> str:
+    """The effective side_effect of an op — the SINGLE source of truth for the
+    gate, the audit, and the advertised tool hints (advertised == enforced).
+
+    Explicit `@op(side_effect=...)` wins. Otherwise it is inferred FAIL-CLOSED
+    (issue #19): an `@idempotent` op is a read ("none"); any other un-annotated op
+    is treated as "actuator" (gated), so a forgotten annotation stops for approval
+    rather than silently reaching hardware. Authors opt DOWN to "write" (a benign,
+    ungated state change) explicitly."""
+    declared = (getattr(fn, "__shal_op__", None) or {}).get("side_effect")
+    if declared:
+        return declared
+    return "none" if getattr(fn, "__shal_idempotent__", False) else "actuator"
 
 
 class Driver:
@@ -193,9 +213,8 @@ class Driver:
         # human-in-the-loop gate (issue #14): actuator/config ops, and only device
         # drivers (a bus provides transport, not actuation — same rule as audit).
         # The approver is consulted at CALL time, so a host can inject a policy
-        # after load. side_effect: explicit @op wins, else inferred.
-        meta = getattr(fn, "__shal_op__", None) or {}
-        side_effect = meta.get("side_effect") or ("none" if retry else "write")
+        # after load. side_effect is fail-closed by default (see inferred_side_effect).
+        side_effect = inferred_side_effect(fn)
         gated = side_effect in _GATED_EFFECTS and not isinstance(self, Transport)
         sig = inspect.signature(fn) if gated else None
 

@@ -19,6 +19,7 @@ from typing import Any
 
 from . import registry
 from .approval import AutoApprove, approver
+from .driver import inferred_side_effect
 from .errors import LimitError
 from .transport import Transport
 
@@ -100,8 +101,7 @@ def _static_checks(cls: type, report: Report) -> None:
     from . import limits as _limits
     for name, fn in ops.items():
         meta = getattr(fn, "__shal_op__", None) or {}
-        idem = bool(getattr(fn, "__shal_idempotent__", False))
-        side = meta.get("side_effect") or ("none" if idem else "write")
+        side = inferred_side_effect(fn)
         if side == "none":
             continue
         declared = meta.get("params") or {}
@@ -189,9 +189,7 @@ def _probe_audit(hal, node, report: Report) -> None:
     target = None
     for opname in type(node.driver).capability_ops():
         fn = type(node.driver).capability_ops()[opname]
-        meta = getattr(fn, "__shal_op__", None) or {}
-        idem = bool(getattr(fn, "__shal_idempotent__", False))
-        side = meta.get("side_effect") or ("none" if idem else "write")
+        side = inferred_side_effect(fn)
         if side != "none":
             target = opname
             break

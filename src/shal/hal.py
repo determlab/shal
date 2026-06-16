@@ -5,7 +5,7 @@ import logging
 import re
 
 from . import limits
-from .driver import _GATED_EFFECTS
+from .driver import _GATED_EFFECTS, inferred_side_effect
 from .errors import ApprovalDenied, Error, HopError, LimitError, LoadError
 from .loader import load_tree
 from .node import Node
@@ -181,7 +181,7 @@ def _effect(fn) -> dict:
     from @idempotent (a read is 'none' and safe to repeat)."""
     meta = getattr(fn, "__shal_op__", None) or {}
     idem = bool(getattr(fn, "__shal_idempotent__", False))
-    side = meta.get("side_effect") or ("none" if idem else "write")
+    side = inferred_side_effect(fn)
     return {"side_effect": side, "idempotent": idem, "unit": meta.get("unit")}
 
 
