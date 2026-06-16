@@ -33,6 +33,13 @@ There is **no CLI entry point yet** (`shal` on the command line is not wired) an
 intent, but mypy is not in CI. Don't reference either as if it exists.
 
 ## Architecture
+
+> **North star — read first: [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md).** It holds the
+> high-level component model (the two faces: *Run* / *Author*), the key flows, the user/API
+> interfaces, and the **Decision Ledger (D1–D15)**. **Every non-trivial change MUST be
+> consistent with it — or amend the Ledger in the same PR.** Don't drift from it silently;
+> if a change fights the doc, change the doc on purpose.
+
 - `src/shal/loader.py` — YAML topology loader (safe_load, schema validation, env
   resolution, `use:` includes, `$ref` links)
 - `src/shal/transport.py` — `Transport` base + typed kind mixins (`ByteTransport`,
@@ -49,8 +56,10 @@ intent, but mypy is not in CI. Don't reference either as if it exists.
 - `examples/driver-creator/` — the doc→driver generation benchmark; **not shipped**
 - `docs/design/` — `DESIGN V2.md` (architecture, locked decisions), `DECISIONS - V2.1.md`
 
-Read `docs/design/DESIGN V2.md` and `docs/design/DECISIONS - V2.1.md` before any core change.
-The design decisions there are **locked** — don't re-litigate them in a PR.
+Before any core change: read **`docs/ARCHITECTURE.md` first** (the north star + Decision
+Ledger), then `docs/design/DESIGN V2.md` / `docs/design/DECISIONS - V2.1.md` for the
+detail. Decisions in all three are **locked** — don't re-litigate them in a PR; if one
+genuinely needs to change, amend the Decision Ledger in the same PR.
 
 ## Conventions
 - Python 3.10+, type hints everywhere, docstrings on public APIs

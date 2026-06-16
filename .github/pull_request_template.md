@@ -11,6 +11,10 @@ Closes #<!-- issue number -->
 <!-- Copy the issue's criteria; check the ones this PR meets. -->
 - [ ]
 
+## Architecture consistency
+<!-- docs/ARCHITECTURE.md is the north star (Decision Ledger D1–D15). -->
+- [ ] Consistent with `docs/ARCHITECTURE.md` — **or** this PR amends the Decision Ledger (note which `D##`)
+
 ## Reviewer verdict
 <!-- agent-loop: PASS | CHANGES (n) | (flagged). Rounds used: r / max. -->
 - **Verdict:**
