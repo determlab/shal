@@ -24,6 +24,12 @@ library.
 python demo_sim.py
 ```
 
+…or see it through the SHAL CLI in one shot — prints live state, no MCP host needed:
+
+```
+shal-mcp examples/demos/sonos/sonos_sim.yaml --drivers examples/demos/sonos/ --probe
+```
+
 ## Run against your speaker
 
 ```

@@ -22,6 +22,11 @@ All notable changes to this project are documented here. The format follows
   bring-your-own-driver setups runnable from the CLI without packaging every driver,
   while the topology YAML stays pure data (imports are operator-controlled on the
   command line). An unresolvable `compatible` now points at the flag.
+- **`shal-mcp --probe`** (#39) — a one-shot, human-runnable read: `shal-mcp my.yaml
+  --probe` prints every device's current readings and exits; `--probe <tool>` runs
+  one named read. **No MCP host required**, and (like the Bridge) it needs no `mcp`
+  extra. Reads only — writes are listed but never run. The "install → see a real
+  value in one command" path, instead of dead-ending at a stdio server.
 - **`MediaPlayer` capability + a Sonos example driver** (#28) — a new `MediaPlayer`
   capability (play / pause / stop / next / previous / volume as benign writes;
   now-playing / state / volume as free reads). The `sonos,speaker` driver that

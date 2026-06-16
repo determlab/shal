@@ -99,6 +99,47 @@ def _resolve_hal(topology: str | None):
         raise
 
 
+def _probe(bridge, which: str | None) -> int:
+    """One-shot, human-runnable read (issue #39): print real device state to the
+    terminal and exit — no MCP host needed. Reads only (writes are gated; run the
+    server for those). Uses only the pure Bridge, so it works without the `mcp`
+    extra installed.
+
+    ``--probe`` with no tool snapshots every no-arg read; ``--probe <tool>`` runs
+    one named read."""
+    defs = bridge.tool_defs()
+
+    def is_read(d) -> bool:
+        return bool((d.get("annotations") or {}).get("readOnlyHint"))
+
+    if which:
+        d = next((x for x in defs if x["name"] == which), None)
+        if d is None:
+            raise SystemExit(f"shal-mcp: no tool '{which}'. Run `--probe` (no value) "
+                             f"to list what this topology exposes.")
+        if not is_read(d):
+            raise SystemExit(f"shal-mcp: --probe runs reads only; '{which}' changes "
+                             f"hardware — run the MCP server (writes are gated).")
+        out = bridge.call(which, {})
+        print(json.dumps(out.get("result", out) if isinstance(out, dict) else out))
+        return 0
+
+    reads = [d for d in defs if is_read(d) and not d["input_schema"].get("required")]
+    writes = [d for d in defs if not is_read(d)
+              and d["name"] not in ("shal_approve", "shal_deny")]
+    print(f"# {len(reads)} read(s), {len(writes)} write(s) on this topology")
+    for d in reads:
+        try:
+            out = bridge.call(d["name"], {})
+            print(f"{d['name']}: {out.get('result', out) if isinstance(out, dict) else out}")
+        except Exception as e:  # one bad device shouldn't sink the whole snapshot
+            print(f"{d['name']}: <error: {type(e).__name__}: {e}>")
+    if writes:
+        print("# writes — not run by --probe (start the MCP server to use them): "
+              + ", ".join(d["name"] for d in writes))
+    return 0
+
+
 def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(
         prog="shal-mcp",
@@ -109,6 +150,10 @@ def main(argv: list[str] | None = None) -> int:
                     help="import local driver module(s) before loading — a .py file "
                          "or a directory of them (repeatable). For topologies that use "
                          "unpackaged drivers (registered via @shal.register).")
+    ap.add_argument("--probe", nargs="?", const="", default=None, metavar="TOOL",
+                    help="don't start the server — print a real device reading and "
+                         "exit (reads only). No value: snapshot every read. With a "
+                         "tool name: run that one read. Needs no MCP host.")
     ap.add_argument("--approve", choices=["gate", "auto"],
                     default=os.environ.get("SHAL_APPROVE", "gate"),
                     help="gate = reads free, writes need human approval (default); "
@@ -117,14 +162,17 @@ def main(argv: list[str] | None = None) -> int:
 
     _import_drivers(args.drivers)
     hal = _resolve_hal(args.topology)
-    bridge = Bridge(hal, free_writes=(args.approve == "auto"))
-    server, stdio_server = _build_server(bridge)
-
-    async def _run() -> None:
-        async with stdio_server() as (read, write):
-            await server.run(read, write, server.create_initialization_options())
-
     try:
+        bridge = Bridge(hal, free_writes=(args.approve == "auto"))
+        if args.probe is not None:                 # one-shot read, no server (#39)
+            return _probe(bridge, args.probe or None)
+
+        server, stdio_server = _build_server(bridge)
+
+        async def _run() -> None:
+            async with stdio_server() as (read, write):
+                await server.run(read, write, server.create_initialization_options())
+
         asyncio.run(_run())
     finally:
         hal.close()
