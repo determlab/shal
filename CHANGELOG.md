@@ -16,6 +16,12 @@ All notable changes to this project are documented here. The format follows
   audit log. The `mcp` SDK is an optional extra (`pip install pyshal[mcp]`); the core
   stays at two dependencies. The SHAL→MCP mapping lives in a dependency-free
   `shal.mcp.Bridge` (fully unit-tested without the SDK).
+- **`shal-mcp --drivers`** (#47) — load local/unpackaged driver modules before
+  serving: `shal-mcp my.yaml --drivers ./drivers/` imports a `.py` file or a whole
+  directory (repeatable) so each driver's `@shal.register` runs. Makes
+  bring-your-own-driver setups runnable from the CLI without packaging every driver,
+  while the topology YAML stays pure data (imports are operator-controlled on the
+  command line). An unresolvable `compatible` now points at the flag.
 - **`MediaPlayer` capability + a Sonos example driver** (#28) — a new `MediaPlayer`
   capability (play / pause / stop / next / previous / volume as benign writes;
   now-playing / state / volume as free reads). The `sonos,speaker` driver that
