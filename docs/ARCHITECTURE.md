@@ -27,7 +27,7 @@ The package gives an agent **two faces:**
               ┌─ Run    → SHAL tree + Gate → Bridge → adapters: shal CLI, MCP
    Agent ─────┤
               └─ Author → Authoring Kit            → adapters: skills, …
-                         (guide · catalog · schema · verify · examples)
+                         (in-package: guide · catalog · schema · verify; examples linked)
 ```
 
 **A — Run** (use a device that exists):
@@ -43,9 +43,9 @@ the **Authoring Kit** (in-package, provider-neutral) → adapters.
 | **Drivers / Buses** | device support (*content*): a driver bound by `compatible`; buses are transport hops (muxes select *inside* the hop) |
 | **Capabilities** | *optional* contracts for substitutability (Protocols) — a driver works without one |
 | **SHAL tree** | the loaded **S**oftware/**H**ardware system: `get_device`, `call_tool`, `tool_schemas` |
-| **Gate (Approver)** | capability-layer; reads free, writes gated |
+| **Gate** | **one gate**, enforced at the **op-wrapper** layer (on `@op side_effect`), every call path; the **Bridge renders** it as the ticket flow. Reads free, writes gated |
 | **Bridge** | the agent-facing **gated tool surface** — the runtime core, **MCP-independent** |
-| **Authoring Kit** | the in-package, provider-neutral **author → verify → use** knowledge + tools |
+| **Authoring Kit** | the in-package, provider-neutral **author → verify → use** knowledge + tools (guide · `catalog()` · schema · `conformance`). Examples are **repo-linked**, not bundled |
 | **Adapters** (thin) | `shal` CLI + MCP (over the Bridge) · skills (over the Kit) |
 
 **One line:** Topology + registered drivers → Loader builds the **SHAL tree** → **Bridge**
@@ -103,7 +103,7 @@ sequenceDiagram
     actor Human
     participant Device
     LLM->>Bridge: call_tool("arm__move", {dx:5})
-    Note over Bridge: gated → nothing sent;<br/>store (op,args), mint ticket
+    Note over Bridge: op gated (side_effect) → Bridge renders the gate:<br/>nothing sent; store (op,args), mint ticket
     Bridge-->>LLM: approval_required (id)
     LLM->>Human: approve arm__move(dx=5)?
     alt Human approves
@@ -158,20 +158,21 @@ sequenceDiagram
 
 | # | Decision | Source |
 |---|---|---|
-| D1 | **Device-agnostic core:** no bundled devices; drivers + capability *contracts* are content, not framework | #46 |
+| D1 | **Device-agnostic core:** device **drivers** + **examples** aren't bundled (repo / community). Capability **contracts** and the Authoring Kit *do* ship (governed content — D8/D13). The line: **contracts ship, drivers don't** | #46 |
 | D2 | **One self-contained core; non-MCP is primary.** The `shal` CLI, MCP, and skills are thin adapters over it | reframe |
 | D3 | **Two faces to an agent:** *Run* (Bridge) and *Author* (Authoring Kit) | this doc |
-| D4 | Gate at the **capability layer**; transport (e.g. mux select) rides *inside* the op | core |
+| D4 | **One gate**, enforced at the **op-wrapper layer** (on `@op side_effect`), every call path — independent of whether a Capability is declared. The **Bridge renders** it as the ticket flow (not a second gate). Transport (mux select) rides *inside* the op | core |
 | D5 | **YAML is pure data;** code is imported only via operator-controlled `--drivers` | #47 |
 | D6 | Reads are free + **human-runnable** (`probe`); writes are **gated** (ticket → approve/deny) | #36 / #39 |
-| D7 | Agent guidance + the **Authoring Kit ship in-package, provider-neutral** | this doc |
+| D7 | Agent guidance + the **Authoring Kit ship in-package, provider-neutral** (examples stay repo-linked) | this doc |
 | D8 | **Capabilities:** the *mechanism* is framework; *contracts* are a governed standards set (semver, curated) — **optional** (just `@op` works) and **user-definable** | this doc |
-| D9 | **Base agent interface = both:** the Python API (in-process) + the `shal` CLI (shell agents) | this doc |
+| D9 | **Agents reach SHAL two ways:** the Python API (direct, in-process) + the `shal` CLI (the *primary adapter*, for shell agents) | this doc |
 | D10 | Drivers are **isolated, self-registering** units → authoring *N* drivers parallelizes | this doc |
 | D11 | **Front door = `shal` CLI** (`probe`/`call`/`tools`/`mcp`); `shal mcp` is the MCP adapter; `shal-mcp` kept as an alias. *(Gated-write over a stateless CLI needs persistent tickets — later.)* | O1 |
 | D12 | **Read freshness is a contract:** a read returns a value only if the device answered — else it **raises** (`HopError`, no silent default). SDK + `conformance` enforce it; the framework can't police library-wrapping drivers | O2 |
 | D13 | **Standard capabilities live in-core** as a governed, namespaced `shal.standards` registry (discoverable); extractable to a companion package later once the set stabilizes | O3 |
 | D14 | **Keep the code class `Hal`** (avoids shadowing the `shal` module); "SHAL tree" is a doc-level concept only | O4 |
+| D15 | **Keep async / non-blocking open** (planned evolution). The seam is the **bus contract** (`txn` / `exchange`) — grow it to *submit-then-await + response correlation* ("held channels"); don't bake blocking-only assumptions *below* that contract. Real concurrency only on multiplexable transports | this doc |
 
 ### Open decisions
 *None — all resolved. New decisions get a `D##` row above (with their source); they don't get re-litigated silently.*
