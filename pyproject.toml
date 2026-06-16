@@ -78,7 +78,7 @@ Source = "https://github.com/determlab/shal"
 where = ["src"]       # src/ layout — playground/ and tests/ are never packaged
 
 [tool.setuptools.package-data]
-shal = ["schema/*.json", "py.typed"]
+shal = ["schema/*.json", "py.typed", "AGENT_GUIDE.md"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

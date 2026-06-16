@@ -68,6 +68,14 @@ def _cmd_mcp(args) -> int:
     return server.main(argv)
 
 
+def _cmd_docs(args) -> int:
+    """Print the provider-neutral in-package agent guide (how to add a device).
+    Ships in the wheel as package data, so a pip-only agent has it offline (#55)."""
+    from importlib.resources import files
+    print((files("shal") / "AGENT_GUIDE.md").read_text(encoding="utf-8"))
+    return 0
+
+
 def main(argv: list[str] | None = None) -> int:
     try:
         import sys
@@ -78,8 +86,8 @@ def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(
         prog="shal",
         description="Drive a SHAL topology — read it, list its tools, or serve it.",
-        epilog="Docs: https://github.com/determlab/shal#readme  |  "
-               "Write a driver: https://github.com/determlab/shal/blob/main/docs/SDK.md")
+        epilog="Add a device: run `shal docs` (the bundled guide)  |  "
+               "Full SDK: https://github.com/determlab/shal/blob/main/docs/SDK.md")
     sub = ap.add_subparsers(dest="cmd", required=True, metavar="<command>")
 
     p = sub.add_parser("probe", help="one-shot read: print device state and exit (no MCP host)")
@@ -102,6 +110,9 @@ def main(argv: list[str] | None = None) -> int:
                    help="gate = reads free, writes need human approval (default); "
                         "auto = free writes (opt-out, recorded in the audit log)")
     m.set_defaults(func=_cmd_mcp)
+
+    d = sub.add_parser("docs", help="print the in-package 'add a device' agent guide")
+    d.set_defaults(func=_cmd_docs)
 
     args = ap.parse_args(argv)
     return args.func(args)

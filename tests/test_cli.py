@@ -66,3 +66,17 @@ def test_tools_lists_read_and_gated(setup, capsys):
 def test_no_subcommand_is_an_error():
     with pytest.raises(SystemExit):
         cli.main([])
+
+
+def test_docs_prints_the_in_package_guide(capsys):
+    rc = cli.main(["docs"])
+    out = capsys.readouterr().out
+    assert rc == 0
+    assert "add a device" in out.lower() and "side_effect" in out
+
+
+def test_agent_guide_is_bundled_in_the_package():
+    # importable as package data → it ships in the wheel for a pip-only agent (#55)
+    from importlib.resources import files
+    text = (files("shal") / "AGENT_GUIDE.md").read_text(encoding="utf-8")
+    assert "shal probe" in text
