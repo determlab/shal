@@ -16,20 +16,16 @@ All notable changes to this project are documented here. The format follows
   audit log. The `mcp` SDK is an optional extra (`pip install pyshal[mcp]`); the core
   stays at two dependencies. The SHAL→MCP mapping lives in a dependency-free
   `shal.mcp.Bridge` (fully unit-tested without the SDK).
-- **Sonos hero driver** (#28) — `sonos,speaker`, the first "wrap an existing
-  Python library" driver: a **root** driver (`kind=None`) wrapping `soco` (an
-  optional extra, `pip install pyshal[sonos]`, imported lazily). Play / pause /
-  stop / next / previous / volume as benign writes; now-playing / state / volume
-  as free reads — implementing a new `MediaPlayer` capability. **Sim-first**:
-  address `sim` selects a built-in in-memory model (no `soco`, no hardware), so
-  the whole "control my Sonos" flow validates with zero dependencies.
-- **Curated zero-config entry** (#29) — `shal-mcp --device sonos` finds a bundled
-  hero device on the LAN (per-device discovery via the device's own library) and
-  serves it with **no YAML and no code**; `--address <ip>` skips the scan and
-  `--address sim` runs against the simulator. Falls back to one clear message if
-  nothing is found. (Deliberately per-device, *not* a general auto-discovery
-  engine.) `shal.load()` now also accepts an **in-memory topology dict**, not just
-  a file path — the shape the curated entry (and a future setup flow) builds.
+- **`MediaPlayer` capability + a Sonos example driver** (#28) — a new `MediaPlayer`
+  capability (play / pause / stop / next / previous / volume as benign writes;
+  now-playing / state / volume as free reads). The `sonos,speaker` driver that
+  implements it — the canonical "wrap an existing Python library" root driver
+  (`kind=None`, wraps `soco`, sim-first) — ships as a **repo example**
+  (`examples/demos/sonos/`), **not** bundled in the installed package, keeping the
+  core device-agnostic (the front door points at a topology YAML; devices are
+  examples/community packages).
+- **`shal.load()` accepts an in-memory topology dict** (#29) — not just a file
+  path — the shape a programmatic setup flow builds.
 - **Approval-ticket hardening — a "no" is first-class and final** (#36) — the MCP
   bridge gains a `shal_deny` tool that discards a pending action; because the
   ticket is consumed on either decision, a denied (or already-run) `approval_id`

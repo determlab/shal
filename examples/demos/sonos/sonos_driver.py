@@ -1,13 +1,14 @@
-"""sonos,speaker — control a Sonos speaker from an AI agent (issue #28).
+"""sonos,speaker — control a Sonos speaker from an AI agent (example).
 
-The first "wrap an existing Python library" hero driver: a **root** driver
-(`kind = None`, no SHAL bus) that wraps the `soco` library. `soco` is imported
-lazily and is an optional extra (`pip install pyshal[sonos]`) — needed only to
-talk to a real speaker.
+A "wrap an existing Python library" driver: a **root** driver (`kind = None`, no
+SHAL bus) that wraps the `soco` library. This lives under `examples/` — it is
+**not** part of the installed `pyshal` package; it registers itself in-process via
+`@registry.register` (the documented out-of-tree path). A published device package
+would instead use the `shal.drivers` entry-point group.
 
-Sim-first like the rest of SHAL: address ``sim`` selects a built-in in-memory
-model (no `soco`, no hardware), so the whole "control my Sonos" flow validates
-with zero dependencies. Address otherwise is the speaker's IP/host.
+Sim-first: address ``sim`` selects a built-in in-memory model (no `soco`, no
+hardware), so the whole flow validates with zero dependencies. Any other address
+is the speaker's IP/host — talking to a real speaker needs ``pip install soco``.
 
 Playback and volume are **benign, reversible writes** (`side_effect="write"`) —
 controlling a speaker is instant, not physical actuation — so an agent drives it
@@ -18,11 +19,10 @@ from __future__ import annotations
 
 from typing import Any
 
-from .. import registry
-from ..capabilities import MediaPlayer
-from ..driver import Driver, idempotent, op
-from ..errors import HopError
-from ..log import current_txn
+from shal import Driver, idempotent, op, registry
+from shal.capabilities import MediaPlayer
+from shal.errors import HopError
+from shal.log import current_txn
 
 
 class _SimSonos:
@@ -72,7 +72,7 @@ class SonosSpeaker(Driver, MediaPlayer):
         if self._client is None:
             if self._addr == "sim":
                 self._client = _SimSonos()
-            else:  # real hardware — soco only needed here (pyshal[sonos])
+            else:  # real hardware — soco only needed here (`pip install soco`)
                 import soco  # noqa: PLC0415  (lazy by design)
                 self._client = soco.SoCo(self._addr)
         return self._client

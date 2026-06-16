@@ -222,15 +222,13 @@ Now tell the agent *"read the DUT temperature"* (runs immediately) or *"set
 human approves the `shal_approve` tool before anything reaches hardware. Opt into
 free writes with `--approve auto` (the choice is recorded in the audit log).
 
-**Zero config for a device you already own:**
+**Already own a device with a Python library?** Wrapping it as a SHAL driver is a
+few lines — see the ready-to-edit examples in [examples/demos/](examples/demos/)
+(a Sonos speaker, a Deebot vacuum), then serve your topology the same way:
 
 ```bash
-pip install "pyshal[mcp,sonos]"
-shal-mcp --device sonos      # finds your Sonos on the LAN — no YAML, no code
+shal-mcp my-setup.yaml
 ```
-
-`shal-mcp --device sonos --address sim` runs the whole flow against the built-in
-simulator (no hardware needed).
 
 ---
 

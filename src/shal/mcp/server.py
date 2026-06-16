@@ -50,52 +50,31 @@ def _build_server(bridge: Bridge):
     return server, stdio_server
 
 
-def _resolve_hal(topology: str | None, device: str | None, address: str | None):
-    """Turn the CLI inputs into a loaded Hal: an explicit topology file, or the
-    curated zero-config path (`--device sonos` → LAN discovery, with `--address`
-    / `sim` to skip the scan). Raises SystemExit with a friendly message."""
+def _resolve_hal(topology: str | None):
+    """Load the Hal from a topology YAML (CLI argument or ``SHAL_TOPOLOGY``).
+    Raises SystemExit with a friendly message if none was given."""
     import shal
 
-    if device:
-        from .. import discovery
-        if address:
-            addresses = [address]
-        else:
-            addresses = discovery.discover(device)
-            if not addresses:
-                raise SystemExit(
-                    f"shal-mcp: no '{device}' found on the LAN — pass --address <ip>, "
-                    f"use --address sim for the simulator, or supply a topology YAML.")
-        return shal.load(discovery.build_topology(device, addresses))
     if topology:
         return shal.load(topology)
     raise SystemExit(
-        "shal-mcp: provide a topology YAML (arg or SHAL_TOPOLOGY), or --device <name> "
-        "for curated zero-config discovery.")
+        "shal-mcp: provide a topology YAML (as an argument or via SHAL_TOPOLOGY). "
+        "See examples/demos/ for ready-to-edit topologies.")
 
 
 def main(argv: list[str] | None = None) -> int:
-    from .. import discovery
-
     ap = argparse.ArgumentParser(
         prog="shal-mcp",
-        description="Serve a SHAL topology to an MCP host as gated tools.",
-        epilog=f"curated --device values: {', '.join(discovery.supported())}")
+        description="Serve a SHAL topology to an MCP host as gated tools.")
     ap.add_argument("topology", nargs="?", default=os.environ.get("SHAL_TOPOLOGY"),
                     help="path to the topology YAML (or set SHAL_TOPOLOGY)")
-    ap.add_argument("--device", default=None,
-                    help="curated zero-config: discover a bundled hero device on the "
-                         "LAN (e.g. 'sonos') instead of supplying a topology")
-    ap.add_argument("--address", default=None,
-                    help="with --device: the device IP/host (skips discovery), or "
-                         "'sim' for the built-in simulator")
     ap.add_argument("--approve", choices=["gate", "auto"],
                     default=os.environ.get("SHAL_APPROVE", "gate"),
                     help="gate = reads free, writes need human approval (default); "
                          "auto = free writes (opt-out, recorded in the audit log)")
     args = ap.parse_args(argv)
 
-    hal = _resolve_hal(args.topology, args.device, args.address)
+    hal = _resolve_hal(args.topology)
     bridge = Bridge(hal, free_writes=(args.approve == "auto"))
     server, stdio_server = _build_server(bridge)
 
