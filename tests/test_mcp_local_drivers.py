@@ -56,9 +56,14 @@ def test_missing_drivers_path_is_a_clean_error(tmp_path):
         server._import_drivers([str(tmp_path / "nope.py")])
 
 
-def test_unresolved_compatible_points_at_drivers_flag(tmp_path):
+def test_unresolved_compatible_signposts_both_paths(tmp_path):
+    """An unknown compatible is never a dead end (#42): the error points at BOTH
+    loading a local driver (--drivers) AND authoring one (shal docs)."""
     f = tmp_path / "bad.yaml"
     f.write_text("shal_version: 1\nroot:\n"
                  "  x: {id: x, driver: 'nobody,here', address: a}\n", encoding="utf-8")
-    with pytest.raises(SystemExit, match="--drivers"):
+    with pytest.raises(SystemExit) as ei:
         server._resolve_hal(str(f))
+    msg = str(ei.value)
+    assert "--drivers" in msg          # load a driver you already have
+    assert "shal docs" in msg          # or author one for an unsupported device

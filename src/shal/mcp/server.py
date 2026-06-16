@@ -93,9 +93,14 @@ def _resolve_hal(topology: str | None):
         return shal.load(topology)
     except shal.LoadError as e:
         if "no driver installed" in str(e):
+            # Signpost the two ways forward — never a dead end (#42).
             raise SystemExit(
-                f"{e}\n  If that driver is a local/unpackaged module, load it with "
-                f"--drivers <file.py | directory/> (repeatable).") from e
+                f"{e}\n"
+                f"  - Already have the driver as a local file? Load it:\n"
+                f"      --drivers <file.py | directory/>   (repeatable)\n"
+                f"  - Device not supported yet? Most devices have a Python library —\n"
+                f"      wrap it as a driver in a few lines: run  shal docs  for the\n"
+                f"      guide, then load your driver with --drivers.") from e
         raise
 
 
