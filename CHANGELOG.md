@@ -48,6 +48,14 @@ All notable changes to this project are documented here. The format follows
   restart fails closed. Regression-tested.
 
 ### Fixed
+- **One gate, not two** (#52) — the MCP `Bridge` no longer ran a *parallel* gating
+  mechanism that bypassed the framework's op-layer gate (it installed `AutoApprove`
+  and re-gated on `destructiveHint`). It now installs a **deferring** Approver and
+  runs the op through the **single** op-layer gate: a gated op defers pre-I/O
+  (nothing sent) and is rendered as the `approval_required` ticket. One enforcer →
+  advertised == enforced, and an ambient approver can't silently disable the gate.
+  Per `docs/ARCHITECTURE.md` D4; adversarially tested (a gated write can't reach the
+  device ungated on either call path).
 - **Docs reachable for `pip` users** (#40) — README links were repo-relative, so
   they 404'd on PyPI and for anyone who only `pip install`ed. They're now absolute
   GitHub URLs. The **driver-authoring guide** (`docs/SDK.md`) — previously unlinked —
