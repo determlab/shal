@@ -1,0 +1,5 @@
+shal_version: 1
+root:
+  # Talking to a real speaker needs `pip install soco`. Set the address to your
+  # Sonos's IP (the Sonos app → System → About My System shows it).
+  living_room: {id: sonos, driver: 'sonos,speaker', address: 192.168.1.50}

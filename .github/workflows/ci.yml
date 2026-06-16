@@ -44,6 +44,7 @@ jobs:
           git diff --exit-code -- 'examples/**/device.yaml' 'examples/**/metadata.yaml'
       - name: Demos run headless
         run: |
+          python examples/demos/sonos/demo_sim.py
           python examples/demos/deebot/demo_sim.py
           python examples/demos/mesh/demo_mesh.py
 

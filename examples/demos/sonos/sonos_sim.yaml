@@ -1,0 +1,3 @@
+shal_version: 1
+root:
+  living_room: {id: sonos, driver: 'sonos,speaker', address: sim}
