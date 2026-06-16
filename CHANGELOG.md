@@ -7,6 +7,12 @@ All notable changes to this project are documented here. The format follows
 ## [Unreleased]
 
 ### Added
+- **`shal` CLI — the base front door** (#54) — `shal probe <topology>` prints a real
+  device reading and exits, `shal tools` lists the device tools (read / gated), and
+  `shal mcp` serves to an MCP host (the adapter); `--drivers` loads local drivers. The
+  legacy `shal-mcp` command is now an alias of `shal mcp`. SHAL stands on its own
+  without MCP — the read path no longer hides under a host-named command. Per
+  `docs/ARCHITECTURE.md` D11.
 - **MCP server — the agent-host front door** (#25/#26/#27) — `shal-mcp <topology.yaml>`
   serves a SHAL topology to any MCP host (Claude Code/Desktop, …) as typed, gated
   tools. Reads run free; a state-changing op is **never executed on first call** —
