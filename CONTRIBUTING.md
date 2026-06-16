@@ -10,9 +10,13 @@ core is deliberately high; extending it via drivers and buses is meant to be eas
 Three audiences, in order of how rare they are: **bus authors** (core/experts) →
 **driver authors** (the community) → **end users** (write YAML, call
 capabilities). A change that pushes complexity toward end users is rejected.
-The locked design lives in [docs/design/DESIGN V2.md](docs/design/DESIGN%20V2.md) and
-[docs/design/DECISIONS - V2.1.md](docs/design/DECISIONS%20-%20V2.1.md) — read them before
-proposing core changes; the invariants there are not up for re-litigation in a PR.
+Start with the **north star — [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)** (the
+high-level model + the **Decision Ledger**); the locked detail lives in
+[docs/design/DESIGN V2.md](docs/design/DESIGN%20V2.md) and
+[docs/design/DECISIONS - V2.1.md](docs/design/DECISIONS%20-%20V2.1.md). Read them before
+proposing core changes — **any non-trivial change must stay consistent with the
+architecture, or amend its Decision Ledger in the same PR.** The invariants are not up
+for re-litigation.
 
 ## Project layout
 
