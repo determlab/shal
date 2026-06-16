@@ -1,0 +1,37 @@
+{
+  "schema_version": 1,
+  "run_id": "deebot-20260616T140255018042",
+  "device": "deebot",
+  "env": {
+    "pyshal_version": "0.1.0",
+    "wheel_filename": "pyshal-0.1.0-py3-none-any.whl",
+    "git_sha": "a6948eb0c0ffeec0ffeec0ffeec0ffeec0ffee00",
+    "platform": "win32",
+    "python_version": "3.12.4"
+  },
+  "finalized": true,
+  "did_it_work": false,
+  "reached_checkpoint": "read_attempted",
+  "wall_reason": "Authored a deebot driver (compatible 'community,deebot') from the public deebot-client docs per docs/SDK.md + shal-generate-driver, but the read requires Ecovacs cloud credentials (email + password + region) that the cold start has no documented path to provide. The transport could not authenticate, so no battery/clean-state read landed. This is the expected out-of-scope wall: cloud-account devices have no credential story in the current launch.",
+  "verdict": "PARTIAL",
+  "install_ms": 25848.0,
+  "install_to_read_ms": null,
+  "checkpoints": {
+    "t_created": "2026-06-16T14:02:55.018+12:00",
+    "t_install_start": "2026-06-16T14:02:55.402+12:00",
+    "t_install_done": "2026-06-16T14:03:21.250+12:00",
+    "t_first_read_attempt": "2026-06-16T14:11:46.770+12:00",
+    "t_first_read_ok": null,
+    "t_wall_hit": "2026-06-16T14:11:47.219+12:00"
+  },
+  "read_attempt": {
+    "event": "audit",
+    "op": "battery",
+    "outcome": "error",
+    "delivered": "no",
+    "duration_ms": 449.0,
+    "txn": "9f2a",
+    "device_address": null,
+    "raw_response": null
+  }
+}

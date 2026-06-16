@@ -1,0 +1,4 @@
+# Per-run outputs are not committed; the template + infra in this dir are.
+# Each run dir holds a throwaway venv, a filled report.md, metrics.json, and any
+# debug.jsonl flight-recorder capture — all run-specific results, not source.
+runs/

@@ -1,0 +1,252 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://shal.dev/schemas/cold-start-metrics-v1.schema.json",
+  "title": "SHAL cold-start eval metrics, schema_version 1",
+  "description": "Machine-readable result of one cold-start read-test run, so runs are comparable over time. Field names and the outcome vocabulary mirror the shal.audit record schema (event/op/outcome/duration_ms/delivered/txn) so harness metrics line up with the library's own audit stream. Timestamps are offset-aware ISO-8601 with millisecond precision (datetime.now().astimezone().isoformat(timespec='milliseconds')) — note the harness deliberately REQUIRES the UTC offset, unlike shal.logging.JSONFormatter, which emits naive local time. The schema is permissive for the scaffold seed (all-null result fields validate, so the runner's seed is conformant) but the 'finalized' rules in allOf force a finished run to be internally consistent: a true verdict needs a success timestamp and a real (non-sim) device address with returned data; a false verdict needs a wall reason and the wall timestamp; a finalized run cannot be the all-null seed.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "run_id",
+    "device",
+    "env",
+    "finalized",
+    "did_it_work",
+    "reached_checkpoint",
+    "wall_reason",
+    "verdict",
+    "install_ms",
+    "install_to_read_ms",
+    "checkpoints",
+    "read_attempt"
+  ],
+  "properties": {
+    "schema_version": { "const": 1 },
+    "run_id": {
+      "type": "string",
+      "description": "The run directory name. Must be '<device>-<YYYYmmddTHHMMSSffffff>' (microsecond stamp keeps same-second re-runs unique).",
+      "pattern": "^(sonos|deebot)-\\d{8}T\\d{12}$"
+    },
+    "device": {
+      "type": "string",
+      "enum": ["sonos", "deebot"]
+    },
+    "env": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "Provenance: what this run actually tested. Populated by the runner at scaffold time so two runs over time can be attributed to a pyshal build / commit / platform.",
+      "required": [
+        "pyshal_version",
+        "wheel_filename",
+        "git_sha",
+        "platform",
+        "python_version"
+      ],
+      "properties": {
+        "pyshal_version": {
+          "description": "Version of pyshal installed (parsed from the built wheel name).",
+          "type": ["string", "null"]
+        },
+        "wheel_filename": {
+          "description": "The exact wheel file installed into the throwaway venv.",
+          "type": ["string", "null"]
+        },
+        "git_sha": {
+          "description": "git rev-parse HEAD of the working tree the wheel was built from, or null if unavailable.",
+          "type": ["string", "null"]
+        },
+        "platform": {
+          "description": "sys.platform of the machine that ran the gate (e.g. win32, linux, darwin).",
+          "type": ["string", "null"]
+        },
+        "python_version": {
+          "description": "Python version used to build the venv (e.g. 3.12.4).",
+          "type": ["string", "null"]
+        }
+      }
+    },
+    "finalized": {
+      "description": "false in the scaffold seed; the agent sets it true once the run is complete. A finalized run must satisfy the stricter consistency rules in allOf (no all-null result).",
+      "type": "boolean"
+    },
+    "did_it_work": {
+      "description": "Binary: did a REAL device (not a simulator, not localhost) respond to a read? null until determined.",
+      "type": ["boolean", "null"]
+    },
+    "reached_checkpoint": {
+      "description": "The last named checkpoint actually reached.",
+      "type": ["string", "null"],
+      "enum": ["installed", "read_attempted", "read_ok", "wall", null]
+    },
+    "wall_reason": {
+      "description": "Free text: where and why the run stopped. null only when did_it_work is true.",
+      "type": ["string", "null"]
+    },
+    "verdict": {
+      "type": ["string", "null"],
+      "enum": ["PASS", "PARTIAL", "FAIL", null]
+    },
+    "install_ms": {
+      "description": "Clean-install cost: t_install_done - t_install_start, in milliseconds. Populated by the runner. A first-class metric so install-cost regressions across launches are directly comparable.",
+      "type": ["number", "null"],
+      "minimum": 0
+    },
+    "install_to_read_ms": {
+      "description": "Headline metric: t_first_read_ok - t_install_done, in milliseconds. null if no read landed. The denominator (t_install_done) is runner-measured, not agent-guessed.",
+      "type": ["number", "null"],
+      "minimum": 0
+    },
+    "checkpoints": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "Named checkpoints as offset-aware ISO-8601 ms timestamps (or null if not reached). t_created/t_install_start/t_install_done are written by the runner; the agent fills the read/wall ones.",
+      "required": [
+        "t_created",
+        "t_install_start",
+        "t_install_done",
+        "t_first_read_attempt",
+        "t_first_read_ok",
+        "t_wall_hit"
+      ],
+      "properties": {
+        "t_created": { "$ref": "#/$defs/isoTimestamp" },
+        "t_install_start": { "$ref": "#/$defs/isoTimestamp" },
+        "t_install_done": { "$ref": "#/$defs/isoTimestamp" },
+        "t_first_read_attempt": { "$ref": "#/$defs/isoTimestamp" },
+        "t_first_read_ok": { "$ref": "#/$defs/isoTimestamp" },
+        "t_wall_hit": { "$ref": "#/$defs/isoTimestamp" }
+      }
+    },
+    "read_attempt": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "The read attempt, recorded on the shal.audit convention, PLUS real-device evidence (device_address + raw_response) so did_it_work=true can be substantiated and a simulator read cannot masquerade as a real one.",
+      "required": [
+        "event",
+        "op",
+        "outcome",
+        "delivered",
+        "duration_ms",
+        "txn",
+        "device_address",
+        "raw_response"
+      ],
+      "properties": {
+        "event": { "const": "audit" },
+        "op": {
+          "description": "Capability/op name read (e.g. now_playing, get_volume, battery, clean_state).",
+          "type": ["string", "null"]
+        },
+        "outcome": {
+          "description": "Stable shal.audit outcome vocabulary. Reads should only ever be ok or error.",
+          "type": ["string", "null"],
+          "enum": ["ok", "error", "rejected", "approved", "denied", null]
+        },
+        "delivered": {
+          "description": "Side-effect delivery. Reads are side-effect-free: 'none' expected; yes/no/unknown on a transport error.",
+          "type": ["string", "null"],
+          "enum": ["none", "yes", "no", "unknown", null]
+        },
+        "duration_ms": {
+          "type": ["number", "null"],
+          "minimum": 0
+        },
+        "txn": {
+          "description": "4-char txn id from the library's log, if captured.",
+          "type": ["string", "null"]
+        },
+        "device_address": {
+          "description": "The actual network address (IP or host) the read targeted. MUST be the real device, never a simulator. When did_it_work=true this must be a non-empty host/IP and must NOT be 'sim', 'localhost', '127.0.0.1', or '::1'.",
+          "type": ["string", "null"]
+        },
+        "raw_response": {
+          "description": "The verbatim value the device returned (a track title, a volume integer, a battery percent, a clean-state string). Required as evidence whenever did_it_work=true.",
+          "type": ["string", "number", "object", "null"]
+        }
+      }
+    }
+  },
+  "allOf": [
+    {
+      "description": "run_id and device must agree (run_id is '<device>-<stamp>').",
+      "if": { "properties": { "device": { "const": "sonos" } } },
+      "then": { "properties": { "run_id": { "pattern": "^sonos-" } } }
+    },
+    {
+      "description": "run_id and device must agree (run_id is '<device>-<stamp>').",
+      "if": { "properties": { "device": { "const": "deebot" } } },
+      "then": { "properties": { "run_id": { "pattern": "^deebot-" } } }
+    },
+    {
+      "description": "A successful run: verdict PASS, the success timestamp is set, no wall, a measured install_to_read_ms, and real-device evidence (non-sim address + a returned value).",
+      "if": { "properties": { "did_it_work": { "const": true } } },
+      "then": {
+        "properties": {
+          "verdict": { "const": "PASS" },
+          "reached_checkpoint": { "const": "read_ok" },
+          "install_to_read_ms": { "type": "number" },
+          "wall_reason": { "type": "null" },
+          "checkpoints": {
+            "properties": {
+              "t_first_read_ok": { "type": "string" },
+              "t_wall_hit": { "type": "null" }
+            }
+          },
+          "read_attempt": {
+            "properties": {
+              "outcome": { "const": "ok" },
+              "device_address": {
+                "type": "string",
+                "minLength": 1,
+                "not": { "enum": ["sim", "localhost", "127.0.0.1", "::1"] }
+              },
+              "raw_response": { "not": { "type": "null" } }
+            },
+            "required": ["device_address", "raw_response"]
+          }
+        },
+        "required": ["install_to_read_ms"]
+      }
+    },
+    {
+      "description": "A failed/partial run: verdict PARTIAL or FAIL, no headline number, no success timestamp, the wall timestamp is set, and a wall_reason explains where it stopped.",
+      "if": { "properties": { "did_it_work": { "const": false } } },
+      "then": {
+        "properties": {
+          "verdict": { "enum": ["PARTIAL", "FAIL"] },
+          "install_to_read_ms": { "type": "null" },
+          "wall_reason": { "type": "string", "minLength": 1 },
+          "checkpoints": {
+            "properties": {
+              "t_first_read_ok": { "type": "null" },
+              "t_wall_hit": { "type": "string" }
+            }
+          }
+        },
+        "required": ["wall_reason"]
+      }
+    },
+    {
+      "description": "A finalized run is a real data point, not the all-null scaffold seed: it must have a binary result, a verdict, and the last checkpoint reached.",
+      "if": { "properties": { "finalized": { "const": true } } },
+      "then": {
+        "properties": {
+          "did_it_work": { "type": "boolean" },
+          "verdict": { "type": "string", "enum": ["PASS", "PARTIAL", "FAIL"] },
+          "reached_checkpoint": {
+            "type": "string",
+            "enum": ["installed", "read_attempted", "read_ok", "wall"]
+          }
+        },
+        "required": ["did_it_work", "verdict", "reached_checkpoint"]
+      }
+    }
+  ],
+  "$defs": {
+    "isoTimestamp": {
+      "description": "Offset-aware ISO-8601 timestamp with millisecond precision (the UTC offset is REQUIRED), or null if the checkpoint was not reached.",
+      "type": ["string", "null"],
+      "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}\\.\\d{3}([+-]\\d{2}:\\d{2}|Z)$"
+    }
+  }
+}

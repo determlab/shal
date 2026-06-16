@@ -34,6 +34,9 @@ Thumbs.db
 debug.jsonl
 *.local.yaml
 
+# Cold-start eval — per-run outputs only (template + infra are tracked)
+/eval/cold-start/runs/
+
 # Third-party agent skills (e.g. `npx skills add mattpocock/skills`) — local tooling,
 # not part of SHAL. Keep the project's own shal-* skills tracked.
 /.agents/
