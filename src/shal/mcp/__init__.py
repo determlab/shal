@@ -6,6 +6,6 @@ free-writes toggle. It has **no** dependency on the `mcp` SDK. `server` is the
 thin stdio shell that imports `mcp` (the optional `pyshal[mcp]` extra) only when
 the `shal-mcp` command actually runs.
 """
-from .bridge import APPROVE_TOOL, Bridge
+from .bridge import APPROVE_TOOL, DENY_TOOL, Bridge
 
-__all__ = ["Bridge", "APPROVE_TOOL"]
+__all__ = ["Bridge", "APPROVE_TOOL", "DENY_TOOL"]
