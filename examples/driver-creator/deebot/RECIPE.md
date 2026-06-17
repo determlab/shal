@@ -2,7 +2,7 @@
 
 **Stage 1 — the driver.** You are given exactly three inputs:
 `examples/driver-creator/deebot/docs/deebot-protocol.md`,
-[docs/SDK.md](../../../docs/SDK.md), and the `.claude/skills/shal-*` skills
+[docs/SDK.md](../../../docs/SDK.md), and the `integrations/claude-code/skills/shal-*` skills
 (follow `shal-generate-driver`). From them, generate into
 `examples/driver-creator/deebot/generated/` the files `driver.py`, `sim.py`,
 `test_deebot_n20.py`, `topology.yaml`, and `NOTES.md`. The driver binds

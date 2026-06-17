@@ -4,7 +4,7 @@ closed contract (authors are told not to read SHAL source), so a skeleton that
 fails Certify is a high-impact bug. This test pins the skeleton to the contract —
 if the two drift again, CI fails.
 
-The class body below is copied from `.claude/skills/shal-build-driver/SKILL.md`
+The class body below is copied from `integrations/claude-code/skills/shal-build-driver/SKILL.md`
 (## Skeleton). Keep them identical.
 """
 from shal import Driver, TemperatureSensor, conformance, idempotent, op, register

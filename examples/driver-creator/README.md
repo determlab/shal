@@ -50,8 +50,8 @@ says how).
 ## Rules for generation agents
 
 - Inputs: `<case>/docs/` + [docs/SDK.md](../../docs/SDK.md) +
-  `.claude/skills/shal-*` (especially
-  [shal-generate-driver](../../.claude/skills/shal-generate-driver/SKILL.md)).
+  `integrations/claude-code/skills/shal-*` (especially
+  [shal-generate-driver](../../integrations/claude-code/skills/shal-generate-driver/SKILL.md)).
 - **Zero reads of `src/shal/**`**, of `examples/demos/deebot/*driver*|*bus*`, of
   other cases, and of `<case>/harness/` — list every file you read in
   `NOTES.md`.

@@ -5,9 +5,9 @@
 - `examples/driver-creator/scpi-psu/RECIPE.md` — task statement.
 - `examples/driver-creator/scpi-psu/docs/vx3210-manual.md` — the single source of truth.
 - `docs/SDK.md` — the authoring contract.
-- `.claude/skills/shal-generate-driver/SKILL.md`
-- `.claude/skills/shal-build-driver/SKILL.md`
-- `.claude/skills/shal-build-yaml/SKILL.md`
+- `integrations/claude-code/skills/shal-generate-driver/SKILL.md`
+- `integrations/claude-code/skills/shal-build-driver/SKILL.md`
+- `integrations/claude-code/skills/shal-build-yaml/SKILL.md`
 
 I did NOT read `src/shal/**`, the harness, any other case folder, or
 `playground/**`. (I introspected public objects with `dir()` at runtime to find

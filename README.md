@@ -365,9 +365,9 @@ hardware — swap in a real transport later, and your code doesn't change.
 - [Architecture & locked decisions](https://github.com/determlab/shal/blob/main/docs/design/DESIGN%20V2.md)
 - [Phase 1 implementation decisions](https://github.com/determlab/shal/blob/main/docs/design/DECISIONS%20-%20V2.1.md)
 - [Phase 2 async + watchdog spec](https://github.com/determlab/shal/blob/main/docs/design/DESIGN%20-%20PHASE%202%20ASYNC.md)
-- Build guides: write a [driver](https://github.com/determlab/shal/blob/main/.claude/skills/shal-build-driver/SKILL.md),
-  a [bus](https://github.com/determlab/shal/blob/main/.claude/skills/shal-build-bus/SKILL.md), or a
-  [topology](https://github.com/determlab/shal/blob/main/.claude/skills/shal-build-yaml/SKILL.md)
+- Build guides: write a [driver](https://github.com/determlab/shal/blob/main/integrations/claude-code/skills/shal-build-driver/SKILL.md),
+  a [bus](https://github.com/determlab/shal/blob/main/integrations/claude-code/skills/shal-build-bus/SKILL.md), or a
+  [topology](https://github.com/determlab/shal/blob/main/integrations/claude-code/skills/shal-build-yaml/SKILL.md)
 
 ---
 

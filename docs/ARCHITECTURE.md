@@ -173,6 +173,7 @@ sequenceDiagram
 | D13 | **Standard capabilities live in-core** as a governed, namespaced `shal.standards` registry (discoverable); extractable to a companion package later once the set stabilizes | O3 |
 | D14 | **Keep the code class `Hal`** (avoids shadowing the `shal` module); "SHAL tree" is a doc-level concept only | O4 |
 | D15 | **Keep async / non-blocking open** (planned evolution). The seam is the **bus contract** (`txn` / `exchange`) — grow it to *submit-then-await + response correlation* ("held channels"); don't bake blocking-only assumptions *below* that contract. Real concurrency only on multiplexable transports | this doc |
+| D16 | **Agent-host adapters live outside the agnostic core.** Single-vendor host packs (Claude Code skills; future Cursor/Codex) live in `integrations/<host>/` (→ a `shal-integrations` repo), never in `src/shal/` or the wheel. **Open-standard** adapters (the `shal` CLI, MCP) stay in core. The neutral authoring contract (`docs/SDK.md` + shipped `shal docs`) is the source of truth the host packs render — the *agent* analog of D1 (contracts ship, host packs don't) | this doc |
 
 ### Open decisions
 *None — all resolved. New decisions get a `D##` row above (with their source); they don't get re-litigated silently.*
