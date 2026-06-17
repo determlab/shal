@@ -6,7 +6,7 @@ an honest **UX/DX report with timing and friction**. Run it before a launch, aft
 onboarding change, or any time you want to know "what does a newcomer actually hit?" —
 against **any device you own**.
 
-This intentionally replaces the heavier `eval/cold-start` harness: same goal, far less
+This intentionally replaces the heavier `dev/eval/cold-start` harness: same goal, far less
 machinery. It's two fill-in-the-blank templates and a short procedure — not a framework.
 
 ## Files
