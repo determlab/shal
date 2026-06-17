@@ -43,7 +43,7 @@ Requires Python ≥ 3.10. CI runs the suite on Linux and Windows across 3.10–3
 
 Don't edit the core to add hardware support — publish a package that exposes your
 driver via the `shal.drivers` entry point (the bundled drivers are wired the same
-way in `pyproject.toml`). The `.claude/skills/` folder has step-by-step guides:
+way in `pyproject.toml`). The `integrations/claude-code/skills/` folder has step-by-step guides:
 `shal-build-driver`, `shal-build-bus`, `shal-build-yaml`.
 
 ## Pull requests

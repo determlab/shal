@@ -6,10 +6,10 @@ Generated under the controlled benchmark: docs + SDK + skills only, no reads of
 ## Files read (the complete input set used)
 
 - `examples/driver-creator/deebot/RECIPE.md`
-- `.claude/skills/shal-generate-driver/SKILL.md`
-- `.claude/skills/shal-build-driver/SKILL.md`
-- `.claude/skills/shal-build-bus/SKILL.md`
-- `.claude/skills/shal-build-yaml/SKILL.md`
+- `integrations/claude-code/skills/shal-generate-driver/SKILL.md`
+- `integrations/claude-code/skills/shal-build-driver/SKILL.md`
+- `integrations/claude-code/skills/shal-build-bus/SKILL.md`
+- `integrations/claude-code/skills/shal-build-yaml/SKILL.md`
 - `docs/SDK.md`
 - `examples/driver-creator/deebot/docs/deebot-protocol.md`  (DN20-PROTO rev 1.2)
 - `examples/driver-creator/deebot/docs/deebot-cloud-transport.md`  (DN20-CLOUD rev 1.1)

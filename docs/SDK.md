@@ -2,7 +2,7 @@
 
 The complete authoring contract. **Everything you need to write a working
 driver or bus is on this page plus the step-by-step skills**
-(`.claude/skills/shal-build-driver`, `shal-build-bus`, `shal-build-yaml`,
+(`integrations/claude-code/skills/shal-build-driver`, `shal-build-bus`, `shal-build-yaml`,
 `shal-generate-driver`). You never need to read SHAL's source — if you do,
 that's a bug in this guide: report it.
 

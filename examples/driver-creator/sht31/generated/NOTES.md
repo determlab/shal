@@ -5,9 +5,9 @@
 - `examples/driver-creator/sht31/RECIPE.md` — task statement
 - `examples/driver-creator/sht31/docs/sht31-datasheet.md` — device documentation
 - `docs/SDK.md` — authoring contract
-- `.claude/skills/shal-generate-driver/SKILL.md` — recipe
-- `.claude/skills/shal-build-driver/SKILL.md` — driver contract detail
-- `.claude/skills/shal-build-yaml/SKILL.md` — topology load API (`shal.load`, `hal.get_device`)
+- `integrations/claude-code/skills/shal-generate-driver/SKILL.md` — recipe
+- `integrations/claude-code/skills/shal-build-driver/SKILL.md` — driver contract detail
+- `integrations/claude-code/skills/shal-build-yaml/SKILL.md` — topology load API (`shal.load`, `hal.get_device`)
 
 Did NOT read: `src/shal/**`, `examples/driver-creator/sht31/harness/**`, any other
 case folder, `playground/**`.

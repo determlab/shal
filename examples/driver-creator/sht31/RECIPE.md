@@ -3,7 +3,7 @@
 Hand a generation agent exactly this instruction:
 
 > Using ONLY `examples/driver-creator/sht31/docs/` (the device documentation),
-> `docs/SDK.md` (the authoring contract), and the `.claude/skills/shal-*`
+> `docs/SDK.md` (the authoring contract), and the `integrations/claude-code/skills/shal-*`
 > skills (follow `shal-generate-driver`), generate a working driver for the
 > I²C humidity/temperature sensor with `compatible = "sensirion,sht31"`
 > (`kind = ByteTransport`, bundled `shal,sim-i2c` sim bus). The driver must

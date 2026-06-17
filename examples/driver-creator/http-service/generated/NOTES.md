@@ -6,9 +6,9 @@
 - `examples/driver-creator/http-service/docs/chamberlink-notes.md` — API guide
 - `examples/driver-creator/http-service/docs/chamberlink-openapi.yaml` — OpenAPI 3.0 spec
 - `docs/SDK.md` — SHAL authoring contract
-- `.claude/skills/shal-generate-driver/SKILL.md`
-- `.claude/skills/shal-build-driver/SKILL.md`
-- `.claude/skills/shal-build-yaml/SKILL.md`
+- `integrations/claude-code/skills/shal-generate-driver/SKILL.md`
+- `integrations/claude-code/skills/shal-build-driver/SKILL.md`
+- `integrations/claude-code/skills/shal-build-yaml/SKILL.md`
 
 No SHAL source (`src/shal/**`) and no `harness/**` were read. The only
 introspection performed was on the **public** `shal` API surface (attribute

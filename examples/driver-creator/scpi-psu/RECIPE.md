@@ -4,7 +4,7 @@
 in `examples/driver-creator/scpi-psu/docs/` (the VX3210 programming manual is
 the single source of truth — the instrument is fictional, so no outside
 knowledge applies), (b) the authoring contract `docs/SDK.md`, and (c) the
-`.claude/skills/shal-generate-driver` skill (with the other `shal-*` skills as
+`integrations/claude-code/skills/shal-generate-driver` skill (with the other `shal-*` skills as
 linked), generate a complete SHAL driver for the Vexar VX3210 bench power
 supply and write the standardized deliverables into
 `examples/driver-creator/scpi-psu/generated/`: `driver.py` (compatible
