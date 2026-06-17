@@ -40,12 +40,14 @@ mcp = [
 ]
 dev = [
     "pytest>=7",
+    "pytest-cov>=4",
     "ruff>=0.4",
     "mcp>=1.0",
 ]
 
 [project.scripts]
-shal-mcp = "shal.mcp.server:main"
+shal = "shal.cli:main"
+shal-mcp = "shal.mcp.server:main"   # legacy alias of `shal mcp`
 
 [project.urls]
 Documentation = "https://github.com/determlab/shal#readme"
@@ -77,7 +79,7 @@ Source = "https://github.com/determlab/shal"
 where = ["src"]       # src/ layout — playground/ and tests/ are never packaged
 
 [tool.setuptools.package-data]
-shal = ["schema/*.json", "py.typed"]
+shal = ["schema/*.json", "py.typed", "AGENT_GUIDE.md"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

@@ -20,6 +20,7 @@ from .capabilities import (
     ADC,
     DigitalMultimeter,
     GPIOExpander,
+    MediaPlayer,
     PowerMonitor,
     PowerSupply,
     TemperatureSensor,
@@ -61,5 +62,5 @@ __all__ = [
     "Transport", "ByteTransport", "CommandTransport", "MessageTransport",
     "Stream", "Op", "Read", "Write", "Completed",
     "TemperatureSensor", "PowerMonitor", "PowerSupply", "DigitalMultimeter",
-    "ADC", "GPIOExpander", "__version__",
+    "ADC", "GPIOExpander", "MediaPlayer", "__version__",
 ]

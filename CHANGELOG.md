@@ -7,6 +7,18 @@ All notable changes to this project are documented here. The format follows
 ## [Unreleased]
 
 ### Added
+- **In-package agent guide + `shal docs`** (#55) — a provider-neutral "add a device"
+  guide now ships **inside the wheel** (`shal/AGENT_GUIDE.md`); `shal docs` prints it. A
+  pip-only agent can author a working wrap-a-library driver — root driver, `@op`
+  side-effects, the read-freshness rule, load with `--drivers`, read with `shal probe` —
+  with no GitHub and no source-diving. The demo slice of the full Authoring Kit
+  (#22/#23/#24). Per `docs/ARCHITECTURE.md` D7 / Principle 3 (self-sufficient from the package).
+- **`shal` CLI — the base front door** (#54) — `shal probe <topology>` prints a real
+  device reading and exits, `shal tools` lists the device tools (read / gated), and
+  `shal mcp` serves to an MCP host (the adapter); `--drivers` loads local drivers. The
+  legacy `shal-mcp` command is now an alias of `shal mcp`. SHAL stands on its own
+  without MCP — the read path no longer hides under a host-named command. Per
+  `docs/ARCHITECTURE.md` D11.
 - **MCP server — the agent-host front door** (#25/#26/#27) — `shal-mcp <topology.yaml>`
   serves a SHAL topology to any MCP host (Claude Code/Desktop, …) as typed, gated
   tools. Reads run free; a state-changing op is **never executed on first call** —
@@ -47,6 +59,12 @@ All notable changes to this project are documented here. The format follows
   into the confirm call are ignored — and pending tickets are in-memory only, so a
   restart fails closed. Regression-tested.
 
+### Changed
+- **CI hardened** (#6) — a **wheel-smoke** job installs the built wheel into a clean
+  venv and runs the `shal` / `shal-mcp` CLIs + `shal docs`, and asserts the in-package
+  `AGENT_GUIDE.md` actually ships (guards entry points + package data). The test run now
+  reports coverage (`--cov`, currently ~89%).
+
 ### Fixed
 - **One gate, not two** (#52) — the MCP `Bridge` no longer ran a *parallel* gating
   mechanism that bypassed the framework's op-layer gate (it installed `AutoApprove`
@@ -56,6 +74,18 @@ All notable changes to this project are documented here. The format follows
   advertised == enforced, and an ambient approver can't silently disable the gate.
   Per `docs/ARCHITECTURE.md` D4; adversarially tested (a gated write can't reach the
   device ungated on either call path).
+- **Unsupported device is never a dead end** (#42) — when a topology names a
+  `compatible` no driver provides, the error now **signposts both ways forward**:
+  load a driver you already have (`--drivers`), or — for a device SHAL doesn't support
+  yet — wrap its Python library as a driver (run `shal docs`) and load it. Per
+  `docs/ARCHITECTURE.md` (the front door points at the add-a-device path).
+- **Reads must be live, not a stale default** (#53) — documented the read-freshness
+  contract in the SDK (`docs/SDK.md` §1b): a read returns a value **only if the device
+  answered this call**, otherwise it raises `shal.HopError` — never a cached / seeded /
+  default value dressed up as live. Guards the "trust what the agent reads" promise,
+  especially when wrapping a third-party library that returns a default before the
+  device responds (the framework can't police that — the driver author must). Per
+  `docs/ARCHITECTURE.md` D12.
 - **Docs reachable for `pip` users** (#40) — README links were repo-relative, so
   they 404'd on PyPI and for anyone who only `pip install`ed. They're now absolute
   GitHub URLs. The **driver-authoring guide** (`docs/SDK.md`) — previously unlinked —

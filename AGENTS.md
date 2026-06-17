@@ -28,9 +28,10 @@ Python 3.10+ required.
 | Sim demo | `python examples/demos/mesh/demo_mesh.py` (microservice mesh) |
 | | `python examples/demos/deebot/demo_sim.py` (simulated robot vacuum) |
 
-There is **no CLI entry point yet** (`shal` on the command line is not wired) and
-**no mypy gate** — the code is fully type-hinted and the design is mypy-clean by
-intent, but mypy is not in CI. Don't reference either as if it exists.
+The `shal` CLI is the front door (`shal probe / tools / mcp`); `shal-mcp` is the
+legacy alias of `shal mcp`. There is **no mypy gate** — the code is fully
+type-hinted and mypy-clean by intent, but mypy is not in CI; don't reference it as
+if it runs.
 
 ## Architecture
 
