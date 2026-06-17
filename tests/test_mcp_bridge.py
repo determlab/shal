@@ -213,3 +213,39 @@ def test_ticket_transitions_are_audited_by_approval_id(hal, audit_records):
     assert ("approved", approved) in rows
     assert ("requested", denied) in rows
     assert ("denied", denied) in rows
+
+
+# ---- one gate, rendered by the Bridge (issue #52) --------------------------------
+
+def test_bridge_renders_the_one_gate_and_cant_be_silently_disabled(hal):
+    """Even with an ambient 'approve everything' approver active, the Bridge in gate
+    mode STILL gates — it renders the single op-layer gate in its own scope, it does
+    not defer to (or get disabled by) whatever approver happens to be set."""
+    with shal.approver(shal.AutoApprove()):
+        out = Bridge(hal).call("rig__move", {"dx": 1})
+    assert out["status"] == "approval_required"
+    assert RECEIVED == []                         # nothing reached the device
+
+
+def test_no_gated_write_reaches_the_device_ungated(hal):
+    """A gated write is stopped pre-I/O on BOTH call paths — there is no second,
+    bypassing gate."""
+    with shal.approver(shal.DenyAll()):           # raw path, safe default
+        raw = hal.call_tool("rig__move", {"dx": 2})
+    assert raw["ok"] is False and raw["rejected"] == "approval"
+    assert RECEIVED == []
+    out = Bridge(hal).call("rig__move", {"dx": 3})  # Bridge path
+    assert out["status"] == "approval_required"
+    assert RECEIVED == []
+
+
+def test_advertised_gated_set_equals_enforced(hal):
+    """Advertised (`destructiveHint`) == enforced (what the single gate defers)."""
+    b = Bridge(hal)
+    defs = {d["name"]: d for d in b.tool_defs()}
+    assert defs["rig__move"]["annotations"]["destructiveHint"] is True
+    assert b.call("rig__move", {"dx": 1})["status"] == "approval_required"   # gated
+    assert defs["rig__read"]["annotations"]["destructiveHint"] is False
+    assert b.call("rig__read", {})["ok"] is True                             # free read
+    assert defs["rig__set_reg"]["annotations"]["destructiveHint"] is False
+    assert b.call("rig__set_reg", {"value": 5})["ok"] is True                # free benign write

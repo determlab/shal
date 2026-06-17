@@ -66,6 +66,14 @@ All notable changes to this project are documented here. The format follows
   reports coverage (`--cov`, currently ~89%).
 
 ### Fixed
+- **One gate, not two** (#52) — the MCP `Bridge` no longer ran a *parallel* gating
+  mechanism that bypassed the framework's op-layer gate (it installed `AutoApprove`
+  and re-gated on `destructiveHint`). It now installs a **deferring** Approver and
+  runs the op through the **single** op-layer gate: a gated op defers pre-I/O
+  (nothing sent) and is rendered as the `approval_required` ticket. One enforcer →
+  advertised == enforced, and an ambient approver can't silently disable the gate.
+  Per `docs/ARCHITECTURE.md` D4; adversarially tested (a gated write can't reach the
+  device ungated on either call path).
 - **Unsupported device is never a dead end** (#42) — when a topology names a
   `compatible` no driver provides, the error now **signposts both ways forward**:
   load a driver you already have (`--drivers`), or — for a device SHAL doesn't support

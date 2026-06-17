@@ -3,9 +3,11 @@
 Turns a loaded `Hal` into MCP tool definitions and dispatches calls. Two safety
 properties live here, independent of any host:
 
-  * **Reads run free, writes are gated** (#27) — the gated set is read from the
-    tool catalog's `destructiveHint`, which `inferred_side_effect` keeps in lock-
-    step with what the framework actually enforces (advertised == enforced).
+  * **One gate, rendered here** (#27, #52) — there is a single gate: the framework's
+    op-layer Approver (keyed on `@op side_effect`). The Bridge does NOT re-decide.
+    It installs a *deferring* Approver and runs the op; a gated op makes that gate
+    defer **pre-I/O** (nothing sent), and the Bridge renders the deferral as an
+    `approval_required` ticket. Advertised == enforced because there is one enforcer.
   * **Host-agnostic in-band approval** (#26) — a gated op is NEVER executed on
     first call. The bridge returns an `approval_required` ticket; the host shows
     it to a human; the human authorizes the separate, destructive-flagged
@@ -37,15 +39,30 @@ APPROVE_TOOL = "shal_approve"
 DENY_TOOL = "shal_deny"
 
 
+class _NeedsApproval(Exception):
+    """Internal signal: the single op-layer gate deferred a write for human approval.
+    Deliberately **not** a ``shal.Error`` — so it passes through ``Hal.call_tool``'s
+    error handling untouched and reaches the Bridge, which renders it as a ticket."""
+
+
+class _DeferApprover:
+    """The Bridge's rendering of the one gate. When the op-layer gate consults it for
+    a gated op, it *defers* (raises ``_NeedsApproval``) instead of deciding — pre-I/O,
+    nothing sent. So the Bridge never adds a second gate; it expresses the one gate.
+    An ambient approver can't silently disable it: the Bridge installs this in its own
+    scope, and only ``free_writes`` skips the gate."""
+
+    def approve(self, request) -> bool:  # noqa: ARG002 — defers, never decides
+        raise _NeedsApproval(getattr(request, "op", None))
+
+
 class Bridge:
     """Adapts one loaded `Hal` to the MCP tool surface."""
 
     def __init__(self, hal, *, free_writes: bool = False) -> None:
         self.hal = hal
         self.free_writes = free_writes
-        # destructiveHint == gated (actuator/config), kept honest by issue #19
-        self._gated = {t["name"]: bool(t["annotations"].get("destructiveHint"))
-                       for t in hal.tool_catalog()}
+        self._tools = {t["name"] for t in hal.tool_catalog()}  # valid op names
         self._pending: dict[str, tuple[str, dict]] = {}
         if free_writes:
             # a deliberate downgrade is on the record the instant it takes effect
@@ -100,21 +117,27 @@ class Bridge:
 
     # -- dispatch -------------------------------------------------------------
     def call(self, name: str, arguments: dict | None = None) -> dict:
-        """Dispatch one tool call. Reads/benign writes run; gated ops return an
-        ``approval_required`` ticket (pre-I/O, nothing sent) unless free-writes
-        is on; ``shal_approve`` executes a previously-ticketed call."""
+        """Dispatch one tool call. The op-layer gate is the single gate; the Bridge
+        *renders* it. A read / benign write runs; a gated op defers pre-I/O (nothing
+        sent) and comes back as an ``approval_required`` ticket — unless free-writes
+        is on. ``shal_approve`` / ``shal_deny`` resolve a ticket."""
         arguments = dict(arguments or {})
         if name == APPROVE_TOOL:
             return self._confirm(str(arguments.get("approval_id", "")))
         if name == DENY_TOOL:
             return self._deny(str(arguments.get("approval_id", "")))
-        if name not in self._gated:
+        if name not in self._tools:
             return {"ok": False, "error": f"no tool '{name}' (see tools/list)"}
         if self.free_writes:
             with shal.approver(shal.AutoApprove()):
                 return self.hal.call_tool(name, arguments)
-        if self._gated[name]:
-            # gate: do NOT execute — hand back a ticket for a human to authorize
+        # Render the ONE op-layer gate: run the op under a deferring approver. A read
+        # / benign write never consults it and just runs; a gated op makes it defer
+        # pre-I/O (nothing sent), which we turn into a ticket for a human to authorize.
+        try:
+            with shal.approver(_DeferApprover()):
+                return self.hal.call_tool(name, arguments)
+        except _NeedsApproval:
             approval_id = _log.new_txn()
             self._pending[approval_id] = (name, arguments)
             self._audit_ticket("requested", approval_id, name)
@@ -129,7 +152,6 @@ class Bridge:
                     f"has been sent. After a human approves, call '{APPROVE_TOOL}' "
                     f"with approval_id='{approval_id}'."),
             }
-        return self.hal.call_tool(name, arguments)  # read or benign write
 
     def _confirm(self, approval_id: str) -> dict:
         pending = self._pending.pop(approval_id, None)
