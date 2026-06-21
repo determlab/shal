@@ -6,6 +6,8 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+## [0.2.0] - 2026-06-22
+
 ### Added
 - **In-package agent guide + `shal docs`** (#55) — a provider-neutral "add a device"
   guide now ships **inside the wheel** (`shal/AGENT_GUIDE.md`); `shal docs` prints it. A
