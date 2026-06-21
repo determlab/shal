@@ -18,7 +18,7 @@ from __future__ import annotations
 
 from typing import Optional, Protocol, runtime_checkable
 
-from shal import Driver, Error, MessageTransport, idempotent, op, register
+from shal import Driver, Error, HopError, MessageTransport, idempotent, op, register
 
 
 @runtime_checkable
@@ -84,12 +84,22 @@ class Deebot(Driver, VacuumRobot):
 
     @idempotent
     def get_battery_percent(self) -> int:
-        return int(self._command("getBattery")["value"])
+        data = self._command("getBattery")
+        if "value" not in data:                # no reading yet (event bus not warm):
+            raise HopError(                    # raise — never report empty as success (#75/#53)
+                "battery not reported yet (device warming up — retry shortly)",
+                path=self.node.path, hop="cloud", delivered="unknown")
+        return int(data["value"])
 
     @idempotent
     def get_clean_state(self) -> str:
         """e.g. 'idle' | 'clean' | 'pause' | 'goCharging'."""
-        return str(self._command(self._CLEAN_INFO).get("state", "unknown"))
+        data = self._command(self._CLEAN_INFO)
+        if "state" not in data:                # no live state yet → raise, not "unknown" (#75/#53)
+            raise HopError(
+                "clean state not reported yet (device warming up — retry shortly)",
+                path=self.node.path, hop="cloud", delivered="unknown")
+        return str(data["state"])
 
     def send_command(self, cmd: str, data: Optional[dict] = None) -> dict:
         """Escape hatch: raw JSON command (e.g. setSpeed, setWaterInfo).
