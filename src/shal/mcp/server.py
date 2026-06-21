@@ -24,9 +24,15 @@ from .bridge import Bridge
 
 def _build_server(bridge: Bridge):
     """Wire a Bridge to a low-level MCP Server (imports the `mcp` SDK)."""
-    import mcp.types as types
-    from mcp.server import Server
-    from mcp.server.stdio import stdio_server
+    try:
+        import mcp.types as types
+        from mcp.server import Server
+        from mcp.server.stdio import stdio_server
+    except ImportError as e:  # cold user without the optional extra (#71)
+        raise SystemExit(
+            'shal-mcp: serving an MCP host needs the MCP extra — '
+            'pip install "pyshal[mcp]".\n'
+            "  (Reads need no extra: try  shal probe <topology>.)") from e
 
     server: Server = Server("shal")
 
@@ -89,6 +95,12 @@ def _resolve_hal(topology: str | None):
         raise SystemExit(
             "shal-mcp: provide a topology YAML (as an argument or via SHAL_TOPOLOGY). "
             "See examples/demos/ for ready-to-edit topologies.")
+    from pathlib import Path
+    if not Path(topology).exists():
+        # given-but-missing path: friendly, like the None and --drivers cases (#71)
+        raise SystemExit(
+            f"shal-mcp: topology file not found: {topology}\n"
+            "  Pass the path to a topology YAML — see examples/demos/ for ready-to-edit ones.")
     try:
         return shal.load(topology)
     except shal.LoadError as e:
