@@ -208,7 +208,7 @@ no glue:
 
 ```bash
 pip install "pyshal[mcp]"
-shal-mcp lab.yaml            # reads run free; writes ask a human first
+shal mcp lab.yaml            # reads run free; writes ask a human first
 ```
 
 Register it with your host (example `mcpServers` block):
