@@ -32,6 +32,64 @@ _NODE_KEYS = {"id", "description", "expose", "driver", "address", "routes", "to"
               "use", "with"}
 
 
+def _parse_dotenv(text: str) -> dict[str, str]:
+    """Minimal `.env` parser (no dependency): `KEY=VALUE` per line, `#` comments,
+    optional leading `export`, surrounding single/double quotes stripped."""
+    out: dict[str, str] = {}
+    for raw in text.splitlines():
+        line = raw.strip()
+        if not line or line.startswith("#") or "=" not in line:
+            continue
+        if line.startswith("export "):
+            line = line[len("export "):].lstrip()
+        key, _, val = line.partition("=")
+        key, val = key.strip(), val.strip()
+        if not key:
+            continue
+        if len(val) >= 2 and val[0] == val[-1] and val[0] in "\"'":
+            val = val[1:-1]
+        out[key] = val
+    return out
+
+
+def _gitignored(env_path: Path) -> bool:
+    """True if `.env` looks ignored anywhere up to the git root (or there is no
+    git root — nothing to leak to). Cheap line match, no git invocation."""
+    for parent in [env_path.parent, *env_path.parent.parents]:
+        gi = parent / ".gitignore"
+        if gi.exists():
+            lines = {ln.strip().rstrip("/")
+                     for ln in gi.read_text(encoding="utf-8", errors="ignore").splitlines()}
+            if {".env", "*.env", ".env*"} & lines:
+                return True
+        if (parent / ".git").exists():
+            return False        # reached the repo root without an ignore
+    return True                 # not inside a git repo
+
+
+def _apply_dotenv(base_dir: Path) -> None:
+    """Load a `.env` beside the topology into the environment so `${ENV}`
+    placeholders resolve — secrets never touch a host config. Real environment
+    variables WIN (a deliberately-set value is never clobbered). Agent-agnostic:
+    the core does this; no agent host knows about it (#73)."""
+    env_path = base_dir / ".env"
+    if not env_path.exists():
+        return
+    pairs = _parse_dotenv(env_path.read_text(encoding="utf-8"))
+    applied = 0
+    for k, v in pairs.items():
+        if k not in os.environ:         # real env wins
+            os.environ[k] = v
+            applied += 1
+    if applied:
+        logger.debug("applied %d var(s) from .env", applied,
+                     extra={"event": "dotenv", "file": str(env_path)})
+    if pairs and not _gitignored(env_path):
+        logger.warning(".env loaded but not gitignored — add '.env' to .gitignore "
+                       "so secrets aren't committed",
+                       extra={"event": "dotenv_unignored", "file": str(env_path)})
+
+
 def load_tree(source: str | os.PathLike | Mapping) -> tuple[list[Node], dict[str, Node]]:
     """Load a topology from a YAML file path, or from an in-memory mapping (the
     shape produced by curated/zero-config entry and a future setup flow). A dict
@@ -44,6 +102,7 @@ def load_tree(source: str | os.PathLike | Mapping) -> tuple[list[Node], dict[str
         seen: tuple[Path, ...] = ()
     else:
         top = Path(source).resolve()
+        _apply_dotenv(top.parent)  # `.env` beside the topology -> ${ENV} (#73), real env wins
         doc = yaml.safe_load(top.read_text(encoding="utf-8"))  # safe_load only — invariant
         src_label = str(source)
         base_dir = top.parent
