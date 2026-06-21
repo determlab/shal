@@ -4,6 +4,9 @@
     with shal.load("setup.yaml") as hal:
         print(hal.get_device("ambient_temp").read_celsius())
 """
+from importlib.metadata import PackageNotFoundError as _PkgNotFound
+from importlib.metadata import version as _pkg_version
+
 from . import logging  # opt-in observability: shal.logging.{Console,JSON}Formatter, capture
 from .approval import (
     ApprovalRequest,
@@ -55,9 +58,6 @@ from .transport import (
 # the installed package metadata keeps `shal.__version__` from drifting out of sync
 # with the distribution (as it did when 0.2.0 shipped while this string still said
 # 0.1.0). Falls back when running from an uninstalled source tree.
-from importlib.metadata import PackageNotFoundError as _PkgNotFound
-from importlib.metadata import version as _pkg_version
-
 try:
     __version__ = _pkg_version("pyshal")
 except _PkgNotFound:  # running from a source checkout without an install
