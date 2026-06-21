@@ -28,15 +28,21 @@ class MyThing(Driver):                     # a capability is OPTIONAL — see be
 
     def bind(self, node):
         super().bind(node)
-        import the_library                 # import the device lib lazily, here
-        self._client = the_library.Client(str(node.address))   # address from the YAML
+        self._addr = str(node.address)     # bind() ONLY reads config — NO I/O here
+        self._client = None                # connect lazily (see rule 5)
+
+    def _ensure_connected(self):           # connect ONCE, on the first real op
+        if self._client is None:
+            import the_library             # import + connect here, not in bind()
+            self._client = the_library.Client(self._addr)
+        return self._client
 
     # --- a READ (free): side_effect="none". MUST be live or raise (never a default) ---
     @idempotent
     @op("Read the current volume (0-100).", side_effect="none")
     def get_volume(self) -> int:
-        v = self._client.volume                # your library call
-        if v is None:                          # no live answer? raise — don't guess
+        v = self._ensure_connected().volume    # your library call
+        if v is None:                          # no live answer / not ready? raise — don't guess
             raise shal.HopError("no response", path=self.node.path,
                                 hop="lib", delivered="unknown")
         return int(v)
@@ -44,20 +50,27 @@ class MyThing(Driver):                     # a capability is OPTIONAL — see be
     # --- a WRITE: "write" = benign/instant (runs free); "actuator"/"config" = GATED ---
     @op("Set the volume (0-100).", side_effect="write")
     def set_volume(self, level: int) -> None:
-        self._client.volume = int(level)
+        self._ensure_connected().volume = int(level)
 ```
 
-### The four rules
+### The five rules
 1. **`@shal.register`** + **`compatible`** (`"vendor,part"`) bind the class to the YAML.
 2. **`llm_ready = True`**, and every public method has **`@op("description", side_effect=...)`**.
    Private helpers start with `_`.
 3. **`side_effect`** is the gate:
    - `"none"` → a **read** (free). A read **must reflect a live device response or raise
-     `shal.HopError`** — never return a cached/seeded/default value as if live.
+     `shal.HopError`** — never a cached/seeded/default value, and never an
+     **empty / "no data yet" success** (raise instead; the device just isn't ready).
    - `"write"` → a **benign** write (instant, reversible — runs free).
    - `"actuator"` (physical motion) / `"config"` → **gated**: stops for human approval.
    - *Forget to annotate? It defaults to gated (fail-closed).*
 4. **`@idempotent`** on a read lets the framework auto-retry it; never on a write.
+5. **Connect lazily — never in `bind()`.** `bind()` only reads config; open the connection
+   on the first real op via a guarded `_ensure_connected()` (above). Why: `shal tools` /
+   `shal mcp` list the tool surface **offline** (tool metadata is static), so if `bind()`
+   authenticates or opens a session, merely *listing* the tools forces a live round-trip —
+   and fails when the device/cloud is unreachable. A cheap local handle is fine in `bind()`;
+   anything networked must be lazy.
 
 ### Capabilities are optional
 Subclass a capability (`shal.MediaPlayer`, `shal.TemperatureSensor`, …) only when you want
