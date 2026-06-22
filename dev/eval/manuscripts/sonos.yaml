@@ -1,0 +1,28 @@
+# agenticQA manuscript — sonos (the SECOND device — proves device-agnosticism, issue #78)
+#
+# sonos is the contrast case: its playback ops are @op side_effect="write" (benign,
+# reversible — controlling a speaker is instant, not physical actuation), so they are
+# audited but NOT gated. Running the SAME loop over sonos proves the harness is
+# device-agnostic AND that it tells the two op-classes apart honestly: gated ops need
+# approval; benign writes run directly. (gate_exercised will be false for sonos.)
+schema_version: 1
+device: sonos
+
+topology: examples/demos/sonos/sonos_sim.yaml
+node: sonos                                      # tool handle "sonos__<op>"
+
+drivers:
+  - examples/demos/sonos/sonos_driver.py
+
+liveness_reads: [get_state, get_volume]
+
+actuation: { op: play, args: {} }
+
+# Benign write: no gate. `gated: false` is asserted against the live catalog too —
+# if sonos play ever became an actuator, this run would go RED (catalog disagrees).
+expected:  { read: get_state, becomes: PLAYING, gated: false }
+
+# No gate to deny on a benign write.
+deny_path: null
+
+teardown:  [stop]
