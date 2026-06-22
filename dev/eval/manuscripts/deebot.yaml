@@ -1,0 +1,40 @@
+# agenticQA manuscript — deebot (the first/worked example, issue #78)
+#
+# A manuscript is the ONLY device-specific input to the agenticQA control loop.
+# A new device = a new manuscript, zero harness/agent change. See SCHEMA.md.
+#
+# deebot is the device that exercises the ACTUATION GATE: start_cleaning is an
+# @op side_effect="actuator", so the bridge defers it for human approval.
+schema_version: 1
+device: deebot
+
+# Tier 1 drives the sim (hermetic, in CI). Tier 2 swaps in the real topology
+# (examples/demos/deebot/deebot_real.yaml) — same manuscript shape, real robot.
+topology: examples/demos/deebot/deebot_sim.yaml
+node: cleaner                                   # device node id -> tool handle "cleaner__<op>"
+
+# Imported (in order) before shal.load so @register runs: the sim bus first, then
+# the device driver. These live under examples/ and never ship in the wheel.
+drivers:
+  - examples/demos/deebot/sim_cloud.py
+  - examples/demos/deebot/deebot_driver.py
+
+# Reads that must return LIVE data (an empty read must raise, never "" — #75/#53).
+liveness_reads: [get_battery_percent, get_clean_state]
+
+# The ONE state-changing write to drive through the gate.
+actuation: { op: start_cleaning, args: {} }
+
+# Ground-truth assertion AFTER approval. `gated: true` is also an anti-regression
+# tripwire: the loop asserts the live tool catalog still marks this op destructive
+# (actuator). If start_cleaning ever silently downgrades to a benign write, the run
+# goes RED — a gate that got bypassed cannot show green (#78).
+expected:  { read: get_clean_state, becomes: clean, gated: true }
+
+# Deny-path (gated devices only): a denied write must leave the device UNMOVED.
+# Sim boots idle+docked, so a denied start_cleaning must still read "idle".
+deny_path: { read: get_clean_state, stays: idle }
+
+# Leave the device safe afterwards (run under auto-approve — teardown is harness
+# cleanup, not the test subject).
+teardown:  [stop_cleaning, dock]

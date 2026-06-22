@@ -59,9 +59,9 @@ jobs:
         run: |
           pip install build
           python -m build
-      - name: sdist excludes examples/ and tests/
+      - name: sdist excludes examples/, tests/ and dev/ (the test approver must never ship, #78)
         run: |
-          tar tzf dist/*.tar.gz | grep -E '/(examples|tests)/' && exit 1 || echo "clean"
+          tar tzf dist/*.tar.gz | grep -E '/(examples|tests|dev)/' && exit 1 || echo "clean"
       - name: Wheel smoke — install the built wheel clean and run the CLI
         run: |
           python -m venv /tmp/ws
@@ -71,6 +71,8 @@ jobs:
           /tmp/ws/bin/shal-mcp --help > /dev/null
           # the in-package agent guide must ship (the self-sufficiency promise, #55)
           /tmp/ws/bin/python -c "from importlib.resources import files; assert (files('shal')/'AGENT_GUIDE.md').is_file(), 'AGENT_GUIDE.md missing from the wheel'"
+      - name: agenticQA release-acceptance — cold-install the sdist + drive the gate (sim, #78)
+        run: python dev/eval/agenticqa/run.py --all --from-tarball "$(ls dist/*.tar.gz)"
       - uses: actions/upload-artifact@v4
         with:
           name: dist
