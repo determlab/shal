@@ -6,6 +6,12 @@ driver or bus is on this page plus the step-by-step skills**
 `shal-generate-driver`). You never need to read SHAL's source — if you do,
 that's a bug in this guide: report it.
 
+> **Prereq.** SHAL core runs on Python 3.10+, but a device's own library may need newer —
+> async/cloud clients using `asyncio.TaskGroup` (e.g. `deebot-client`) need **3.11+**. On
+> Windows, async/MQTT (`aiomqtt`) drivers need the selector event-loop policy: `shal probe`
+> and `shal mcp` set it for you; in a standalone script call
+> `asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())` first.
+
 ## Mental model (30 seconds)
 
 A topology is a tree in YAML. **A bus is just a node that provides a transport

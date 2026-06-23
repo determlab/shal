@@ -44,6 +44,13 @@ Cold-user blockers found by the 0.2.1 cold-install verification (run 1) — see 
   `shal docs --sdk`. A pip-only agent authoring a bus or a hardware (I2C/SPI/SCPI) driver
   no longer needs GitHub. `AGENT_GUIDE.md` remains the cold-user quickstart slice; D16 now
   names the in-package SDK as the contract source.
+- **Release-doc hardening** (#99, CMO docs-gap audit) — user-facing docs now flag the
+  device-library Python floor (the Deebot path needs 3.11+ — `asyncio.TaskGroup`) in
+  README / CONNECT / AGENTS / CONTRIBUTING / SDK; the MCP-host registration and the sonos
+  demo use the shipped `shal mcp` front door instead of the legacy `shal-mcp` alias;
+  `ARCHITECTURE.md` §3 reflects the shipped `shal probe/tools/mcp/docs` verbs; the agent
+  issue-tracker doc points at `determlab/shal`; and the in-package guide notes multi-device
+  tool handles (`<id>_2__op`) and the `--drivers` `_`-prefixed skip.
 
 ## [0.2.0] - 2026-06-22
 

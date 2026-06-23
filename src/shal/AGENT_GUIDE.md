@@ -136,6 +136,11 @@ shal tools my.yaml --drivers my_driver.py                   # list the tools (re
 shal mcp   my.yaml --drivers my_driver.py                   # serve to an MCP host (the adapter)
 ```
 
+> Tool names are `<node-id>__<op>` (e.g. `thing__get_volume`); several like devices
+> disambiguate to `<id>_2__op`, `<id>_3__op`. Run `shal tools my.yaml` to see the exact
+> handles — never hardcode them. A `--drivers <dir>` scan skips `_`-prefixed files; name a
+> `_helper.py` explicitly on `--drivers` to load it.
+
 Or in Python:
 ```python
 import shal, my_driver          # importing my_driver runs @shal.register

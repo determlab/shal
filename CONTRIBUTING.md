@@ -37,7 +37,7 @@ ruff check src tests      # lint
 python -m build           # sdist + wheel
 ```
 
-Requires Python ≥ 3.10. CI runs the suite on Linux and Windows across 3.10–3.13.
+Requires Python ≥ 3.10 for core. CI runs the suite on Linux and Windows across 3.10–3.13. The Deebot demo under `examples/demos/` needs 3.11+ (`asyncio.TaskGroup`).
 
 ## Adding a driver or bus
 

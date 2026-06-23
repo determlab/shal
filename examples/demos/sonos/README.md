@@ -27,7 +27,7 @@ python demo_sim.py
 …or see it through the SHAL CLI in one shot — prints live state, no MCP host needed:
 
 ```
-shal-mcp examples/demos/sonos/sonos_sim.yaml --drivers examples/demos/sonos/ --probe
+shal probe examples/demos/sonos/sonos_sim.yaml --drivers examples/demos/sonos/
 ```
 
 ## Run against your speaker
@@ -49,10 +49,10 @@ with shal.load("sonos.yaml") as hal:
 ```
 
 …or serve it to an AI host as gated tools (this driver is unpackaged, so point
-`--drivers` at it so `shal-mcp` registers it before loading):
+`--drivers` at it so `shal mcp` registers it before loading):
 
 ```
-shal-mcp examples/demos/sonos/sonos.yaml --drivers examples/demos/sonos/
+shal mcp examples/demos/sonos/sonos.yaml --drivers examples/demos/sonos/
 ```
 
 ## How it maps to SHAL concepts

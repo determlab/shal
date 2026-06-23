@@ -161,7 +161,9 @@ git clone https://github.com/determlab/shal && cd shal
 pip install -e ".[dev]"   # pytest, ruff
 ```
 
-Requires **Python ≥ 3.10**. Dependencies: `pyyaml`, `jsonschema`.
+Requires **Python ≥ 3.10** for SHAL core. A device's own library may need newer — the
+featured Deebot path (`deebot-client`) needs **3.11+** (`asyncio.TaskGroup`); build that
+venv on 3.11+. Dependencies: `pyyaml`, `jsonschema`.
 
 ---
 
@@ -214,7 +216,7 @@ shal mcp lab.yaml            # reads run free; writes ask a human first
 Register it with your host (example `mcpServers` block):
 
 ```json
-{"mcpServers": {"shal": {"command": "shal-mcp", "args": ["lab.yaml"]}}}
+{"mcpServers": {"shal": {"command": "shal", "args": ["mcp", "lab.yaml"]}}}
 ```
 
 Now tell the agent *"read the DUT temperature"* (runs immediately) or *"set

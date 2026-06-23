@@ -60,16 +60,17 @@ Both are thin views over the same core (the Bridge / API). The CLI is itself an 
 
 ### User / operator — a human at a terminal
 - **Topology YAML** — describe the setup (pure data).
-- **`shal` CLI** *(the base front door — D11; today these still live under `shal-mcp`)*:
+- **`shal` CLI** *(the base front door — D11; shipped in #54. `shal-mcp` is kept only as an alias of `shal mcp`)*:
 
-  | verb | does | today |
+  | verb | does | status |
   |---|---|---|
-  | `probe [tool]` | one-shot read → print + exit | ✅ `shal-mcp --probe` |
-  | `call <tool> [args]` | call a tool → result **or** a ticket | proposed |
-  | `approve` / `deny <id>` | resolve a gated ticket | MCP tools today |
-  | `tools` / `catalog` | list the surface | API today |
+  | `probe [tool]` | one-shot read → print + exit | ✅ `shal probe` |
+  | `tools` / `catalog` | list the surface | ✅ `shal tools` |
+  | `mcp` | run as an MCP server | ✅ `shal mcp` |
+  | `docs [--sdk]` | print the bundled guide / full SDK | ✅ `shal docs` |
   | `--drivers <path>` | load local drivers | ✅ |
-  | `serve` | run as an MCP server | ✅ `shal-mcp` |
+  | `call <tool> [args]` | call a tool → result **or** a ticket | proposed (gated-write over a stateless CLI needs persistent tickets, #56) |
+  | `approve` / `deny <id>` | resolve a gated ticket | via MCP tools (`shal_approve`/`shal_deny`) |
 
 ### Agent / API — an LLM driving SHAL in-process (no MCP needed)
 - **Run:** `shal.load(topology)` → tree · `tool_schemas()` / `tool_catalog()` (discover) ·

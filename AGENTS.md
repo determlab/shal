@@ -15,7 +15,9 @@ python -m venv .venv
 source .venv/bin/activate          # Windows: .venv\Scripts\Activate.ps1
 pip install -e ".[dev]"            # deps: pyyaml, jsonschema; dev: pytest, ruff
 ```
-Python 3.10+ required.
+Python 3.10+ required for SHAL core; a device's own library may need newer (the Deebot
+example needs 3.11+ — `asyncio.TaskGroup`). Distributed on PyPI as **`pyshal`**; the import
+name and CLI namespace are **`shal`** (`pip install pyshal`, then `import shal`).
 
 ## Commands
 | | |
