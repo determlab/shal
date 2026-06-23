@@ -88,6 +88,26 @@ class MyThing(Driver):                     # a capability is OPTIONAL — see be
    and fails when the device/cloud is unreachable. A cheap local handle is fine in `bind()`;
    anything networked must be lazy.
 
+### Wrapping an **async** library (run it on a dedicated loop thread)
+If the library is `asyncio`-based, do **not** call `asyncio.run()` / `loop.run_until_complete()`
+straight inside a sync `@op`. Under `shal mcp` your op runs while the server's event loop is
+already active, so a fresh loop run raises *"Cannot run the event loop while another loop is
+running"* — and a one-shot loop also lets the library's background tasks (e.g. MQTT
+subscriptions) die between calls. Run the library on **one persistent loop on a dedicated
+thread** and submit coroutines to it:
+
+```python
+import asyncio, threading
+# in bind(): self._loop = None
+def _run(self, coro):                       # call from any @op, sync or under shal mcp
+    if self._loop is None:                  # start the loop thread once, lazily
+        self._loop = asyncio.new_event_loop()
+        threading.Thread(target=self._loop.run_forever, daemon=True).start()
+    return asyncio.run_coroutine_threadsafe(coro, self._loop).result(timeout=120)
+```
+The loop lives in its own thread, so the driver behaves identically under `shal probe` and
+`shal mcp`, and long-lived subscriptions keep receiving while you poll for a live event.
+
 ### Capabilities are optional
 Subclass a capability (`shal.MediaPlayer`, `shal.TemperatureSensor`, …) only when you want
 your driver to be **interchangeable** with other drivers of the same kind. Otherwise just

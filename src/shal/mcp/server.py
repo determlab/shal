@@ -49,9 +49,16 @@ def _build_server(bridge: Bridge):
             for d in bridge.tool_defs()
         ]
 
+    import anyio
+
     @server.call_tool()
     async def _call_tool(name: str, arguments: dict | None):
-        result = bridge.call(name, arguments)
+        # Run the synchronous op OFF the server's event-loop thread (#92). A driver that
+        # wraps an async library keeps its own loop and does run_until_complete(); calling
+        # it inline here would nest a loop in the running server thread and raise
+        # "Cannot run the event loop while another loop is running". A worker thread also
+        # stops a slow/blocking op from freezing the whole server.
+        result = await anyio.to_thread.run_sync(bridge.call, name, arguments)
         return [types.TextContent(type="text", text=json.dumps(result))]
 
     return server, stdio_server
