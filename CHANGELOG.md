@@ -39,6 +39,11 @@ Cold-user blockers found by the 0.2.1 cold-install verification (run 1) — see 
   distribution/module name gap up front so a cold user never hits `ModuleNotFoundError`.
 - **Device-library Python floor** (#84) — the wrap-a-library recipe notes that a device's
   own library may need newer Python than SHAL core (e.g. `deebot-client` → 3.11+).
+- **Full SDK ships in the wheel** — the complete Driver & Bus authoring contract moved
+  from `docs/SDK.md` into the package (`src/shal/SDK.md`); print it offline with
+  `shal docs --sdk`. A pip-only agent authoring a bus or a hardware (I2C/SPI/SCPI) driver
+  no longer needs GitHub. `AGENT_GUIDE.md` remains the cold-user quickstart slice; D16 now
+  names the in-package SDK as the contract source.
 
 ## [0.2.0] - 2026-06-22
 

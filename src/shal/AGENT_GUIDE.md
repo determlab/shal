@@ -155,5 +155,5 @@ conformance.check_driver(MyThing)     # static + live sim checks; raises on a pr
 The gate / approval flow (a write returns an `approval_required` ticket a human confirms)
 is automatic — you don't wire it; you just classify ops with `side_effect`.
 
-**Going deeper:** the full SDK (buses, transport kinds, limits, sims, conformance) is at
-<https://github.com/determlab/shal/blob/main/docs/SDK.md>.
+**Going deeper:** the full SDK (buses, transport kinds, limits, sims, conformance) is
+bundled too — run `shal docs --sdk` (it ships in the wheel, like this guide).

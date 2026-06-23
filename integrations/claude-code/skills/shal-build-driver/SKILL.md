@@ -206,4 +206,4 @@ In-process `@shal.register` is fine for tests and local work.
 
 Generating a driver from device documentation with no human-written code?
 Follow [shal-generate-driver](../shal-generate-driver/SKILL.md) — the doc→
-driver recipe built on this contract plus [docs/SDK.md](../../../docs/SDK.md).
+driver recipe built on this contract plus [src/shal/SDK.md](../../../src/shal/SDK.md).

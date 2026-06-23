@@ -5,7 +5,7 @@ include README.md
 include CHANGELOG.md
 include CONTRIBUTING.md
 include pyproject.toml
-recursive-include src/shal *.json py.typed
+recursive-include src/shal *.json *.md py.typed
 recursive-include docs *.md
 prune docs/design          # design/decision docs live in-repo only, not in the package
 
