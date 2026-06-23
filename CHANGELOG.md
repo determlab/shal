@@ -6,6 +6,25 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+## [0.2.1] - 2026-06-23
+
+Cold-user blockers found by the 0.2.1 cold-install verification (run 1) — see #88.
+
+### Fixed
+- **Version single-source bumped to 0.2.1** (#81) — `pyproject` + `shal.__version__`.
+- **`.env` inline `# comments`** (#86) — an unquoted ` # comment` is now dropped, so
+  `HOST=h.example # prod` resolves to `h.example` instead of leaking the comment into a
+  cryptic `getaddrinfo` failure. `#` inside quotes or with no leading space stays literal.
+- **`--drivers _file.py`** (#85) — a driver file named explicitly on the command line is
+  now imported even if it starts with `_`; only directory scans skip `_`-prefixed files.
+  No more silent "no driver installed".
+
+### Documentation
+- **Install `pyshal`, import `shal`** (#82) — the in-package guide states the
+  distribution/module name gap up front so a cold user never hits `ModuleNotFoundError`.
+- **Device-library Python floor** (#84) — the wrap-a-library recipe notes that a device's
+  own library may need newer Python than SHAL core (e.g. `deebot-client` → 3.11+).
+
 ## [0.2.0] - 2026-06-22
 
 ### Added

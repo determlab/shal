@@ -134,6 +134,27 @@ class Hal:
         return node
 
     # -- lifecycle ------------------------------------------------------------
+    def warm(self) -> list[tuple[str, Exception]]:
+        """Eagerly activate every transport so the FIRST read/tool call doesn't pay the
+        connect/login latency. Lazy activation is correct for a script, but over MCP that
+        first-call latency shows up as a hang-then-warm (the client times out, the bus
+        finishes connecting, the next call is fine) — issue #83. Warming at serve-start
+        moves the cost before the first request. Best-effort: returns ``(path, error)`` for
+        any bus that failed to activate, so the caller can warn and still serve the devices
+        that came up (one offline bus must not sink the whole server)."""
+        failures: list[tuple[str, Exception]] = []
+        seen: set[int] = set()
+        for root in self._roots:
+            for node in root.walk():
+                drv = node.driver
+                if isinstance(drv, Transport) and id(drv) not in seen:
+                    seen.add(id(drv))
+                    try:
+                        drv.ensure_ready()
+                    except Exception as e:  # noqa: BLE001 — report, never crash the warm-up
+                        failures.append((node.path, e))
+        return failures
+
     def close(self) -> None:
         """Teardown leaf->root. Deterministic on exit and on exceptions."""
         if self._closed:
