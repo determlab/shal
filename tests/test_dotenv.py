@@ -48,6 +48,13 @@ def test_parse_dotenv_inline_comment():
     assert out == {"HOST": "h.example", "Q": "a # b", "P": "x#y"}
 
 
+def test_parse_dotenv_blank_value_with_comment_is_unset():
+    # a blank value whose RHS is only a comment must resolve to empty, not the comment
+    # text (caught live in the Sonos cold-start run: `SONOS_HOST=   # ip` -> bad IP).
+    out = _parse_dotenv("SONOS_HOST=        # optional: speaker IP if discovery fails\n")
+    assert out == {"SONOS_HOST": ""}
+
+
 def test_dotenv_resolves_env_for_load(tmp_path):
     var = "DOTENV_ADDR_1"
     os.environ.pop(var, None)
