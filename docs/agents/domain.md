@@ -11,7 +11,7 @@ knowledge lives in equivalents:
 
 - **`docs/design/DESIGN V2.md`** — the locked architecture (the de-facto system ADR set).
 - **`docs/design/DECISIONS - V2.1.md`** — the decision record; treat each entry like an ADR.
-- **`docs/SDK.md`** — the authoring contract (how drivers/buses/topologies are written).
+- **`src/shal/SDK.md`** — the authoring contract (how drivers/buses/topologies are written).
 - **Module docstrings in `src/shal/*.py`** — each states the file's invariants; this is
   the de-facto glossary. Read the docstring of any module you touch.
 
@@ -26,12 +26,13 @@ Single-context repo:
 /
 ├── AGENTS.md                         ← project guide + this Agent skills config
 ├── docs/
-│   ├── SDK.md                        ← authoring contract
 │   ├── design/                       ← design + decisions (in-repo only, not packaged)
 │   │   ├── DESIGN V2.md              ← locked architecture (de-facto ADRs)
 │   │   └── DECISIONS - V2.1.md       ← decision records
 │   └── agents/                       ← this skill's output
 └── src/shal/                         ← the package (module docstrings = glossary)
+    ├── AGENT_GUIDE.md                ← cold-user quickstart (shipped; `shal docs`)
+    └── SDK.md                        ← authoring contract (shipped; `shal docs --sdk`)
 ```
 
 ## Use the project's vocabulary

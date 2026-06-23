@@ -1,12 +1,12 @@
 ---
 name: shal-generate-driver
-description: Generate a working SHAL driver (and its sim model + tests) from device documentation — a datasheet, instrument manual, OpenAPI spec, or protocol doc. Use when asked to add device support given docs, with no human-written code. The recipe reads docs/SDK.md and zero SHAL internals.
+description: Generate a working SHAL driver (and its sim model + tests) from device documentation — a datasheet, instrument manual, OpenAPI spec, or protocol doc. Use when asked to add device support given docs, with no human-written code. The recipe reads src/shal/SDK.md and zero SHAL internals.
 ---
 
 # Generate a SHAL driver from device documentation
 
 You are turning a document into three artifacts: **driver + sim model + tests**,
-proven by the conformance kit. Read [docs/SDK.md](../../../docs/SDK.md) first —
+proven by the conformance kit. Read [src/shal/SDK.md](../../../../src/shal/SDK.md) first —
 it is the complete authoring contract. **Do not read SHAL source code**; if the
 SDK guide is insufficient, that's a finding to report, not a reason to peek.
 

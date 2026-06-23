@@ -5,6 +5,9 @@ SHAL serves your topology to Claude as **gated tools** over MCP. The **core**
 registration. (Other hosts get their own `integrations/<host>/` — the core never
 knows which agent is calling.)
 
+> **Prereq:** the Deebot example below uses `deebot-client`, which needs **Python 3.11+**
+> (`asyncio.TaskGroup`). SHAL core runs on 3.10+; build this venv on 3.11+.
+
 ## 1. Secrets — put them in a `.env` (never in the host config)
 
 Beside your topology, create a `.env`:

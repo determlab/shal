@@ -136,6 +136,11 @@ shal tools my.yaml --drivers my_driver.py                   # list the tools (re
 shal mcp   my.yaml --drivers my_driver.py                   # serve to an MCP host (the adapter)
 ```
 
+> Tool names are `<node-id>__<op>` (e.g. `thing__get_volume`); several like devices
+> disambiguate to `<id>_2__op`, `<id>_3__op`. Run `shal tools my.yaml` to see the exact
+> handles — never hardcode them. A `--drivers <dir>` scan skips `_`-prefixed files; name a
+> `_helper.py` explicitly on `--drivers` to load it.
+
 Or in Python:
 ```python
 import shal, my_driver          # importing my_driver runs @shal.register
@@ -155,5 +160,5 @@ conformance.check_driver(MyThing)     # static + live sim checks; raises on a pr
 The gate / approval flow (a write returns an `approval_required` ticket a human confirms)
 is automatic — you don't wire it; you just classify ops with `side_effect`.
 
-**Going deeper:** the full SDK (buses, transport kinds, limits, sims, conformance) is at
-<https://github.com/determlab/shal/blob/main/docs/SDK.md>.
+**Going deeper:** the full SDK (buses, transport kinds, limits, sims, conformance) is
+bundled too — run `shal docs --sdk` (it ships in the wheel, like this guide).

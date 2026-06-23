@@ -60,16 +60,17 @@ Both are thin views over the same core (the Bridge / API). The CLI is itself an 
 
 ### User / operator — a human at a terminal
 - **Topology YAML** — describe the setup (pure data).
-- **`shal` CLI** *(the base front door — D11; today these still live under `shal-mcp`)*:
+- **`shal` CLI** *(the base front door — D11; shipped in #54. `shal-mcp` is kept only as an alias of `shal mcp`)*:
 
-  | verb | does | today |
+  | verb | does | status |
   |---|---|---|
-  | `probe [tool]` | one-shot read → print + exit | ✅ `shal-mcp --probe` |
-  | `call <tool> [args]` | call a tool → result **or** a ticket | proposed |
-  | `approve` / `deny <id>` | resolve a gated ticket | MCP tools today |
-  | `tools` / `catalog` | list the surface | API today |
+  | `probe [tool]` | one-shot read → print + exit | ✅ `shal probe` |
+  | `tools` / `catalog` | list the surface | ✅ `shal tools` |
+  | `mcp` | run as an MCP server | ✅ `shal mcp` |
+  | `docs [--sdk]` | print the bundled guide / full SDK | ✅ `shal docs` |
   | `--drivers <path>` | load local drivers | ✅ |
-  | `serve` | run as an MCP server | ✅ `shal-mcp` |
+  | `call <tool> [args]` | call a tool → result **or** a ticket | proposed (gated-write over a stateless CLI needs persistent tickets, #56) |
+  | `approve` / `deny <id>` | resolve a gated ticket | via MCP tools (`shal_approve`/`shal_deny`) |
 
 ### Agent / API — an LLM driving SHAL in-process (no MCP needed)
 - **Run:** `shal.load(topology)` → tree · `tool_schemas()` / `tool_catalog()` (discover) ·
@@ -173,7 +174,7 @@ sequenceDiagram
 | D13 | **Standard capabilities live in-core** as a governed, namespaced `shal.standards` registry (discoverable); extractable to a companion package later once the set stabilizes | O3 |
 | D14 | **Keep the code class `Hal`** (avoids shadowing the `shal` module); "SHAL tree" is a doc-level concept only | O4 |
 | D15 | **Keep async / non-blocking open** (planned evolution). The seam is the **bus contract** (`txn` / `exchange`) — grow it to *submit-then-await + response correlation* ("held channels"); don't bake blocking-only assumptions *below* that contract. Real concurrency only on multiplexable transports | this doc |
-| D16 | **Agent-host adapters live outside the agnostic core.** Single-vendor host packs (Claude Code skills; future Cursor/Codex) live in `integrations/<host>/` (→ a `shal-integrations` repo), never in `src/shal/` or the wheel. **Open-standard** adapters (the `shal` CLI, MCP) stay in core. The neutral authoring contract (`docs/SDK.md` + shipped `shal docs`) is the source of truth the host packs render — the *agent* analog of D1 (contracts ship, host packs don't) | this doc |
+| D16 | **Agent-host adapters live outside the agnostic core.** Single-vendor host packs (Claude Code skills; future Cursor/Codex) live in `integrations/<host>/` (→ a `shal-integrations` repo), never in `src/shal/` or the wheel. **Open-standard** adapters (the `shal` CLI, MCP) stay in core. The neutral authoring contract (`src/shal/SDK.md` + shipped `shal docs`) is the source of truth the host packs render — the *agent* analog of D1 (contracts ship, host packs don't) | this doc |
 
 ### Open decisions
 *None — all resolved. New decisions get a `D##` row above (with their source); they don't get re-litigated silently.*

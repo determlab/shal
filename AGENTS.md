@@ -15,7 +15,9 @@ python -m venv .venv
 source .venv/bin/activate          # Windows: .venv\Scripts\Activate.ps1
 pip install -e ".[dev]"            # deps: pyyaml, jsonschema; dev: pytest, ruff
 ```
-Python 3.10+ required.
+Python 3.10+ required for SHAL core; a device's own library may need newer (the Deebot
+example needs 3.11+ — `asyncio.TaskGroup`). Distributed on PyPI as **`pyshal`**; the import
+name and CLI namespace are **`shal`** (`pip install pyshal`, then `import shal`).
 
 ## Commands
 | | |
@@ -75,14 +77,14 @@ genuinely needs to change, amend the Decision Ledger in the same PR.
 ## Extending (the common case)
 Don't edit the core to add a device or link. Publish a driver/bus via the
 `shal.drivers` entry point (bundled drivers are wired the same way in
-`pyproject.toml`). The agent-agnostic authoring contract is `docs/SDK.md` + the
+`pyproject.toml`). The agent-agnostic authoring contract is `src/shal/SDK.md` + the
 shipped `shal docs` guide (`AGENT_GUIDE.md`). Step-by-step **Claude Code** skills —
 one host's rendering of that contract — live in `integrations/claude-code/skills/`:
 `shal-build-yaml`, `shal-build-bus`, `shal-build-driver`.
 
 ## Keep the skills in sync (required)
 The build skills in `integrations/claude-code/skills/` render the public authoring
-contract (`docs/SDK.md`) for one host — agents and
+contract (`src/shal/SDK.md`) for one host — agents and
 contributors follow them to author drivers, buses, and topologies. **Any code change
 that affects how something is authored MUST update the relevant skill in the same
 PR/issue that ships the change.** A skill that lags shipped code is a bug, not a

@@ -69,10 +69,12 @@ def _cmd_mcp(args) -> int:
 
 
 def _cmd_docs(args) -> int:
-    """Print the provider-neutral in-package agent guide (how to add a device).
-    Ships in the wheel as package data, so a pip-only agent has it offline (#55)."""
+    """Print an in-package authoring doc so a pip-only agent has it offline: the
+    provider-neutral 'add a device' guide by default, or the complete Driver & Bus SDK
+    contract with --sdk. Both ship in the wheel as package data (#55, #97)."""
     from importlib.resources import files
-    print((files("shal") / "AGENT_GUIDE.md").read_text(encoding="utf-8"))
+    doc = "SDK.md" if getattr(args, "sdk", False) else "AGENT_GUIDE.md"
+    print((files("shal") / doc).read_text(encoding="utf-8"))
     return 0
 
 
@@ -87,7 +89,7 @@ def main(argv: list[str] | None = None) -> int:
         prog="shal",
         description="Drive a SHAL topology — read it, list its tools, or serve it.",
         epilog="Add a device: run `shal docs` (the bundled guide)  |  "
-               "Full SDK: https://github.com/determlab/shal/blob/main/docs/SDK.md")
+               "Full SDK: run `shal docs --sdk`")
     sub = ap.add_subparsers(dest="cmd", required=True, metavar="<command>")
 
     p = sub.add_parser("probe", help="one-shot read: print device state and exit (no MCP host)")
@@ -112,6 +114,8 @@ def main(argv: list[str] | None = None) -> int:
     m.set_defaults(func=_cmd_mcp)
 
     d = sub.add_parser("docs", help="print the in-package 'add a device' agent guide")
+    d.add_argument("--sdk", action="store_true",
+                   help="print the full Driver & Bus SDK — the complete authoring contract")
     d.set_defaults(func=_cmd_docs)
 
     args = ap.parse_args(argv)

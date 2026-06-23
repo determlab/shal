@@ -2,7 +2,7 @@
 
 **Instruction to the generation agent:** Using ONLY the device documentation in
 `examples/driver-creator/http-service/docs/` (an OpenAPI 3.0 spec plus a one-page
-API guide), the SHAL SDK guide `docs/SDK.md`, and the `integrations/claude-code/skills/shal-*`
+API guide), the SHAL SDK guide `src/shal/SDK.md`, and the `integrations/claude-code/skills/shal-*`
 skills (start with `shal-generate-driver`), generate a working SHAL driver for
 the Lumen ChamberLink CL-340 chamber controller and write the standardized
 deliverables into `examples/driver-creator/http-service/generated/`:

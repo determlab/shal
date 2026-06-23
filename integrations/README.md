@@ -1,7 +1,7 @@
 # integrations/ — agent-host adapters (not the core)
 
 SHAL's core is **agent- and model-agnostic**: the framework, the `shal` CLI, the
-MCP bridge, and the authoring **contract** (`docs/SDK.md` + the shipped `shal docs`
+MCP bridge, and the authoring **contract** (`src/shal/SDK.md` + the shipped `shal docs`
 guide) don't privilege any one agent host. Anything specific to a single host —
 Claude Code, Cursor, Codex, … — is an *adapter* and lives here, never in `src/shal/`.
 
@@ -19,12 +19,12 @@ integrations/
 
 ## What these are (and aren't)
 
-- They **render** the agnostic authoring contract (`docs/SDK.md`,
+- They **render** the agnostic authoring contract (`src/shal/SDK.md`,
   `src/shal/AGENT_GUIDE.md`) for one host. They are not a second source of truth —
   if a skill and the contract disagree, the contract wins (see AGENTS.md,
   "Keep the skills in sync").
 - They are **not** shipped in the `pyshal` wheel. A `pip install pyshal` user gets
-  the neutral path (`shal docs` + `docs/SDK.md`); the rich, host-specific skills are
+  the neutral path (`shal docs` + `src/shal/SDK.md`); the rich, host-specific skills are
   installed separately.
 
 ## Using the Claude Code skills

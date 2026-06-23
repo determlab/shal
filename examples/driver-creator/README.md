@@ -49,7 +49,7 @@ says how).
 
 ## Rules for generation agents
 
-- Inputs: `<case>/docs/` + [docs/SDK.md](../../docs/SDK.md) +
+- Inputs: `<case>/docs/` + [src/shal/SDK.md](../../src/shal/SDK.md) +
   `integrations/claude-code/skills/shal-*` (especially
   [shal-generate-driver](../../integrations/claude-code/skills/shal-generate-driver/SKILL.md)).
 - **Zero reads of `src/shal/**`**, of `examples/demos/deebot/*driver*|*bus*`, of
