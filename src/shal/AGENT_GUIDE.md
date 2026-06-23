@@ -3,6 +3,10 @@
 *This ships **inside** the `pyshal` package. Print it with `shal docs`. Provider-neutral:
 any agent can follow it — no Claude-specific tooling, no reading SHAL's source.*
 
+> **Install `pyshal`, import `shal`.** The PyPI distribution is `pyshal`
+> (`pip install pyshal[mcp]`); the Python module you import is `shal`
+> (`import shal`). There is no module named `pyshal`.
+
 SHAL is a **device-agnostic framework**: it ships the machinery, not devices. To control
 a device you (1) **wrap its Python library as a small driver**, (2) **describe your setup
 in a topology YAML**, then (3) **read/serve it**. The safety gate is built in: reads run
@@ -14,6 +18,12 @@ free, writes that touch hardware stop for a human.
 
 Most devices already have a Python library (a speaker → `soco`, a vacuum → a cloud
 client, an instrument → its SDK). A driver is one small class that calls that library.
+
+> **Mind the device library's own Python floor.** SHAL core runs on Python 3.10+,
+> but a device's library may need newer. The maintained Deebot client
+> (`deebot-client`) uses `asyncio.TaskGroup`, so it needs **Python 3.11+** — on 3.10
+> its live commands fail. Make the venv on the version the *device library* requires
+> (3.11+ for Deebot); no backport hacks.
 
 ```python
 # my_driver.py  —  a "root" driver: it wraps a library directly, no SHAL bus

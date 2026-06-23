@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "pyshal"
-version = "0.2.0"
+version = "0.2.1"
 description = "System/Software Hardware Abstraction Layer — device-tree-inspired, dynamic, user-space, network-capable"
 readme = "README.md"
 license = { text = "MIT" }

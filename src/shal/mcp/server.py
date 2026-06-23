@@ -59,10 +59,12 @@ def _build_server(bridge: Bridge):
 def _import_drivers(paths: list[str]) -> None:
     """Import local/unpackaged driver module(s) so their ``@shal.register`` runs
     before the topology is loaded (issue #47). Each path is a ``.py`` file or a
-    directory of them (``_``-prefixed files skipped); the containing directory is
-    put on ``sys.path`` first so sibling imports (e.g. a driver importing its bus)
-    resolve. Operator-controlled on the command line — the topology YAML stays
-    pure data and never imports code."""
+    directory of them; the containing directory is put on ``sys.path`` first so
+    sibling imports (e.g. a driver importing its bus) resolve. A directory scan
+    skips ``_``-prefixed files (``__init__`` / private helpers), but a file named
+    **explicitly** on the command line is always imported even if it starts with
+    ``_`` (#85 — no silent skip). Operator-controlled on the command line — the
+    topology YAML stays pure data and never imports code."""
     import importlib
     import sys
     from pathlib import Path
@@ -71,12 +73,16 @@ def _import_drivers(paths: list[str]) -> None:
         p = Path(raw).resolve()
         if not p.exists():
             raise SystemExit(f"shal-mcp: --drivers path not found: {p}")
-        files = sorted(p.glob("*.py")) if p.is_dir() else [p]
-        root = p if p.is_dir() else p.parent
+        if p.is_dir():
+            files = [f for f in sorted(p.glob("*.py")) if not f.name.startswith("_")]
+            root = p
+        else:
+            files = [p]                      # explicitly named -> load even if _-prefixed
+            root = p.parent
         if str(root) not in sys.path:
             sys.path.insert(0, str(root))
         for f in files:
-            if f.suffix != ".py" or f.name.startswith("_"):
+            if f.suffix != ".py":
                 continue
             try:
                 importlib.import_module(f.stem)

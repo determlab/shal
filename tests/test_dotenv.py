@@ -41,6 +41,13 @@ def test_parse_dotenv_formats():
     assert "NOEQ" not in out  # a line without '=' is skipped
 
 
+def test_parse_dotenv_inline_comment():
+    # an unquoted ` # comment` is dropped; a `#` with no leading space, or inside
+    # quotes, stays literal (#86 — the cryptic getaddrinfo bug was the comment leaking).
+    out = _parse_dotenv('HOST=h.example # prod\nQ="a # b"\nP=x#y\n')
+    assert out == {"HOST": "h.example", "Q": "a # b", "P": "x#y"}
+
+
 def test_dotenv_resolves_env_for_load(tmp_path):
     var = "DOTENV_ADDR_1"
     os.environ.pop(var, None)

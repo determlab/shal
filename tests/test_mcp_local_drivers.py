@@ -41,6 +41,16 @@ def test_import_a_local_driver_file_then_load(tmp_path):
         assert hal.get_device("x").read() == 42
 
 
+def test_explicit_underscore_file_is_imported(tmp_path):
+    """A file named explicitly on --drivers loads even if it starts with `_` (#85):
+    the directory-scan skip must not silently drop a file the author pointed at."""
+    f = tmp_path / "_under.py"
+    f.write_text(_DRIVER_SRC.format(tag="under"), encoding="utf-8")
+    server._import_drivers([str(f)])       # must register local,thing-under, not skip it
+    with shal.load(_topo("under")) as hal:
+        assert hal.get_device("x").read() == 42
+
+
 def test_import_a_directory_of_drivers(tmp_path):
     d = tmp_path / "drivers"
     d.mkdir()
