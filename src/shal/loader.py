@@ -35,9 +35,10 @@ _NODE_KEYS = {"id", "description", "expose", "driver", "address", "routes", "to"
 def _parse_dotenv(text: str) -> dict[str, str]:
     """Minimal `.env` parser (no dependency): `KEY=VALUE` per line, `#` comments,
     optional leading `export`, surrounding single/double quotes stripped. An
-    *unquoted* value drops an inline ` # comment` (a `#` after whitespace) — so
-    `HOST=h.example # prod` resolves to `h.example`, not `h.example # prod` (#86);
-    a `#` inside quotes or with no leading space stays literal."""
+    *unquoted* value drops an inline ` # comment` (a `#` after whitespace, or a `#`
+    that begins the value) — so `HOST=h.example # prod` resolves to `h.example` and a
+    blank-with-comment `HOST=   # set me` resolves to empty/unset, not the comment text
+    (#86); a `#` inside quotes or with no leading space stays literal."""
     out: dict[str, str] = {}
     for raw in text.splitlines():
         line = raw.strip()
@@ -51,6 +52,8 @@ def _parse_dotenv(text: str) -> dict[str, str]:
             continue
         if len(val) >= 2 and val[0] == val[-1] and val[0] in "\"'":
             val = val[1:-1]                       # quoted: inner `#` is literal
+        elif val.startswith("#"):                 # the whole value is a comment -> unset
+            val = ""
         else:
             cut = next((i for i in range(1, len(val))
                         if val[i] == "#" and val[i - 1] in " \t"), None)
