@@ -1,0 +1,10 @@
+# secrets + throwaway build/run artifacts — never committed
+.env
+.venv/
+shal-src/
+dist/
+build/
+runs/
+__pycache__/
+*.pyc
+_*.py
