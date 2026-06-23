@@ -11,7 +11,7 @@ depends on the capability Protocol, never on your class.
 
 Pick the device's `compatible` id and target domain library (`drivers/sensors`,
 `drivers/instruments`, `drivers/data`, …) from
-[docs/CATALOG.md](../../../docs/CATALOG.md) — claim it there before you start.
+[docs/CATALOG.md](../../../../docs/CATALOG.md) — claim it there before you start.
 
 ## Skeleton
 
@@ -206,4 +206,4 @@ In-process `@shal.register` is fine for tests and local work.
 
 Generating a driver from device documentation with no human-written code?
 Follow [shal-generate-driver](../shal-generate-driver/SKILL.md) — the doc→
-driver recipe built on this contract plus [src/shal/SDK.md](../../../src/shal/SDK.md).
+driver recipe built on this contract plus [src/shal/SDK.md](../../../../src/shal/SDK.md).

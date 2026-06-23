@@ -10,7 +10,7 @@ A bus is a `Driver` that is also a `Transport` and implements one or more
 authors stay simple — read this whole checklist before writing code.
 
 Pick the bus's `compatible` id and target domain library (`buses/embedded`,
-`buses/net`, `buses/fieldbus`, …) from [docs/CATALOG.md](../../../docs/CATALOG.md)
+`buses/net`, `buses/fieldbus`, …) from [docs/CATALOG.md](../../../../docs/CATALOG.md)
 — claim it there so two authors don't collide.
 
 ## Skeleton

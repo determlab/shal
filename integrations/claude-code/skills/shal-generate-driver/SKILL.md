@@ -6,7 +6,7 @@ description: Generate a working SHAL driver (and its sim model + tests) from dev
 # Generate a SHAL driver from device documentation
 
 You are turning a document into three artifacts: **driver + sim model + tests**,
-proven by the conformance kit. Read [src/shal/SDK.md](../../../src/shal/SDK.md) first —
+proven by the conformance kit. Read [src/shal/SDK.md](../../../../src/shal/SDK.md) first —
 it is the complete authoring contract. **Do not read SHAL source code**; if the
 SDK guide is insufficient, that's a finding to report, not a reason to peek.
 
