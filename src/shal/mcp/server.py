@@ -18,6 +18,7 @@ import argparse
 import asyncio
 import json
 import os
+import sys
 
 from .bridge import Bridge
 
@@ -191,6 +192,19 @@ def main(argv: list[str] | None = None) -> int:
         bridge = Bridge(hal, free_writes=(args.approve == "auto"))
         if args.probe is not None:                 # one-shot read, no server (#39)
             return _probe(bridge, args.probe or None)
+
+        # Warm transports BEFORE serving so the first MCP read isn't a hang-then-warm
+        # (#83): lazy connect/login latency is paid now, not on the client's first call.
+        # A bus that can't come up is a friendly stderr warning, not a dead server.
+        for path, err in hal.warm():
+            print(f"shal-mcp: warning: {path} not ready yet "
+                  f"({type(err).__name__}: {err}) — reads to it may be slow until it connects",
+                  file=sys.stderr)
+
+        # Windows: aiomqtt-based drivers (e.g. Deebot) need a SelectorEventLoop; the
+        # default ProactorEventLoop has no add_reader -> NotImplementedError (#87).
+        if sys.platform == "win32":
+            asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())
 
         server, stdio_server = _build_server(bridge)
 

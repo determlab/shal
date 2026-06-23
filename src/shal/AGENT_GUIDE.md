@@ -25,6 +25,12 @@ client, an instrument → its SDK). A driver is one small class that calls that 
 > its live commands fail. Make the venv on the version the *device library* requires
 > (3.11+ for Deebot); no backport hacks.
 
+> **Windows + MQTT drivers.** `shal mcp` already sets the right event-loop policy. If
+> you drive an `aiomqtt`-based device (e.g. Deebot) from your **own** script on Windows,
+> the default `ProactorEventLoop` lacks `add_reader` (`NotImplementedError`); add one
+> line before any asyncio call:
+> `import asyncio, sys; sys.platform=="win32" and asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())`
+
 ```python
 # my_driver.py  —  a "root" driver: it wraps a library directly, no SHAL bus
 import shal
