@@ -18,6 +18,21 @@ Cold-user blockers found by the 0.2.1 cold-install verification (run 1) — see 
 - **`--drivers _file.py`** (#85) — a driver file named explicitly on the command line is
   now imported even if it starts with `_`; only directory scans skip `_`-prefixed files.
   No more silent "no driver installed".
+- **MCP first-read warm-up** (#83) — `shal mcp` now calls `Hal.warm()` to eagerly
+  activate transports before serving, so the first MCP read no longer hangs through a
+  lazy connect/login before warming. Best-effort: a bus that can't come up is a friendly
+  stderr warning, not a dead server.
+- **Windows aiomqtt event-loop policy** (#87) — `shal mcp` selects
+  `WindowsSelectorEventLoopPolicy` on win32, since the default `ProactorEventLoop` lacks
+  `add_reader` and breaks aiomqtt-based drivers (e.g. Deebot). The guide documents the
+  one-liner for users' own scripts.
+- **`shal mcp` dispatches driver ops off the event loop** (#92) — a driver wrapping an
+  async library (e.g. `deebot-client`) that read fine under `shal probe` (sync) used to
+  fail on its first call under `shal mcp` with *"Cannot run the event loop while another
+  loop is running"*. The bridge now runs each op via `anyio.to_thread.run_sync`, so
+  async-library drivers work over MCP and a slow op can't freeze the server. The shipped
+  guide gains a "wrapping an async library" recipe (persistent loop on a dedicated thread).
+  Found by the #88 cold-user live-MCP run.
 
 ### Documentation
 - **Install `pyshal`, import `shal`** (#82) — the in-package guide states the
