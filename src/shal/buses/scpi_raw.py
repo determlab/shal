@@ -34,8 +34,9 @@ class ScpiRawBus(Driver, Transport, MessageTransport):
         addr = str(node.address)
         host, sep, port = addr.rpartition(":")
         if not sep or not port.isdigit():
+            # redact_url: a misplaced creds-URL address must not echo verbatim (issue #101)
             raise LoadError(f"{node.path}: scpi-raw address must be host:port, "
-                            f"got {addr!r}")
+                            f"got {redact_url(addr)!r}")
         if not bool(getattr(node, "spec", {}).get("insecure", False)):
             raise LoadError(f"{node.path}: scpi-raw is plaintext (SCPI instruments "
                             f"don't do TLS); set `insecure: true` to acknowledge")

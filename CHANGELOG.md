@@ -6,6 +6,12 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+### Fixed
+- **Load-time `LoadError` redacts credential-bearing addresses** (#101) — a malformed
+  `http(s)://user:pass@...` address (e.g. resolved from `${ENV}`) no longer echoes
+  userinfo credentials in the error text; the `http`, `tcp`, and `scpi-raw` buses now
+  route the echoed address through `redact_url`. Clean addresses still echo verbatim.
+
 ## [0.2.1] - 2026-06-23
 
 Cold-user blockers found by the 0.2.1 cold-install verification (run 1) — see #88.

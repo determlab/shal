@@ -38,8 +38,9 @@ class HttpBus(Driver, Transport, MessageTransport):
             raise LoadError(f"{node.path}: plaintext http requires `insecure: true` "
                             f"(TLS is the default, not an option)")
         if scheme not in ("http", "https"):
+            # redact_url: a ${ENV} address may carry userinfo creds (issue #101)
             raise LoadError(f"{node.path}: http bus address must be an "
-                            f"http(s):// URL, got {node.address!r}")
+                            f"http(s):// URL, got {redact_url(str(node.address))!r}")
         self.log = bus_logger("http", node.path)
 
     def exchange(self, addr: Any, msg: Mapping) -> Mapping:
