@@ -33,7 +33,9 @@ class TcpBus(Driver, Transport, MessageTransport):
         addr = str(node.address)
         host, sep, port = addr.rpartition(":")
         if not sep or not port.isdigit():
-            raise LoadError(f"{node.path}: tcp address must be host:port, got {addr!r}")
+            # redact_url: a misplaced creds-URL address must not echo verbatim (issue #101)
+            raise LoadError(f"{node.path}: tcp address must be host:port, "
+                            f"got {redact_url(addr)!r}")
         self.tcp_host, self.tcp_port = host, int(port)
         self.insecure = bool(getattr(node, "spec", {}).get("insecure", False))
         self._sock: socket.socket | None = None

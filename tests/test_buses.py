@@ -276,6 +276,48 @@ def test_redact_url_strips_credentials(raw, expected):
     assert "secret" not in out and "token" not in out
 
 
+def test_http_load_error_redacts_credentials_in_address(tmp_path):
+    # issue #101: a malformed creds-URL address (e.g. from ${ENV}) must not
+    # echo userinfo verbatim in the load-time LoadError text
+    p = write(tmp_path, """
+        shal_version: 1
+        root:
+          api: {driver: "shal,http", address: "htps://user:secret@device.local/api?token=abc"}
+    """)
+    with pytest.raises(shal.LoadError, match="http\\(s\\)") as ei:
+        shal.load(p)
+    msg = str(ei.value)
+    assert "secret" not in msg and "token=abc" not in msg  # creds stripped
+    assert "device.local" in msg                            # endpoint kept (debuggable)
+
+
+@pytest.mark.parametrize("driver", ["shal,tcp", "shal,scpi-raw"])
+def test_hostport_load_error_redacts_misplaced_creds_url(tmp_path, driver):
+    # issue #101 audit: host:port buses — a creds URL misplaced into the
+    # address fails port parsing; the echoed address must be redacted too
+    p = write(tmp_path, f"""
+        shal_version: 1
+        root:
+          net: {{driver: "{driver}", address: "https://user:secret@10.0.0.5"}}
+    """)
+    with pytest.raises(shal.LoadError, match="host:port") as ei:
+        shal.load(p)
+    msg = str(ei.value)
+    assert "secret" not in msg
+    assert "10.0.0.5" in msg
+
+
+def test_http_load_error_clean_address_not_masked(tmp_path):
+    # no false masking: a credential-free malformed address echoes verbatim
+    p = write(tmp_path, """
+        shal_version: 1
+        root:
+          api: {driver: "shal,http", address: "device.local"}
+    """)
+    with pytest.raises(shal.LoadError, match="got 'device.local'"):
+        shal.load(p)
+
+
 def test_http_error_redacts_credentials_in_url(tmp_path, monkeypatch):
     # a credential-bearing ${ENV}-style URL must not surface in the HopError text
     p = write(tmp_path, """
