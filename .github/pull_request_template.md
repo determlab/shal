@@ -11,6 +11,10 @@ Closes #<!-- issue number -->
 <!-- Copy the issue's criteria; check the ones this PR meets. -->
 - [ ]
 
+## Docs & DoD ("Merged" != done)
+- [ ] Every issue-rubric item passes, evidence linked
+- [ ] Docs updated: project hub / status refreshed; superseded docs archived
+
 ## Architecture consistency
 <!-- docs/ARCHITECTURE.md is the north star (Decision Ledger D1–D15). -->
 - [ ] Consistent with `docs/ARCHITECTURE.md` — **or** this PR amends the Decision Ledger (note which `D##`)
