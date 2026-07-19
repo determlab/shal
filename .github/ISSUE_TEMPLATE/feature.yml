@@ -1,5 +1,5 @@
 name: "Feature / task (agent-ready)"
-description: "A scoped piece of work an agent or a human can pick up. Fill every field."
+description: "A scoped piece of work an agent or a human can pick up. Fill every field. No DoD, no start."
 labels: ["needs-triage"]
 body:
   - type: markdown
@@ -7,7 +7,30 @@ body:
       value: |
         Keep it **scoped**. One outcome per issue. The agent-loop only runs on
         issues with a clear goal + testable acceptance criteria. Vague or huge?
-        Split it first. When it's ready, a maintainer adds the `agent:go` label.
+        Split it first. **No DoD, no start** — this template IS the DoD
+        (determlab dod-standard v1.0). When it's ready, a maintainer adds the
+        `agent:go` label.
+  - type: dropdown
+    id: task_type
+    attributes:
+      label: Type
+      description: Picks the rubric — each type has a different real consumer.
+      options:
+        - "feature — consumer: cold user on a clean machine reaches first value"
+        - "bugfix — consumer: failing repro first, then a regression test"
+        - "marketing — consumer: live + tracked metric (not 'drafted')"
+        - "research — consumer: decision-ready recommendation, cited"
+        - "ops/process — consumer: live AND enforced/verifiable"
+    validations:
+      required: true
+  - type: textarea
+    id: why
+    attributes:
+      label: Why / milestone
+      description: Which milestone or number this serves + what's true for the consumer when it's done.
+      placeholder: "Serves v0.3.0 adoption. A cold installer hitting a bad topology gets a friendly pointer, not a traceback."
+    validations:
+      required: true
   - type: textarea
     id: goal
     attributes:
@@ -19,8 +42,8 @@ body:
   - type: textarea
     id: acceptance
     attributes:
-      label: Acceptance criteria
-      description: Testable checkboxes. The reviewer checks the diff against these, one by one.
+      label: Acceptance criteria (binary rubric)
+      description: "Testable pass/fail checkboxes. Features: a cold user on a clean machine reaches first value; unhappy paths give friendly messages, not tracebacks. The reviewer checks the diff against these, one by one."
       value: |
         - [ ]
         - [ ]
@@ -28,18 +51,26 @@ body:
     validations:
       required: true
   - type: textarea
+    id: verification
+    attributes:
+      label: Verification
+      description: How each criterion is checked (fresh env / command / agent run) and what evidence gets linked.
+      placeholder: "Clean venv: pip install -e . && shal probe → screenshot/paste output. pytest tests/test_x.py passes."
+    validations:
+      required: true
+  - type: textarea
     id: constraints
     attributes:
       label: Constraints
       description: Don't-touch areas, perf/compat limits, conventions to follow.
-      placeholder: "Don't change the public API. Keep it Python 3.10-compatible."
+      placeholder: "Keep it Python 3.10-compatible."
     validations:
       required: false
   - type: textarea
     id: out_of_scope
     attributes:
       label: Out of scope
-      description: Explicitly what NOT to do, so the agent doesn't expand scope.
+      description: Explicitly what NOT to do. If the work grows >20% beyond this scope — stop and re-plan, don't push through.
       placeholder: "No UI changes. No new dependencies."
     validations:
       required: false
@@ -51,11 +82,22 @@ body:
       placeholder: "See src/export/, the existing JSON exporter is the closest pattern."
     validations:
       required: false
+  - type: textarea
+    id: docs_to_update
+    attributes:
+      label: Docs to update ("Merged" ≠ done)
+      description: The docs this change touches — refreshed before the issue closes; superseded docs archived per the file taxonomy.
+      value: |
+        - [ ] project hub / status refreshed
+        - [ ] superseded docs moved to archive/ (if any)
+    validations:
+      required: false
   - type: markdown
     attributes:
       value: |
         ---
-        **Hard-stops:** if this work needs a public-API change, a schema/data
-        migration, a new dependency, or touches security/auth, the agent-loop will
-        stop and flag a human instead of proceeding. Note it here if you already
-        know it will.
+        **Hard-stops:** genuinely risky changes stop the agent-loop and flag a
+        human: gate/approval code paths, new runtime dependencies,
+        schema/data migrations, deletions of files the branch didn't create,
+        anything touching secrets. In-rubric public-API edits are allowed
+        pre-1.0 (0.x semver) — the reviewer verifies a changelog note.
