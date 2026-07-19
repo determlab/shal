@@ -31,17 +31,23 @@ hard_stops:
     - package.json
     - go.mod
     - Cargo.toml
-  # Globs that are always security/schema-sensitive -> flag if touched.
+  # Globs that are genuinely security-sensitive -> flag if touched.
+  # Recalibrated 2026-07-19 (determlab work-method v1.0): risky = OUTSIDE the
+  # issue's DoD rubric, not "matches a category". The old "**/*schema*" glob is
+  # gone — SHAL ships typed tool schemas; that glob flagged half the codebase.
   protected_paths:
     - "**/auth/**"
     - "**/security/**"
     - "**/migrations/**"
-    - "**/*schema*"
-    - "**/approval.py"
+    - "**/approval.py"        # the actuation gate — the product's trust core
+    - "**/redact*"            # secret-redaction helpers
+    - "**/.env*"
   # Deleting a file the branch didn't create -> flag.
   flag_on_file_delete: true
-  # Reviewer semantically flags public API / interface changes -> flag.
-  flag_on_public_api_change: true
+  # Pre-1.0 (0.x semver, no external users): in-rubric public-API edits are
+  # ALLOWED; the reviewer verifies a CHANGELOG.md note instead of flagging.
+  # Out-of-rubric API changes still fail review on the Spec axis.
+  flag_on_public_api_change: false
 
 # What the reviewer reads.
 review:
