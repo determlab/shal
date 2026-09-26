@@ -164,9 +164,11 @@ All notable changes to this project are documented here. The format follows
   D7 amended) — the seven bundled drivers and the `nxp,pca9548` mux chip leave the
   package's registry and its `shal.drivers` entry points. `ti,tmp102`,
   `microchip,mcp23017` and `rigol,dp832` become the ADK reference set (above);
-  `microchip,mcp9808`, `ti,ads1115`, `ti,ina219`, `keysight,34461a` and
-  `nxp,pca9548` move to `examples/drivers/<name>/` with their sim models and tests
-  (the examples CI job runs `pytest examples/drivers`). Code moved, not rewritten:
+  `microchip,mcp9808`, `ti,ads1115`, `ti,ina219` and `keysight,34461a` move to
+  `examples/drivers/<name>/` with their sim models and tests (the examples CI job
+  runs `pytest examples/drivers`). `nxp,pca9548` moves to `examples/drivers/pca9548/`
+  with its sim model; its tests stay in `tests/test_buses.py` and
+  `tests/test_sim_sensor.py`, which import it from there. Code moved, not rewritten:
   only import paths changed. The mux **mechanism** — `MuxState`, `MuxChannel` —
   stays in `shal.buses.mux`; only the chip left. The `shal.drivers` package is
   gone. A bare install's `shal.catalog()` now lists only `shal,*` ids, and the D1

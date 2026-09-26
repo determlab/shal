@@ -11,6 +11,7 @@ sys.path.insert(0, os.path.dirname(__file__))
 
 import ads1115_driver  # noqa: E402,F401  (registers ti,ads1115)
 import ads1115_sim  # noqa: E402,F401     (registers the sim model)
+
 import shal  # noqa: E402
 
 _TOPO = os.path.join(os.path.dirname(__file__), "topology.yaml")

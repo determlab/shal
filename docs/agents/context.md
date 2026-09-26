@@ -90,8 +90,10 @@ if it runs.
 - `tests/` — pytest suite (mirrors `src/` concerns)
 - `examples/demos/` — runnable showcases (Deebot cloud, microservice mesh); **not shipped**
 - `examples/drivers/` — the demoted vendor drivers (`mcp9808`, `ads1115`, `ina219`,
-  `keysight_34461a`, the `pca9548` mux) with their sim models and tests; **not shipped**.
-  Tests run in CI's `examples` job: `pytest examples/drivers`
+  `keysight_34461a`) with their sim models and tests, run in CI's `examples` job
+  (`pytest examples/drivers`); and the `pca9548` mux chip with its sim model, whose
+  tests stay in `tests/test_buses.py` / `tests/test_sim_sensor.py` and import it
+  from there. **Not shipped**
 - `examples/driver-creator/` — the doc→driver generation benchmark; **not shipped**
 - `docs/design/` — `DESIGN V2.md` (architecture detail); superseded design docs live in
   `docs/design/archive/`

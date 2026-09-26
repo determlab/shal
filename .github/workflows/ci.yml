@@ -57,7 +57,8 @@ jobs:
           python examples/demos/deebot/demo_sim.py
           python examples/demos/mesh/demo_mesh.py
       - name: Example drivers pass their tests where they live (#149)
-        # the four vendor drivers and the pca9548 mux chip that left the wheel;
+        # the four vendor drivers that left the wheel (the pca9548 chip's tests
+        # stay in tests/, importing it from examples/drivers/pca9548);
         # testpaths=tests keeps them out of the core run, so they run here
         run: python -m pytest examples/drivers
 

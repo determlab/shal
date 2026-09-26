@@ -15,6 +15,7 @@ import pytest
 sys.path.insert(0, os.path.dirname(__file__))
 
 import keysight_34461a_driver  # noqa: E402,F401  (registers keysight,34461a)
+
 import shal  # noqa: E402
 
 

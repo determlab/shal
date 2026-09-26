@@ -11,6 +11,7 @@ sys.path.insert(0, os.path.dirname(__file__))
 
 import mcp9808_driver  # noqa: E402,F401  (registers microchip,mcp9808)
 import mcp9808_sim  # noqa: E402,F401     (registers the sim model)
+
 import shal  # noqa: E402
 
 _TOPO = os.path.join(os.path.dirname(__file__), "topology.yaml")
