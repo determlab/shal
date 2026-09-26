@@ -2,9 +2,17 @@
 # a sequence. So each record says runner="script" — not pytest, not Bricks.
 """Jig: a jig that logs results — several units, one record each, read back and counted.
 
-A simulated sensor measures each unit against a limit. Each unit's result is one
-record, in the shape `shal.record` ships, written to `jig-records/` in the folder
-you run from. A SQLite node then reads the records back and counts them.
+The bench is the point. Units come past, each is measured against a limit, and
+each gets a result you can show someone later. The database is only where the
+results go — but notice **it is a node in the same tree as the sensor**, reached
+the same way: one description covers the thing on the wire and the thing on the
+network.
+
+Each result is one record in the shape `shal.record` ships — unit, station,
+limits, verdict — under `jig-records/`, with a fixed id per unit so a second run
+rewrites rather than piles up. That is the **shape** of a production floor, not
+a production line: no station runs unattended and there is no screen. The record
+is what is real, and a floor is built on records.
 """
 from datetime import datetime, timezone
 from pathlib import Path

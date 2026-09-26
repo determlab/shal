@@ -19,7 +19,7 @@ thing from it: the operation was refused, and why.
 
 Run it on real hardware by changing the topology, not this file.
 
-Next: `shal docs --sample jig` tests several units and logs one record each.
+Then `shal docs --sample jig`: the same idea over several units, each one logged.
 """
 from pathlib import Path
 
