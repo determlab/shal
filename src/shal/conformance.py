@@ -81,6 +81,18 @@ def _static_checks(cls: type, report: Report) -> None:
             if not meta.get("description"):
                 report.problems.append(f"{name}: missing @shal.op description")
 
+    # an @op with no side_effect is legal and fails closed (driver.py
+    # `inferred_side_effect`: a non-idempotent op infers "actuator", gated) — safe,
+    # but silent. Say so, and name the fix (issue #162).
+    for name, fn in ops.items():
+        meta = getattr(fn, "__shal_op__", None)
+        if (meta is not None and meta.get("side_effect") is None
+                and inferred_side_effect(fn) == "actuator"):
+            report.warnings.append(
+                f'{name}: no side_effect declared; inferred "actuator" (gated). '
+                f'Declare side_effect= — "none" for a read, "write" for a benign, '
+                f'reversible change, "config" or "actuator" for a gated one.')
+
     # catalog entry must build, and every schema in it must be valid JSON Schema
     try:
         import jsonschema

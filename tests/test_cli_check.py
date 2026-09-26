@@ -30,7 +30,8 @@ class GoodThing(Driver):
 # The same shape as test_conformance.py::test_missing_op_metadata_is_a_problem
 # (_NoMeta): llm_ready NOT set and an op with no @op metadata — a problem
 # check_driver reports today. (`@op("...")` without side_effect is NOT one: it is
-# legal and infers "actuator", fail-closed — driver.py `inferred_side_effect`.)
+# legal and infers "actuator", fail-closed — driver.py `inferred_side_effect`; it is
+# a warning (#162), see _UNLABELLED.)
 _BAD = """
 from shal import Driver
 
@@ -57,6 +58,20 @@ class Fake(Driver):
         return 11
 """
 
+# One @op with no side_effect: legal and gated, so a warning, never a problem (#162).
+_UNLABELLED = """
+from shal import Driver, op
+
+class UnlabelledThing(Driver):
+    compatible = "test,check-unlabelled"
+    kind = None
+    llm_ready = True
+
+    @op("Start the thing.")
+    def start(self) -> str:
+        return "started"
+"""
+
 _YAML = ("shal_version: 1\n"
          "root:\n"
          "  dev: {id: dev, driver: 'test,check-good', address: a}\n")
@@ -73,6 +88,7 @@ def drivers(tmp_path, monkeypatch):
     (tmp_path / "check_good_driver.py").write_text(_GOOD, encoding="utf-8")
     (tmp_path / "check_bad_driver.py").write_text(_BAD, encoding="utf-8")
     (tmp_path / "check_shadow_driver.py").write_text(_SHADOW, encoding="utf-8")
+    (tmp_path / "check_unlabelled_driver.py").write_text(_UNLABELLED, encoding="utf-8")
     (tmp_path / "sim.yaml").write_text(_YAML, encoding="utf-8")
     monkeypatch.chdir(tmp_path)
     monkeypatch.setattr(sys, "path", list(sys.path))  # `check` puts cwd on it
@@ -95,6 +111,18 @@ def test_a_real_check_driver_problem_exits_1_and_json_names_it(drivers):
     assert report["ok"] is False
     assert any("must set llm_ready = True" in p for p in report["problems"]), report
     assert "Traceback" not in r.stderr
+
+
+def test_an_unlabelled_op_is_a_json_warning_and_exits_0(drivers):
+    r = _shal("check", "check_unlabelled_driver:UnlabelledThing", "--json",
+              cwd=drivers)
+    assert r.returncode == 0, r.stdout + r.stderr   # warnings never fail
+    report = json.loads(r.stdout)
+    assert report["ok"] is True and report["problems"] == []
+    assert report["warnings"] == [
+        'start: no side_effect declared; inferred "actuator" (gated). Declare '
+        'side_effect= — "none" for a read, "write" for a benign, reversible change, '
+        '"config" or "actuator" for a gated one.']
 
 
 def test_unregistered_module_class_checks_clean(drivers, capsys):

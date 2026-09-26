@@ -20,6 +20,8 @@ reviewed: 2026-08-31
 > changelog, contributor docs and `docs/agents/*` are written here and by no
 > other role.
 
+For an agent that *uses* shal rather than works on it: [`AGENTS.md`](../../AGENTS.md) at the repo root.
+
 ## Overview
 SHAL (System/Software Hardware Abstraction Layer) is a Python library for
 describing a hardware/software setup in YAML and controlling it from Python —

@@ -3,6 +3,8 @@ scaffolding'). A generated driver passes check_driver() or it isn't done."""
 
 from pathlib import Path
 
+import pytest
+
 import shal
 from shal import conformance
 
@@ -206,3 +208,61 @@ def test_freshness_probe_on_the_real_i2c_stack():
     report = conformance.check_driver("ti,tmp102", topology=HERE / "setup_sim.yaml")
     assert report.ok, report.problems
     assert any("freshness" in c for c in report.checked)
+
+
+# ---- issue #162: an @op with no side_effect is warned (legal, gated, but silent) ----
+
+UNLABELLED_WARNING = (
+    'start: no side_effect declared; inferred "actuator" (gated). Declare '
+    'side_effect= — "none" for a read, "write" for a benign, reversible change, '
+    '"config" or "actuator" for a gated one.')
+
+
+@shal.register
+class _UnlabelledPump(shal.Driver):
+    """One @op without side_effect; every other op declares its label."""
+
+    compatible = "test,conf-unlabelled"
+    kind = None
+    llm_ready = True
+
+    @shal.idempotent
+    @shal.op("Read whether the pump runs now.", side_effect="none")
+    def running(self) -> bool:
+        return False
+
+    @shal.op("Start the pump.")   # the author forgot side_effect
+    def start(self) -> str:
+        return "started"
+
+
+UNLABELLED_YAML = ("shal_version: 1\n"
+                   "root:\n"
+                   "  pump: {id: pump, driver: 'test,conf-unlabelled', address: 1}\n")
+
+
+def test_an_op_without_side_effect_is_warned_word_for_word(tmp_path):
+    p = tmp_path / "s.yaml"
+    p.write_text(UNLABELLED_YAML, encoding="utf-8")
+    report = conformance.check_driver("test,conf-unlabelled", topology=p)
+    assert report.warnings == [UNLABELLED_WARNING]
+    assert report.problems == [] and report.ok   # a warning, never a problem
+
+
+def test_the_unlabelled_op_still_loads_and_runs_gated(tmp_path):
+    p = tmp_path / "s.yaml"
+    p.write_text(UNLABELLED_YAML, encoding="utf-8")
+    with shal.load(p) as hal:
+        pump = hal.get_device("pump")
+        with shal.approver(shal.DenyAll()):
+            with pytest.raises(shal.ApprovalDenied):
+                pump.start()
+        with shal.approver(shal.AutoApprove()):
+            assert pump.start() == "started"
+
+
+def test_a_driver_that_declares_every_label_gets_no_such_warning():
+    for compatible in ("test,conf-good", "test,conf-actuator", "test,conf-sloppy"):
+        report = conformance.check_driver(compatible)
+        assert not any("no side_effect declared" in w for w in report.warnings), (
+            compatible, report.warnings)
