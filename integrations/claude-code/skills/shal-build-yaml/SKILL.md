@@ -48,6 +48,9 @@ root:
    import that runs `@shal.register`) — an unknown compatible fails the load.
 4. **Address per bus family**: I2C `0x03`–`0x77` (int), i2c-cli `/dev/i2c-<n>`,
    spi-cli `/dev/spidevX.Y`, ssh `user@host`, tcp `host:port`, http(s) a URL.
+   An HTTP API's credentials go on the `shal,http` node, never in a driver:
+   `config: {headers: {Authorization: "Bearer ${API_TOKEN}"}}` — the bus adds
+   them to every request.
    The PARENT validates the child's address at load.
 5. **Give ids** to anything user code will look up: `hal.get_device("<id>")`.
    Path = location, id = identity; moving a device changes its path, never its id.

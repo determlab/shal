@@ -182,9 +182,23 @@ bus speaking it, including its sim twin):
 
 | Bus family | You send | You get back |
 |---|---|---|
-| `shal,http` (+ sims) | any JSON-able dict — POSTed to `<base>/<addr>` | the JSON reply dict |
+| `shal,http` (+ sims), plain | any JSON-able dict with no reserved key — POSTed to `<base>/<addr>` | the JSON reply dict |
+| `shal,http` / `shal,sim-msg`, envelope | `{"method": "GET", "path": "runs", "query": {...}, "headers": {...}, "json": ...}` (any of these keys) | `{"status": 200, "headers": {...}, "json": ...}` (`"text"` for a non-JSON body) |
 | `shal,scpi-raw` / `shal,sim-scpi` | `{"scpi": ":MEAS:VOLT? CH1", "query": True}` (omit `query` for writes) | `{"reply": "3.2999"}` (`""` for writes) |
 | `shal,sim-msg` | any dict (your protocol) | whatever the sim model returns |
+
+**The HTTP request envelope** (#104). `method`, `path`, `query`, `headers` and
+`json` are **reserved keys**: a message carrying any of them is one HTTP request
+to `<base>/<addr>/<path>?<query>`, not a body. `method` defaults to `GET` (`POST`
+when `json` is given); a `None` query value is dropped, so pass optional args
+straight through; `json` on a `GET` is a `LoadError`. A non-2xx reply is a
+`HopError` naming the status — sent once, never retried. **Credentials never go
+in a driver**: they are the bus node's `config: {headers: {Authorization: "Bearer
+${TOKEN}"}}`, `${ENV}`-resolved at load, added by the bus to every request, and
+they win over an envelope header of the same name. The reply's `headers` are the
+response's. `shal,sim-msg` answers the same envelopes: the model's `handle()`
+gets the normalised envelope and returns a plain body (sent as `200` + `json`)
+or the full `{"status", "json" | "text"}` shape.
 
 **Units** are free strings — celsius/volts/amperes/watts/ohms are conventions,
 not a closed set; use the device's unit (`percent`, `pascal`, `lux`, …).

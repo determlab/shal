@@ -158,7 +158,7 @@ src/shal/
 | Local / subprocess | `shal,local` | Command | P0 | ✅ | run on this machine |
 | SSH | `shal,ssh-host` | Command | P0 | ✅ | ControlMaster reuse; argv only |
 | TCP socket | `shal,tcp` | Message | P0 | ✅ | TLS by default |
-| HTTP / HTTPS | `shal,http` | Message | P0 | ✅ | REST services |
+| HTTP / HTTPS | `shal,http` | Message | P0 | ✅ | REST services — plain JSON POST, or the request envelope (`GET`, query, path; credentials in bus `config.headers`) |
 | MQTT | `shal,mqtt` | Stream | P0 | 🟡 | pub/sub; IoT default |
 | UDP | `shal,udp` | Message | P1 | ⬜ | datagram devices |
 | WebSocket | `shal,websocket` | Stream | P1 | ⬜ | bidirectional |
