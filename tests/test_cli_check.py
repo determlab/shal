@@ -27,14 +27,27 @@ class GoodThing(Driver):
         return 11
 """
 
-# `bare` carries no @op at all — so no side_effect and no description. That is the
-# shape check_driver reports: `@op("...")` without side_effect is legal and infers
-# "actuator" (fail-closed, driver.py `inferred_side_effect`), so it is NOT a problem.
+# The same shape as test_conformance.py::test_missing_op_metadata_is_a_problem
+# (_NoMeta): llm_ready NOT set and an op with no @op metadata — a problem
+# check_driver reports today. (`@op("...")` without side_effect is NOT one: it is
+# legal and infers "actuator", fail-closed — driver.py `inferred_side_effect`.)
 _BAD = """
-from shal import Driver, idempotent, op
+from shal import Driver
 
 class BadThing(Driver):
     compatible = "test,check-bad"
+    kind = None
+
+    def do_thing(self) -> int:
+        return 1
+"""
+
+# A local class that claims a compatible the package already ships.
+_SHADOW = """
+from shal import Driver, idempotent, op
+
+class Fake(Driver):
+    compatible = "ti,tmp102"
     kind = None
     llm_ready = True
 
@@ -42,9 +55,6 @@ class BadThing(Driver):
     @op("Read the level now.", side_effect="none")
     def level(self) -> int:
         return 11
-
-    def bare(self) -> str:
-        return "moved"
 """
 
 _YAML = ("shal_version: 1\n"
@@ -62,6 +72,7 @@ def _shal(*argv: str, cwd=None) -> subprocess.CompletedProcess:
 def drivers(tmp_path, monkeypatch):
     (tmp_path / "check_good_driver.py").write_text(_GOOD, encoding="utf-8")
     (tmp_path / "check_bad_driver.py").write_text(_BAD, encoding="utf-8")
+    (tmp_path / "check_shadow_driver.py").write_text(_SHADOW, encoding="utf-8")
     (tmp_path / "sim.yaml").write_text(_YAML, encoding="utf-8")
     monkeypatch.chdir(tmp_path)
     monkeypatch.setattr(sys, "path", list(sys.path))  # `check` puts cwd on it
@@ -77,12 +88,12 @@ def test_registered_compatible_json_is_valid_and_exits_0():
     assert report["checked"]
 
 
-def test_op_without_metadata_exits_1_and_json_names_the_op(drivers):
+def test_a_real_check_driver_problem_exits_1_and_json_names_it(drivers):
     r = _shal("check", "check_bad_driver:BadThing", "--json", cwd=drivers)
     assert r.returncode == 1, r.stderr
     report = json.loads(r.stdout)
     assert report["ok"] is False
-    assert any(p.startswith("bare:") for p in report["problems"]), report
+    assert any("must set llm_ready = True" in p for p in report["problems"]), report
     assert "Traceback" not in r.stderr
 
 
@@ -103,7 +114,7 @@ def test_module_class_with_topology_runs_live_probes(drivers, capsys):
 def test_text_report_without_json(drivers, capsys):
     assert cli.main(["check", "check_bad_driver:BadThing"]) == 1
     out = capsys.readouterr().out
-    assert "PROBLEM  bare:" in out
+    assert "PROBLEM  device driver must set llm_ready = True" in out
     with pytest.raises(json.JSONDecodeError):
         json.loads(out)
 
@@ -120,6 +131,15 @@ def test_a_check_that_cannot_run_exits_2_on_stderr(target, says, capsys):
     captured = capsys.readouterr()
     assert captured.out == ""
     assert says in captured.err
+
+
+def test_module_class_never_shadows_a_shipped_compatible(drivers):
+    # a fresh process: nothing has loaded the bundled drivers yet, which is the
+    # state the guard must not be fooled by
+    r = _shal("check", "check_shadow_driver:Fake", "--json", cwd=drivers)
+    assert r.returncode == 2, r.stdout
+    assert r.stdout == ""
+    assert "compatible 'ti,tmp102' is already registered by" in r.stderr
 
 
 def test_missing_topology_exits_2(capsys):

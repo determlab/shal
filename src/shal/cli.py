@@ -140,6 +140,10 @@ def _load_check_target(target: str) -> type:
     # importing a module that uses @shal.register does. Never shadow another class.
     compatible = getattr(cls, "compatible", "")
     if compatible:
+        # load what resolve()/catalog() would see first, or the guard misses a
+        # bundled/installed claimant (ti,tmp102) and the check silently shadows it
+        registry._load_entry_points()
+        registry._ensure_bundled()
         claimed = registry._entries.get(compatible) or []
         others = [c for c in claimed if c is not cls]
         if others:
@@ -196,10 +200,11 @@ def _cmd_docs(args) -> int:
 
 
 def main(argv: list[str] | None = None) -> int:
-    try:
-        sys.stdout.reconfigure(encoding="utf-8")  # avoid Windows-codepage mojibake
-    except Exception:
-        pass
+    for stream in (sys.stdout, sys.stderr):  # `check` errors go to stderr
+        try:
+            stream.reconfigure(encoding="utf-8")  # avoid Windows-codepage mojibake
+        except Exception:
+            pass
     # every subcommand can reach a driver op (probe/tools now, more later), so the
     # loop-policy choice is made once here rather than per subcommand (#94)
     _use_selector_loop_on_win32()
