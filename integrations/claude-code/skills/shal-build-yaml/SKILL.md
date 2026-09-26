@@ -101,7 +101,7 @@ psu_3v3:
   config:
     limits:                 # reserved key: consumed by the framework, not the driver
       set_voltage:
-        volts: {maximum: 5.0}   # 5.0 <= the driver's 32.0 -> loads; effective max 5.0
+        volts: {maximum: 5.0}   # 5.0 <= the driver's 30.0 -> loads; effective max 5.0
 ```
 
 The effective (tightest) limit is what agents see in `tool_schemas()` and what
