@@ -14,6 +14,7 @@ import pytest
 _ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(_ROOT / "dev" / "quickstart"))
 
+import run_readme  # noqa: E402
 from run_readme import (  # noqa: E402
     ReadmeError,
     Run,
@@ -170,3 +171,107 @@ def test_pip_line_installs_the_wheel_in_place_of_the_package() -> None:
     with pytest.raises(ReadmeError, match="does not install pyshal"):
         substitute_wheel(["pip", "install", "shal"], wheel)
 
+
+# --- published mode (#188): the pip line verbatim, against PyPI -----------------
+# No network: subprocess.run is a fake that plays pip, the venv's python and shal.
+
+PUBLISHED = f"""## Quick Start
+
+{FENCE}bash
+pip install pyshal
+{FENCE}
+
+Save this as `sim.yaml`.
+
+{FENCE}yaml
+root: {{}}
+{FENCE}
+
+{FENCE}bash
+shal probe sim.yaml
+{FENCE}
+
+{FENCE}
+ambient_temp__read_celsius: 25.59
+{FENCE}
+"""
+
+NO_DRIVER = "shal probe: no driver installed for compatible 'shal,sim-sensor'"
+
+
+def _fake_run(monkeypatch: pytest.MonkeyPatch, *, pip_rc: int = 0,
+              probe: tuple[int, str] = (0, "ambient_temp__read_celsius: 24.9\n"),
+              ) -> list[list[str]]:
+    calls: list[list[str]] = []
+
+    def run(argv, **_kw):  # type: ignore[no-untyped-def]
+        calls.append(list(argv))
+        if argv[0] == "pip":
+            rc, out = pip_rc, "Successfully installed pyshal-0.2.2\n"
+        elif argv[0] == "python" and "importlib.metadata" in argv[-1]:
+            rc, out = 0, "0.2.2\n"
+        elif argv[:2] == ["shal", "probe"]:
+            rc, out = probe
+        else:
+            raise AssertionError(f"unexpected command {argv}")
+        return run_readme.subprocess.CompletedProcess(argv, rc, out.encode())
+
+    monkeypatch.setattr(run_readme.subprocess, "run", run)
+    monkeypatch.setattr(run_readme.shutil, "which", lambda name, path=None: name)
+    return calls
+
+
+def _published(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> tuple[list[str], Path]:
+    readme = tmp_path / "README.md"
+    readme.write_text(PUBLISHED, encoding="utf-8")
+    summary = tmp_path / "summary.md"
+    monkeypatch.setenv("GITHUB_STEP_SUMMARY", str(summary))
+    return ["--venv", str(tmp_path / "venv"), "--published", "--readme", str(readme)], summary
+
+
+def test_published_runs_the_pip_line_verbatim_and_reports_the_version(
+        tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+        capsys: pytest.CaptureFixture[str]) -> None:
+    calls = _fake_run(monkeypatch)
+    args, summary = _published(tmp_path, monkeypatch)
+    assert run_readme.main(args) == 0
+    assert calls[0] == ["pip", "install", "pyshal"]  # not rewritten to a wheel
+    out = capsys.readouterr().out
+    assert "$ pip install pyshal\n" in out and "[run as:" not in out
+    assert "--- installed from PyPI: pyshal 0.2.2" in out
+    assert ("README Quick Start passed against published pyshal 0.2.2: `pip install` to first "
+            "successful read in ") in out
+    written = summary.read_text(encoding="utf-8")
+    assert written.startswith("README Quick Start passed against published pyshal 0.2.2: ")
+    assert " s (" in written
+
+
+def test_published_failure_names_the_installed_version(
+        tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+        capsys: pytest.CaptureFixture[str]) -> None:
+    _fake_run(monkeypatch, probe=(1, NO_DRIVER + "\n"))
+    args, summary = _published(tmp_path, monkeypatch)
+    assert run_readme.main(args) == 1
+    out = capsys.readouterr().out
+    assert NO_DRIVER in out
+    assert ("README Quick Start FAILED against published pyshal 0.2.2: README line 13: "
+            "`shal probe sim.yaml` exited 1, the README expects 0") in out
+    assert summary.read_text(encoding="utf-8").startswith(
+        "README Quick Start FAILED against published pyshal 0.2.2: README line 13")
+
+
+def test_published_failed_pip_says_no_version_was_installed(
+        tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+        capsys: pytest.CaptureFixture[str]) -> None:
+    calls = _fake_run(monkeypatch, pip_rc=1)
+    args, _ = _published(tmp_path, monkeypatch)
+    assert run_readme.main(args) == 1
+    assert calls == [["pip", "install", "pyshal"]]
+    assert ("FAILED against published pyshal (version unknown: not installed): "
+            "README line 3: `pip install pyshal` exited 1") in capsys.readouterr().out
+
+
+def test_dist_and_published_are_one_or_the_other(tmp_path: Path) -> None:
+    for args in (["--venv", "v"], ["--venv", "v", "--published", "--dist", str(tmp_path)]):
+        with pytest.raises(SystemExit):
+            run_readme.main(args)
