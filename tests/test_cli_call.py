@@ -186,6 +186,39 @@ def test_refusal_comes_before_argument_checks(lab):
     assert r.returncode == 2
 
 
+# ---- the refusal reads the LIVE gated set, like the runtime gate (#114) ------------
+# A CLI process seats no policy of its own (no flag: the caller must not choose its
+# own gate), so it is the shipped default -- unless a --drivers module seats one at
+# import. Then `shal call` must refuse exactly what the runtime would stop, and run
+# exactly what the runtime would run.
+
+def _with_policy(lab, name: str, effects: str) -> str:
+    src = _MARKER_DRIVER + f"\nimport shal\nshal.set_gated_effects({effects})\n"
+    (lab / f"{name}.py").write_text(src, encoding="utf-8")
+    return f"{name}.py"
+
+
+def test_a_widened_policy_makes_shal_call_refuse_a_write(lab):
+    drivers = _with_policy(lab, "strict_driver", '{"write", "actuator", "config"}')
+    r = _shal("call", "marker.yaml", "thing", "set_level", "5", "--json",
+              "--drivers", drivers, cwd=lab)
+    assert r.returncode == 2, r.stderr
+    out = json.loads(r.stdout)
+    assert out["rejected"] == "approval" and out["side_effect"] == "write"
+    assert out["sent"] is False
+    assert _marks(lab) == []
+    # a read stays free under any policy ("none" cannot be gated)
+    r = _shal("call", "marker.yaml", "thing", "level", "--drivers", drivers, cwd=lab)
+    assert r.returncode == 0, r.stderr
+
+
+def test_a_narrowed_policy_lets_shal_call_run_what_the_runtime_runs(lab):
+    drivers = _with_policy(lab, "loose_driver", '{"config"}')
+    r = _shal("call", "marker.yaml", "thing", "arm", "--drivers", drivers, cwd=lab)
+    assert r.returncode == 0, r.stderr
+    assert _marks(lab) == ["arm"]
+
+
 # ---- a write op runs ---------------------------------------------------------------
 
 def test_write_op_runs_and_its_effect_is_real(lab):

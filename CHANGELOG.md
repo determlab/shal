@@ -14,6 +14,36 @@ All notable changes to this project are documented here. The format follows
 ## [Unreleased]
 
 ### Added
+- **Which side effects require approval is now a host policy, not a constant**
+  (#114, RFC-001 Q2) — `shal.set_gated_effects(...)` /
+  `shal.gated_effects(...)` (a `with` scope) / `shal.get_gated_effects()` /
+  `shal.reset_gated_effects(token)` mirror `set_approver`/`approver`/`get_approver`:
+  SHAL ships the mechanism plus a safe default and the host seats the policy.
+  **The default is unchanged** — `{"actuator", "config"}` — so a consumer that
+  never calls the new API behaves exactly as before; no pre-existing test was
+  edited except the advertised == enforced bridge test, now parametrised. A rig
+  that wants every register write to stop for a human says
+  `shal.set_gated_effects({"write", "actuator", "config"})` instead of
+  monkey-patching `driver._GATED_EFFECTS` (which no longer exists).
+  - **`"none"` is rejected outright** (D6: reads are free). Gating a read would
+    also advertise one op as `readOnlyHint: true` and `destructiveHint: true`.
+    An unknown effect name is a `ValueError` **at the call site**, not silently
+    at the next op. An empty set is legal (gate nothing).
+  - **Advertised == enforced still holds.** Every reader of the old constant now
+    reads the live policy: the gate, `hal._annotations` and `hal._describe` (the
+    MCP `destructiveHint` and "needs a person's approval"), `registry.catalog()`,
+    and `shal call`'s refusal — so `shal call` refuses exactly what the runtime
+    gate would stop. A CLI process seats no policy of its own (there is no flag:
+    the caller must not pick its own gate); it is the default unless a
+    `--drivers` module seats one at import.
+  - The membership test moved from bind time to **call time** (the `Transport`
+    exclusion stays at bind), so a policy seated after `shal.load()` holds.
+  - **The audit does not move with the policy**: it follows the label (#194). A
+    `write` gated by a widened set gains an `approved`/`denied` record; its own
+    outcome record is unchanged.
+  - Same `ContextVar` caveat as `set_approver` (a new OS thread starts from the
+    default); `shal.approval`'s docstring documents the two as a **pair** — a
+    strict Approver alone never sees a `write` that is not gated.
 - **`--json` on `shal probe`, `shal tools` and `shal docs --list`** (#185) — each
   prints one JSON document on stdout, its shape shown in the command's `--help`.
   `probe`: `{ok, topology, reads: [{tool, device, op, ok, value|error, unit}],

@@ -16,7 +16,9 @@ import functools
 import inspect
 import logging
 import time
-from collections.abc import Callable
+from collections.abc import Callable, Iterable
+from contextlib import contextmanager
+from contextvars import ContextVar, Token
 from typing import TYPE_CHECKING, Any
 
 from . import log as _log
@@ -37,14 +39,89 @@ def idempotent(fn: Callable) -> Callable:
 
 
 _SIDE_EFFECTS = frozenset({"none", "write", "actuator", "config"})
-# effects that require human-in-the-loop approval before I/O (issue #14): physical
-# motion ("actuator") and destructive/configuration writes ("config"). A plain
-# "write" (a benign setpoint/register) is audited but NOT gated.
-_GATED_EFFECTS = frozenset({"actuator", "config"})
 # fail-closed default (issue #19, #194): an un-annotated op infers "actuator"
 # (gated, audited), never "write" or "none" — whether or not it is @idempotent. A
 # forgotten side_effect must not silently reach hardware. Authors opt DOWN to
 # "write" (benign, ungated) or "none" (a read) explicitly.
+
+# -- which effects require human-in-the-loop approval (issue #114) -------------
+# The SHIPPED default (issue #14): physical motion ("actuator") and destructive /
+# configuration writes ("config"). A plain "write" (a benign setpoint/register) is
+# audited but NOT gated. Like the Approver next door, SHAL ships the *mechanism*
+# plus a *safe default* and lets the host seat the *policy*:
+#
+#     import shal
+#     shal.set_gated_effects({"write", "actuator", "config"})   # stricter rig
+#     with shal.gated_effects({"actuator"}):                    # scoped policy
+#         ...
+#
+# A consumer that never calls the API sees byte-identical behaviour. The gated set
+# decides only which calls ASK; the audit follows the LABEL (#194) and does not
+# move with it.
+_DEFAULT_GATED: frozenset[str] = frozenset({"actuator", "config"})
+_current_gated: ContextVar[frozenset[str] | None] = ContextVar("shal_gated", default=None)
+
+
+def _coerce_gated(effects: Iterable[str]) -> frozenset[str]:
+    """Validate a candidate gated set AT THE CALL SITE — an unknown or meaningless
+    effect name must fail where the host wrote it, not silently at the next op.
+
+    ``"none"`` is rejected outright: it marks a READ, and "stop the world and ask a
+    human before this read" is not a thing the gate can mean (D6: reads are free and
+    human-runnable). Gating it would also make the advertised hints
+    self-contradictory — the same op would carry ``readOnlyHint: true`` and
+    ``destructiveHint: true``."""
+    given = frozenset(effects)
+    if "none" in given:
+        raise ValueError(
+            "gated effects cannot include 'none': it marks a read, and gating a "
+            "read has no meaning (it would advertise readOnlyHint and "
+            "destructiveHint together). Gate 'write'/'actuator'/'config'.")
+    unknown = sorted(str(e) for e in given if e not in _SIDE_EFFECTS)
+    if unknown:
+        raise ValueError(
+            f"unknown side_effect(s) {unknown}: gated effects must be a subset of "
+            f"{sorted(_SIDE_EFFECTS - {'none'})}")
+    return given
+
+
+def get_gated_effects() -> frozenset[str]:
+    """The effects the wrapper will gate for the current context (default
+    ``{"actuator", "config"}``). This is the SINGLE source read by the gate, the
+    advertised MCP hints and ``shal call``'s refusal — advertised == enforced."""
+    got = _current_gated.get()
+    return _DEFAULT_GATED if got is None else got
+
+
+def set_gated_effects(effects: Iterable[str]) -> Token:
+    """Install ``effects`` as the active gated set. Returns a token for
+    :func:`reset_gated_effects`. Raises ``ValueError`` immediately for an unknown
+    effect name or for ``"none"``.
+
+    Note: the policy lives in a :class:`~contextvars.ContextVar`. A newly spawned
+    OS thread does NOT inherit the caller's context, so it falls back to the safe
+    default (``{"actuator", "config"}``) until you call ``set_gated_effects``
+    inside that thread. ``asyncio`` tasks created with the running loop DO inherit
+    it. Seat it BEFORE the tool list is served (MCP ``list_tools``): the advertised
+    hints are computed then, the gate on every call. Pair it with
+    :func:`shal.set_approver` — see ``shal.approval``."""
+    return _current_gated.set(_coerce_gated(effects))
+
+
+def reset_gated_effects(token: Token) -> None:
+    """Undo a :func:`set_gated_effects`, restoring the previous gated set."""
+    _current_gated.reset(token)
+
+
+@contextmanager
+def gated_effects(effects: Iterable[str]):
+    """Scope a gated set to a ``with`` block; the previous set is restored on exit."""
+    chosen = _coerce_gated(effects)  # raise at the `with`, before the block runs
+    token = _current_gated.set(chosen)
+    try:
+        yield chosen
+    finally:
+        _current_gated.reset(token)
 
 
 def op(description: str, *, unit: str | None = None,
@@ -59,7 +136,9 @@ def op(description: str, *, unit: str | None = None,
     the op is treated as "actuator" (gated, audited), @idempotent or not —
     declare "none" for a read and "write" for a benign, ungated state change.
     "actuator" and "config" ops are gated by the approval interlock (issue #14) — they stop
-    for the active Approver before any bus I/O. The metadata
+    for the active Approver before any bus I/O. WHICH effects are gated is itself a
+    host policy (issue #114): the default is `{"actuator", "config"}`, and a host may
+    widen or narrow it with `shal.set_gated_effects` / `shal.gated_effects`. The metadata
     feeds `hal.tool_schemas()` and is required on every public op of a driver that
     sets `llm_ready = True` (checked at bind — fail loudly, never at call time).
 
@@ -217,12 +296,17 @@ class Driver:
         self._op_schemas[op] = schema
         guard = (_limits.Guard(fn, schema, path=self.node.path, opname=op)
                  if constrained else None)
-        # human-in-the-loop gate (issue #14): actuator/config ops, and only device
-        # drivers (a bus provides transport, not actuation — same rule as audit).
-        # The approver is consulted at CALL time, so a host can inject a policy
-        # after load.
-        gated = side_effect in _GATED_EFFECTS and not isinstance(self, Transport)
-        sig = inspect.signature(fn) if gated else None
+        # human-in-the-loop gate (issue #14): gated effects (default actuator/config)
+        # on device drivers only — a bus provides transport, not actuation (same rule
+        # as audit). BOTH halves of the decision are resolved at CALL time, so a host
+        # can inject an Approver AND a gated set after load (issue #114). That is not
+        # just convenience: the advertised `destructiveHint` (hal._annotations) is
+        # computed when tool_catalog() is called, so a bind-time gated set would let
+        # the advertisement and the enforcement diverge under a seated policy. The
+        # Transport exclusion is a fixed property of this driver, so it stays at bind.
+        # `audited` above follows the LABEL, never this policy (#194).
+        gatable = not isinstance(self, Transport)
+        sig = inspect.signature(fn) if gatable else None
 
         @functools.wraps(fn)
         def call(*args, **kwargs):
@@ -245,7 +329,8 @@ class Driver:
                                                "outcome": "rejected",
                                                "txn": _log.current_txn.get()})
                         raise
-                if gated:  # limits passed -> ask before moving (pre-I/O, unbypassable)
+                # limits passed -> ask before moving (pre-I/O, unbypassable)
+                if gatable and side_effect in get_gated_effects():
                     _approve_or_raise(self, op, side_effect, sig, args, kwargs)
                 try:
                     result = fn(self, *args, **kwargs)
@@ -302,7 +387,8 @@ class Driver:
 
 
 def _approve_or_raise(driver, op: str, side_effect: str, sig, args, kwargs) -> None:
-    """Consult the active Approver for one gated (actuator/config) call. ALWAYS
+    """Consult the active Approver for one gated call — an op whose side_effect is
+    in the active gated set (default actuator/config; see get_gated_effects). ALWAYS
     audits the decision — a gated op is never a read, so it is audited whether
     or not it is @idempotent — and raises ApprovalDenied (pre-I/O, nothing sent)
     on refusal (issue #14). Called ONCE per call: an idempotent retry after a

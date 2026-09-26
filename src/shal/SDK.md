@@ -299,6 +299,22 @@ def start_cleaning(self) -> None:
 - A denied call raises `shal.ApprovalDenied` (nothing sent, like `LimitError`);
   `call_tool` returns `{"ok": False, "rejected": "approval"}`. Every decision is
   written to `shal.audit` (`outcome` = `approved` | `denied`).
+- **Which effects are gated is also host policy** (#114). The default is
+  `{"actuator", "config"}`; a host seats another set the same way it seats the
+  Approver — and should seat both, since a strict Approver never sees an effect
+  that is not gated:
+
+  ```python
+  shal.set_gated_effects({"write", "actuator", "config"})   # a stricter rig
+  with shal.gated_effects({"actuator"}): ...                # scoped policy
+  shal.get_gated_effects()                                  # the active set
+  ```
+
+  An unknown name, or `"none"` (a read is never gated, D6), raises `ValueError` at
+  the call. The advertised `destructiveHint`, `shal tools`/`probe` and `shal call`'s
+  refusal all read the same live set as the gate, so seat it before the tool list
+  is served. The audit does not move with it: it follows the label (#194). Like
+  the Approver it lives in a `ContextVar`, so a new OS thread starts from the default.
 - Use `actuator` for motion/dispense and `config` for destructive/configuration
   writes — anything you'd want a human to confirm. Plain `write` (a register, a
   setpoint) is audited but **not** gated, so a benign write never prompts.

@@ -20,6 +20,23 @@ injects the *decision*:
 Order is always **limits -> approval -> I/O**: an impossible call is rejected by
 limits before anyone is asked to approve it. Every decision (allow or deny) is
 written to ``shal.audit`` so runs stay deterministic and replayable.
+
+**Pair this with the gated set — the one trap in this design (issue #114).** There
+are TWO policies here, not one, and they answer different questions:
+
+* ``set_approver`` / ``approver`` — WHO decides (this module).
+* ``shal.set_gated_effects`` / ``shal.gated_effects`` — WHICH effects even reach
+  that decision (``shal.driver``; default ``{"actuator", "config"}``).
+
+A host that seats one and forgets the other gets weaker enforcement than it
+thinks. Seating a strict Approver alone still lets every ``side_effect="write"``
+op through untouched — it is never gated, so the Approver is never asked::
+
+    shal.set_approver(MyHumanApprover())               # WHO
+    shal.set_gated_effects({"write", "actuator", "config"})  # WHICH — don't forget
+
+Both live in :class:`~contextvars.ContextVar`\\ s with the same caveat: a newly
+spawned OS thread inherits neither and falls back to the safe defaults.
 """
 from __future__ import annotations
 

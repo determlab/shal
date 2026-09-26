@@ -28,7 +28,15 @@ from .capabilities import (
     PowerSupply,
     TemperatureSensor,
 )
-from .driver import Driver, idempotent, op
+from .driver import (
+    Driver,
+    gated_effects,
+    get_gated_effects,
+    idempotent,
+    op,
+    reset_gated_effects,
+    set_gated_effects,
+)
 from .errors import (
     ApprovalDenied,
     Busy,
@@ -67,6 +75,7 @@ __all__ = [
     "load", "Hal", "Node", "Driver", "idempotent", "op", "register", "catalog", "logging",
     "Approver", "ApprovalRequest", "AutoApprove", "DenyAll", "CallableApprover",
     "ConsoleApprover", "set_approver", "get_approver", "approver",
+    "set_gated_effects", "get_gated_effects", "gated_effects", "reset_gated_effects",
     "Error", "LoadError", "HopError", "HopTimeout", "LimitError", "ApprovalDenied",
     "Busy", "Gap",
     "Transport", "ByteTransport", "CommandTransport", "MessageTransport",

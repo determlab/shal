@@ -15,7 +15,7 @@ reviewed: 2026-08-31
 >
 > The one rule worth restating here, because the rest rests on it: **only the
 > session with the code may claim something is true in the code.** A sentence
-> like *"`hal.py:217` reads `_GATED_EFFECTS`"* cannot be written from a
+> like *"`hal._annotations` reads `get_gated_effects()`"* cannot be written from a
 > distance — someone has to open the file. That is why this repo's ledger,
 > changelog, contributor docs and `docs/agents/*` are written here and by no
 > other role.

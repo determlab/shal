@@ -5,6 +5,7 @@ the public surface (driver methods + hal.call_tool) — never the wrapper's guts
 The autouse AutoApprove fixture (conftest) is overridden per test where a real
 policy decision is under test.
 """
+import contextlib
 import io
 
 import pytest
@@ -378,3 +379,214 @@ def test_call_tool_refusal_carries_reason(hal, monkeypatch):
         out = hal.call_tool("rig__move", {"dx": 1})
     assert out["rejected"] == "approval" and out["reason"] is None
     assert RECEIVED == []
+
+
+# ---- WHICH effects are gated is a host policy too (issue #114) --------------------
+# The Approver answers "who decides"; the gated set answers "which effects even
+# reach that decision". The default must be byte-identical for a consumer that
+# never touches this API — the tests ABOVE are the proof of that and are unchanged.
+
+def test_default_gated_set_is_actuator_and_config():
+    assert shal.get_gated_effects() == frozenset({"actuator", "config"})
+
+
+def test_default_gated_set_when_context_unset():
+    token = shal.driver._current_gated.set(None)
+    try:
+        assert shal.get_gated_effects() == frozenset({"actuator", "config"})
+    finally:
+        shal.driver._current_gated.reset(token)
+
+
+def test_seated_policy_gates_a_write_and_denyall_denies(hal):
+    """The DoD case: a host seats {write, actuator, config}; a benign write now
+    consults the approver and DenyAll stops it pre-I/O."""
+    with shal.gated_effects({"write", "actuator", "config"}):
+        with shal.approver(shal.DenyAll()):
+            with pytest.raises(shal.ApprovalDenied):
+                hal.get_device("rig").set_reg(7)
+    assert RECEIVED == []  # nothing reached the device
+
+
+def test_seated_policy_write_reaches_the_approver_as_write(hal):
+    spy = Spy(allow=True)
+    with shal.gated_effects({"write", "actuator", "config"}), shal.approver(spy):
+        assert hal.get_device("rig").set_reg(7) == "reg=7"
+    (req,) = spy.seen
+    assert req.side_effect == "write" and req.op == "set_reg"
+    assert RECEIVED == [("set_reg", {"value": 7})]
+
+
+def test_seated_policy_also_gates_the_tool_surface(hal):
+    """Same gate, both call paths — the policy is not a raw-path-only thing."""
+    with shal.gated_effects({"write", "actuator", "config"}):
+        with shal.approver(shal.DenyAll()):
+            out = hal.call_tool("rig__set_reg", {"value": 7})
+    assert out["ok"] is False and out["rejected"] == "approval"
+    assert RECEIVED == []
+
+
+def test_policy_can_narrow_as_well_as_widen(hal):
+    """A gated set is a real input, not a one-way ratchet: dropping "actuator"
+    frees an actuator op that DenyAll would otherwise refuse."""
+    with shal.gated_effects({"config"}), shal.approver(shal.DenyAll()):
+        assert hal.get_device("rig").move(5) == "moved 5"
+        with pytest.raises(shal.ApprovalDenied):
+            hal.get_device("rig").factory_reset()
+    assert RECEIVED == [("move", {"dx": 5})]
+
+
+def test_policy_is_restored_on_scope_exit(hal):
+    with shal.gated_effects({"write"}):
+        assert shal.get_gated_effects() == frozenset({"write"})
+    assert shal.get_gated_effects() == frozenset({"actuator", "config"})
+    # ...and the default gate is back in force
+    with shal.approver(shal.DenyAll()):
+        assert hal.get_device("rig").set_reg(1) == "reg=1"   # write: ungated again
+        with pytest.raises(shal.ApprovalDenied):
+            hal.get_device("rig").move(1)                    # actuator: gated again
+
+
+def test_set_gated_effects_token_resets(hal):
+    token = shal.set_gated_effects({"write"})
+    try:
+        assert shal.get_gated_effects() == frozenset({"write"})
+    finally:
+        shal.driver.reset_gated_effects(token)
+    assert shal.get_gated_effects() == frozenset({"actuator", "config"})
+
+
+# ---- invalid input fails AT THE CALL SITE, not silently at the next op ------------
+
+@pytest.mark.parametrize("bad", [{"wrtie"}, {"actuator", "nope"}, {"ACTUATOR"}, {""}])
+def test_unknown_effect_name_raises_at_the_call_site(hal, bad):
+    with pytest.raises(ValueError, match="unknown side_effect"):
+        shal.set_gated_effects(bad)
+    # the policy is untouched and the next op behaves exactly as before
+    assert shal.get_gated_effects() == frozenset({"actuator", "config"})
+    with shal.approver(shal.DenyAll()):
+        assert hal.get_device("rig").set_reg(3) == "reg=3"
+
+
+def test_unknown_effect_name_raises_before_entering_the_with_block():
+    entered = False
+    with pytest.raises(ValueError, match="unknown side_effect"):
+        with shal.gated_effects({"actuator", "bogus"}):
+            entered = True          # pragma: no cover
+    assert entered is False
+    assert shal.get_gated_effects() == frozenset({"actuator", "config"})
+
+
+def test_none_is_rejected_outright(hal):
+    """Gating a read has no meaning, and advertising it would be self-contradictory
+    (readOnlyHint AND destructiveHint on the same op). Refuse it at the call site."""
+    for bad in ({"none"}, {"none", "actuator"}):
+        with pytest.raises(ValueError, match="cannot include 'none'"):
+            shal.set_gated_effects(bad)
+        with pytest.raises(ValueError, match="cannot include 'none'"):
+            with shal.gated_effects(bad):
+                pass                # pragma: no cover
+    assert shal.get_gated_effects() == frozenset({"actuator", "config"})
+    with shal.approver(shal.DenyAll()):
+        assert hal.get_device("rig").read() == 42   # reads stay free, always
+
+
+def test_empty_policy_gates_nothing(hal):
+    """An explicit opt-out is legal (and must be explicit) — unlike "none", an
+    empty set is a coherent statement: gate nothing."""
+    with shal.gated_effects(set()), shal.approver(shal.DenyAll()):
+        assert hal.get_device("rig").move(5) == "moved 5"
+    assert RECEIVED == [("move", {"dx": 5})]
+
+
+def test_catalog_hints_follow_the_seated_policy():
+    """``registry.catalog()`` is the OTHER advertiser of the gated set (the authoring
+    surface). It must read the live policy too — otherwise it describes a `write` as
+    free while the runtime gate stops it for a human."""
+    def hints(policy=None):
+        scope = contextlib.nullcontext() if policy is None else shal.gated_effects(policy)
+        with scope:
+            return {o["name"]: o["annotations"]["destructiveHint"]
+                    for o in shal.catalog("test,approval-rig")["ops"]}
+
+    assert hints()["move"] is True and hints()["set_reg"] is False     # shipped default
+    seated = hints({"write", "actuator", "config"})
+    assert seated["move"] is True and seated["set_reg"] is True
+    narrowed = hints({"write"})
+    assert narrowed["move"] is False and narrowed["set_reg"] is True
+    assert hints()["set_reg"] is False                                 # policy popped
+
+
+def test_gated_set_is_not_inherited_by_a_new_thread(hal):
+    """The documented ContextVar caveat, identical to set_approver: a newly spawned
+    OS thread does NOT inherit the policy and falls back to the safe default."""
+    import threading
+    seen: list[frozenset] = []
+    with shal.gated_effects({"write"}):
+        t = threading.Thread(target=lambda: seen.append(shal.get_gated_effects()))
+        t.start()
+        t.join()
+    assert seen == [frozenset({"actuator", "config"})]   # the safe default, not {"write"}
+
+
+# ---- the gated set decides who is ASKED; the audit follows the LABEL (#194) -------
+
+def test_widening_the_gated_set_does_not_change_what_is_audited(hal, audit_records):
+    """A `write` op is audited under the default (label: not a read) and stays
+    audited under a widened set — the policy only ADDS the approval decision to the
+    record, it never adds or removes the op's own outcome record."""
+    hal.get_device("rig").set_reg(1)
+    default = [r.outcome for r in audit_records if r.op == "set_reg"]
+    audit_records.clear()
+    with shal.gated_effects({"write", "actuator", "config"}):
+        hal.get_device("rig").set_reg(2)                   # AutoApprove (conftest)
+    widened = [r.outcome for r in audit_records if r.op == "set_reg"]
+    assert default == ["ok"]
+    assert widened == ["approved", "ok"]
+
+
+def test_a_write_denied_under_a_widened_set_is_audited_as_a_write(hal, audit_records):
+    with shal.gated_effects({"write", "actuator", "config"}):
+        with shal.approver(shal.DenyAll()):
+            with pytest.raises(shal.ApprovalDenied) as ei:
+                hal.get_device("rig").set_reg(7)
+    assert ei.value.side_effect == "write"
+    (rec,) = [r for r in audit_records if r.op == "set_reg"]
+    assert rec.outcome == "denied" and rec.side_effect == "write"
+    assert RECEIVED == []
+
+
+def test_narrowing_the_gated_set_still_audits_the_actuator(hal, audit_records):
+    """An `actuator` op freed by a narrowed set is not asked, but it is still on the
+    record: audit is keyed on the label, never on the policy."""
+    with shal.gated_effects({"config"}), shal.approver(shal.DenyAll()):
+        hal.get_device("rig").move(3)
+    assert [r.outcome for r in audit_records if r.op == "move"] == ["ok"]
+
+
+def test_the_description_follows_the_seated_policy(hal):
+    """`_describe`'s "needs a person's approval" sentence is advertising too."""
+    def desc():
+        return next(t["description"] for t in hal.tool_schemas()
+                    if t["name"] == "rig__home")
+    assert "needs a person's approval" in desc()
+    with shal.gated_effects({"write"}):
+        assert "needs a person's approval" not in desc()
+
+
+def test_gated_set_is_isolated_between_contexts():
+    """A ContextVar, not a global: a policy seated inside a copied context does not
+    leak out of it."""
+    import contextvars
+    ctx = contextvars.copy_context()
+    ctx.run(shal.set_gated_effects, {"write"})
+    assert ctx.run(shal.get_gated_effects) == frozenset({"write"})
+    assert shal.get_gated_effects() == frozenset({"actuator", "config"})
+
+
+def test_nested_scopes_restore_in_order():
+    with shal.gated_effects({"write"}):
+        with shal.gated_effects({"config"}):
+            assert shal.get_gated_effects() == frozenset({"config"})
+        assert shal.get_gated_effects() == frozenset({"write"})
+    assert shal.get_gated_effects() == frozenset({"actuator", "config"})

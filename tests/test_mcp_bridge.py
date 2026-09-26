@@ -1,6 +1,8 @@
 """MCP bridge (issues #25/#26/#27): the pure SHAL->MCP core, tested without the
 `mcp` SDK. Covers tool exposure, reads-free/writes-gated, the in-band approval
 two-step, and the free-writes opt-out."""
+import contextlib
+
 import pytest
 
 import shal
@@ -239,13 +241,36 @@ def test_no_gated_write_reaches_the_device_ungated(hal):
     assert RECEIVED == []
 
 
-def test_advertised_gated_set_equals_enforced(hal):
-    """Advertised (`destructiveHint`) == enforced (what the single gate defers)."""
-    b = Bridge(hal)
-    defs = {d["name"]: d for d in b.tool_defs()}
-    assert defs["rig__move"]["annotations"]["destructiveHint"] is True
-    assert b.call("rig__move", {"dx": 1})["status"] == "approval_required"   # gated
-    assert defs["rig__read"]["annotations"]["destructiveHint"] is False
-    assert b.call("rig__read", {})["ok"] is True                             # free read
-    assert defs["rig__set_reg"]["annotations"]["destructiveHint"] is False
-    assert b.call("rig__set_reg", {"value": 5})["ok"] is True                # free benign write
+_ARGS = {"rig__read": {}, "rig__move": {"dx": 1}, "rig__set_reg": {"value": 5}}
+
+# policy the host seats -> what MUST be advertised destructive AND actually deferred.
+# The middle row is the whole point of issue #114: a `write` becomes gated, so the
+# hint must flip with it. The last row inverts the shipped default outright.
+_ADVERTISED_EQ_ENFORCED = [
+    (None,                                {"rig__read": False, "rig__move": True,
+                                           "rig__set_reg": False}),   # shipped default
+    ({"write", "actuator", "config"},     {"rig__read": False, "rig__move": True,
+                                           "rig__set_reg": True}),
+    ({"write"},                           {"rig__read": False, "rig__move": False,
+                                           "rig__set_reg": True}),
+]
+
+
+@pytest.mark.parametrize("policy,expected", _ADVERTISED_EQ_ENFORCED)
+def test_advertised_gated_set_equals_enforced(hal, policy, expected):
+    """Advertised (`destructiveHint`) == enforced (what the single gate defers) —
+    under the shipped default AND under a gated set the host seats (issue #114).
+
+    Without the parametrization this test only ever exercised the default, where the
+    two readers cannot disagree; a hint computed from the shipped constant while the
+    gate consults the live policy would advertise a `write` as free while stopping it
+    for a human — the tool surface lying to the agent."""
+    scope = contextlib.nullcontext() if policy is None else shal.gated_effects(policy)
+    with scope:
+        b = Bridge(hal)
+        defs = {d["name"]: d for d in b.tool_defs()}
+        for name, want in expected.items():
+            advertised = defs[name]["annotations"]["destructiveHint"]
+            enforced = b.call(name, _ARGS[name]).get("status") == "approval_required"
+            assert advertised is want, f"{name}: advertised {advertised}, want {want}"
+            assert enforced is want, f"{name}: enforced {enforced}, want {want}"
