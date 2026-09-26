@@ -136,6 +136,16 @@ All notable changes to this project are documented here. The format follows
   is written `calls: []` and reads back `()`. Records already written with
   `calls: []` read back unchanged; no migration. A `calls` that is not a list
   is still a `RecordError`.
+- **`record_version` is 2** (#223). #218 made `calls` optional, and a version-1
+  reader cannot read a record without it, so a new record is written
+  `record_version: 2`. The reader reads versions 1 and 2: a version-1 record,
+  `calls: []` included, reads back unchanged (`calls == ()`). A record newer
+  than the reader is refused in one sentence that names both versions and no
+  key: "this record is version 3, newer than this SHAL reads (up to 2) —
+  upgrade pyshal". The check runs before any key is read, so a newer record
+  that lacks a key is not reported as a missing key. `read()` over a store
+  that holds one newer record refuses the whole read; it does not skip it. A
+  `record_version` below 1 is a `RecordError`.
 - **The `jig` sample writes `calls=None`** (#222). Its loop does not collect
   SHAL calls, so each record now says "not collected" and the record file has
   no `calls` key, instead of `calls: []` ("collected, and there were none").
