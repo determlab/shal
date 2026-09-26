@@ -360,6 +360,29 @@ def test_run_with_paste_runs_nothing_extra(tmp_path):
     assert not (tmp_path / "pwned").exists()
 
 
+# A path that starts with - (shal#197): bare, `shal call` reads it as a flag, and
+# PowerShell 5.1 even splits a bare -x.yaml into -x and .yaml before the exe sees
+# it. run_with writes it as ./-x.yaml, which every shell passes as one path.
+@pytest.mark.parametrize("topology, drivers, shown", [
+    ("-x.yaml", "-d", "./-x.yaml ambient_temp set_target celsius=<celsius> "
+                      "--drivers ./-d"),
+    ("-x y.yaml", "-d r", '"./-x y.yaml" ambient_temp set_target celsius=<celsius> '
+                          '--drivers "./-d r"'),
+])
+def test_probe_json_run_with_guards_a_path_starting_with_dash(tmp_path, topology,
+                                                               drivers, shown):
+    (tmp_path / topology).write_text(_SIM_YAML, encoding="utf-8")
+    (tmp_path / drivers).mkdir()  # a folder of no .py files: imports nothing
+    r = _run("probe", f"--drivers={drivers}", "--json", "--", topology, cwd=tmp_path)
+    assert r.returncode == 0, r.stderr
+    [write] = _doc(r)["writes_not_run"]
+    assert write["run_with"] == f"shal call {shown}"
+    for name, p in _paste(write["run_with"], tmp_path, celsius="30"):
+        # the topology loaded and the op reached the gate: `shal call` read the
+        # path as a path, not as a flag
+        assert "refused: ambient_temp.set_target" in p.stderr, (name, p.stdout, p.stderr)
+
+
 def test_call_takes_name_value_for_every_param_shape(space_lab):
     # the name=value form run_with uses, for each type `shal call` converts and
     # for a keyword-only parameter, given out of the op's order

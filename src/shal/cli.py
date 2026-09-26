@@ -118,9 +118,13 @@ def _call_command(args, fact: dict, schema: dict) -> str | None:
     and a ``name=<name>`` placeholder per required value (by name, so the order of
     the op's parameters does not matter). None when a path in it cannot be quoted
     for every shell (see `_shell_token`)."""
-    tokens = [args.topology, fact["device"], fact["op"]]
+    def path(p: str) -> str:
+        # a path starting with - would read as a flag (#197). Not `--`: PowerShell
+        # 5.1 splits a bare -x.yaml into -x .yaml even after it. ./ is safe in all.
+        return "./" + p if p.startswith("-") else p
+    tokens = [path(args.topology), fact["device"], fact["op"]]
     for d in args.drivers:
-        tokens += ["--drivers", d]
+        tokens += ["--drivers", path(d)]
     quoted = [_shell_token(t) for t in tokens]
     names = schema.get("required", [])
     if None in quoted or not all(_PARAM_NAME.match(p) for p in names):
@@ -682,7 +686,8 @@ def main(argv: list[str] | None = None) -> int:
                '  is bare; one that also has a space or # = @ ~ is in double quotes.\n'
                '  Any other character (non-ASCII too), or a path ending in \\, makes\n'
                '  run_with null: build that call yourself. bash reads a \\ as an\n'
-               '  escape, so use / in paths there.\n'
+               '  escape, so use / in paths there. A path that starts with - is\n'
+               '  written ./-x.yaml, so `shal call` does not read it as a flag.\n'
                "\n"
                "exit: 0 ran; 1 no such tool, the tool is a write, or the topology\n"
                "  does not load. The message is on stderr; with --json, stdout also\n"

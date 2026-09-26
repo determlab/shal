@@ -85,6 +85,11 @@ All notable changes to this project are documented here. The format follows
   unchanged. A `HopError` keeps its own `outcome="error"` record (never both), a
   limit rejection or approval denial is not also a device error, and a read still
   writes nothing. Before, this was the one outcome with no trail.
+- **`shal probe --json` run_with guards a path that starts with `-`** (#197).
+  Before, `shal call -x.yaml ...` read the path as a flag (and PowerShell 5.1
+  split a bare `-x.yaml` into `-x` and `.yaml`). A topology or `--drivers`
+  path that starts with `-` is now written `./-x.yaml`, which bash, cmd and
+  PowerShell all pass as one path. Not `--`: PowerShell still splits after it.
 - **`delete_row` and `insert` in the sqlite reference driver read `sqlite_temp_master` first** (#180).
   A TEMP object wins SQLite name resolution, so a TEMP view with an INSTEAD OF
   DELETE trigger could shadow a table name: the check saw the `main` table, and
