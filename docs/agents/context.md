@@ -92,7 +92,7 @@ if it runs.
   its own process (`tests/test_adk_reference.py`)
 - `src/shal/samples/` — the samples (#206): small programs for a **person** deciding
   whether SHAL does their job (the references above are for a cold agent). Each
-  subfolder with a `run.py` is one; `hello` is the placeholder. Package data like the
+  subfolder with a `run.py` is one; `hello` is the first. Package data like the
   references (an implicit namespace package, no `__init__.py`); the `.yaml` files ship
   through `MANIFEST.in`. `shal docs --samples` / `--sample <name> [--to DIR]` print or
   write them; CI's `samples` job runs each from the wheel (`dev/samples/run_samples.py`),

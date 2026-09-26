@@ -1,0 +1,3 @@
+{"exit": 0,
+ "stdout_has": ["ambient_temp: ", " celsius"],
+ "stderr_lacks": ["Traceback"]}

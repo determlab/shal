@@ -1,7 +1,6 @@
 """Hello: load a simulated temperature sensor and read it once.
 
-A placeholder sample (#206): it proves the samples mechanism end to end. Run it
-from any folder; it finds its topology.yaml next to itself.
+Run it from any folder; it finds its topology.yaml next to itself.
 """
 from pathlib import Path
 
