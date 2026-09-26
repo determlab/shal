@@ -1755,3 +1755,59 @@ def test_shal_mcp_refuses_a_hal_with_a_bound_approver(tmp_path, monkeypatch):
     with pytest.raises(shal.LoadError, match="carries its own approver"):
         server.main([str(p), "--probe"])
     assert loaded and loaded[0]._closed
+
+
+# -- any error during the fill closes the tree once and re-raises it unchanged ------
+
+class _FillBoom(Exception):
+    """Not a LoadError: driver code that raises while its Hal fills the cells."""
+
+
+@shal.register
+class FillRaiser(shal.Driver):
+    """Sits on a sim bus; its bind-time hook raises a non-LoadError at the fill."""
+    compatible = "test,approval-fill-raiser"
+    kind = shal.ByteTransport
+    exc = None
+
+    def bind(self, node):
+        super().bind(node)
+
+        def boom(*_args, **_kw):
+            raise FillRaiser.exc
+        self._shal_bind_hal = boom
+
+    @shal.op("Read.", side_effect="none")
+    def read(self) -> int:
+        return 1
+
+
+def test_a_non_load_error_during_the_fill_closes_the_tree_once_and_re_raises(
+        tmp_path, monkeypatch):
+    """Round 2: ANY exception while Hal.__init__ fills the cells — not only a
+    LoadError — closes the half-built tree (its bus included), exactly once
+    (the failed Hal's __del__ closes nothing again), and the caller gets the SAME
+    exception object, unchanged."""
+    import gc
+
+    from shal.buses.sim import SimI2cBus
+    FillRaiser.exc = _FillBoom("driver code raised during the fill")
+    closes = []
+    real_close = SimI2cBus.close
+
+    def counting_close(self):
+        closes.append(self.host.path)
+        return real_close(self)
+    monkeypatch.setattr(SimI2cBus, "close", counting_close)
+    p = _write(tmp_path, "boom.yaml", "shal_version: 1\nroot:\n"
+               "  bus:\n    driver: shal,sim-i2c\n    address: sim0\n"
+               "    children:\n"
+               "      dev: {id: dev, driver: 'test,approval-fill-raiser', "
+               "address: 0x48}\n")
+    with pytest.raises(_FillBoom) as ei:
+        shal.load(p, approver=shal.AutoApprove())
+    assert ei.value is FillRaiser.exc                     # the original object
+    assert closes == ["/bus"]                              # the bus was closed
+    del ei
+    gc.collect()
+    assert closes == ["/bus"]                              # and never again

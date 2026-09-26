@@ -300,7 +300,9 @@ def load(source, *, approver=None) -> Hal:
     try:  # the ONE write of the policy — the approver included (#217)
         hal = Hal(roots, ids, declared_gated=declared, approver=approver,
                   source_label=label)
-    except LoadError:  # a cell was filled first: close the tree, fail closed
+    except BaseException:  # ANY fill error (a cell filled first, or driver code
+        # raising): close the tree ONCE — the failed Hal stays `_closed`, so its
+        # __del__ closes nothing — and re-raise the original exception
         for root in roots:
             _close_subtree(root, set())
         raise
