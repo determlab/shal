@@ -85,6 +85,12 @@ All notable changes to this project are documented here. The format follows
   unchanged. A `HopError` keeps its own `outcome="error"` record (never both), a
   limit rejection or approval denial is not also a device error, and a read still
   writes nothing. Before, this was the one outcome with no trail.
+- **`delete_row` and `insert` in the sqlite reference driver read `sqlite_temp_master` first** (#180).
+  A TEMP object wins SQLite name resolution, so a TEMP view with an INSTEAD OF
+  DELETE trigger could shadow a table name: the check saw the `main` table, and
+  the DELETE ran the trigger instead. The name must now be a plain rowid table
+  in every schema that has it (temp and main); anything else is refused and the
+  transaction rolls back, so nothing changes.
 
 ## [0.3.0] - 2026-09-27
 

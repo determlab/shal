@@ -170,6 +170,22 @@ def test_a_view_is_refused_even_with_an_instead_of_trigger(db):
     assert _tables(db, "items") == start
 
 
+def test_a_temp_view_shadowing_a_table_is_refused(db):
+    # a TEMP object wins name resolution, so "items" now names this view, and
+    # its trigger would delete a row somewhere else while main.items is a table
+    with shal.approver(shal.AutoApprove()):
+        db.execute_ddl("CREATE TABLE other (x TEXT)")
+        db.execute_ddl("CREATE TEMP VIEW items AS "
+                       "SELECT rowid AS rowid, name, qty FROM main.items")
+        db.execute_ddl("CREATE TEMP TRIGGER vd INSTEAD OF DELETE ON items "
+                       "BEGIN DELETE FROM other; END")
+    db.insert("other", '{"x": "keep"}')
+    start = _tables(db, "main.items", "other")
+    with pytest.raises(ValueError, match="it is a view"):
+        db.delete_row("items", 1)
+    assert _tables(db, "main.items", "other") == start  # nothing changed anywhere
+
+
 def test_a_replace_conflict_that_removes_a_row_is_refused(db):
     # REPLACE deletes the old row without counting it in total_changes;
     # the row count catches it
