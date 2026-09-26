@@ -9,6 +9,15 @@ Mapping`` directly — the sim twin for ANY MessageTransport-kind driver
 A model is a class registered with ``@msg_sim_model("vendor,part")`` exposing
 ``handle(msg: Mapping) -> Mapping``. One instance per child node, keyed by the
 child's address.
+
+It answers the same two message shapes as ``shal,http`` (issue #104): a plain
+mapping reaches the model as-is and its reply comes back as-is; a request
+envelope (any of ``method``/``path``/``query``/``headers``/``json``) is
+validated and normalised exactly as the wire bus does it (``None`` query params
+dropped, ``json`` on GET a LoadError) before the model sees it, and the reply is
+``{status, headers, json | text}``. A model answers an envelope with a plain
+body (sent as ``200`` + ``json``) or with that full shape; a non-2xx ``status``
+is a HopError naming it, as on the wire.
 """
 from __future__ import annotations
 
@@ -21,6 +30,7 @@ from ..errors import HopError, LoadError
 from ..log import bus_logger, current_txn, redact_url
 from ..node import Node
 from ..transport import MessageTransport, Transport
+from .http_bus import is_envelope, parse_envelope
 
 logger = logging.getLogger("shal.bus.sim_msg")
 
@@ -96,9 +106,32 @@ class SimMsgBus(Driver, Transport, MessageTransport):
                 raise HopError(f"no service at {redact_url(str(addr))!r}",
                                path=self.host.path,
                                hop="sim-msg", txn=current_txn.get())
-            reply = model.handle(msg)
-            self.log.debug("exchange", event="exchange", addr=str(addr))
+            if not is_envelope(msg):
+                reply = model.handle(msg)
+                self.log.debug("exchange", event="exchange", addr=str(addr))
+                return reply
+            envelope = parse_envelope(msg, self.host.path)
+            reply = _envelope_reply(model.handle(envelope))
+            target = f"{addr}/{envelope['path']}" if envelope["path"] else str(addr)
+            # <addr>/<path> and status only — never the query or a header (rule 7)
+            self.log.debug("%s %s -> %d", envelope["method"], target,
+                           reply["status"], event="exchange", addr=target,
+                           status=reply["status"])
+            if not 200 <= reply["status"] < 300:
+                raise HopError(f"HTTP {reply['status']} from "
+                               f"{redact_url(target)}", path=self.host.path,
+                               hop="sim-msg", txn=current_txn.get(),
+                               delivered="unknown")
             return reply
+
+
+def _envelope_reply(reply: Any) -> dict:
+    """A model's answer to an envelope as ``{status, headers, json | text}``: a
+    full-shape reply passes through, anything else is a ``200`` JSON body."""
+    if (isinstance(reply, Mapping) and isinstance(reply.get("status"), int)
+            and ("json" in reply or "text" in reply)):
+        return {"headers": {}, **reply}
+    return {"status": 200, "headers": {}, "json": reply}
 
 
 from .. import registry  # noqa: E402
