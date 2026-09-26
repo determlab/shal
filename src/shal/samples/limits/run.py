@@ -18,6 +18,8 @@ one line, rather than raising. An agent, a CI job or a person all learn the same
 thing from it: the operation was refused, and why.
 
 Run it on real hardware by changing the topology, not this file.
+
+Then `shal docs --sample jig`: the same idea over several units, each one logged.
 """
 from pathlib import Path
 
@@ -34,12 +36,10 @@ def check(name: str, celsius: float, low: float, high: float) -> None:
 
 with shal.load(str(TOPOLOGY)) as hal:
     room = hal.get_device("room")
-
     # The same sensor, two limits. A simulated room sits near 25 C, so it is
     # inside a room's range and outside an oven's.
     check("room temperature", room.read_celsius(), 15.0, 35.0)
     check("curing temperature", room.read_celsius(), 30.0, 40.0)
-
     # Now a write. `set_target` is labelled `config`, so the gate stops it
     # below the driver — before anything reaches the device.
     try:

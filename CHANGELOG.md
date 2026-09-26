@@ -34,6 +34,14 @@ All notable changes to this project are documented here. The format follows
   and says so; `N` refuses, exit 2); with no terminal it refuses at once, prints
   the reason on one line and exits 2 ("no approver is set and stdin is not a
   terminal"), and no write reaches the sim. `shal docs --sample limits --to DIR`.
+- **Sample `jig` — a jig that logs results** (#209): a simulated sensor measures
+  five units in a loop, one record per unit through `shal.record` (`runner:
+  script`), written to `jig-records/` in the folder you run from; a SQLite node
+  (the `sqlite` reference, registered by one import line, no `--drivers`) reads
+  them back and the sample prints the count. The loop is the sample's own
+  Python, not SHAL's. Record ids are fixed per unit, so a second run rewrites
+  the same five. The `limits` docstring now ends by pointing to it.
+  `shal docs --sample jig --to DIR`.
 - **Which side effects require approval is now a policy input, and the policy is
   the operator's** (#114, RFC-001 Q2, ADR-001 addendum 5, D27) —
   `shal.set_gated_effects(...)` / `shal.gated_effects(...)` (a `with` scope) /
