@@ -94,7 +94,7 @@ and JSON `"rejected": "approval", "sent": false`:
 shal call sim.yaml ambient_temp set_target 30 --json
 ```
 
-There is no `--approve` flag: the agent that runs a command cannot approve its own
+`shal call` has no `--approve` flag: the agent that runs a command cannot approve its own
 call. A person approves through an MCP host (`shal mcp`), or code runs it inside
 `with shal.approver(<your Approver>):` in Python.
 
