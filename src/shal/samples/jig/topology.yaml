@@ -1,0 +1,16 @@
+# One simulated sensor on a simulated bus, and one SQLite database as a root node.
+# The database is the file record.write() makes in the folder you run from.
+shal_version: 1
+root:
+  bus:
+    driver: shal,sim-i2c
+    address: sim0
+    children:
+      temp0:
+        id: sensor
+        driver: shal,sim-sensor
+        address: 0x48
+  db:
+    id: db
+    driver: sqlite,database
+    address: jig-records/records.db

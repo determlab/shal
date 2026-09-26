@@ -400,3 +400,45 @@ def test_limits_runs_as_the_runner_runs_it(tmp_path, capsys):
     assert "Traceback" not in r.stderr
     assert load_expect(SAMPLES_DIR / "limits")["exit"] == 2
     assert verdict(load_expect(SAMPLES_DIR / "limits"), r.returncode, r.stdout, r.stderr) == []
+
+
+# -- the jig sample (#209) ---------------------------------------------------------------
+
+JIG = SAMPLES_DIR / "jig"
+
+
+def test_jig_first_comment_says_the_loop_is_the_samples():
+    lines = (JIG / "run.py").read_text(encoding="utf-8").splitlines()
+    assert lines[0] == ("# The loop over units is this sample's own Python, not SHAL's: "
+                        "no `shal` verb runs")
+    assert lines[1] == ('# a sequence. So each record says runner="script" '
+                        "— not pytest, not Bricks.")
+    assert "approver(" not in (JIG / "run.py").read_text(encoding="utf-8")   # never pins one
+
+
+def test_jig_needs_no_drivers_flag():
+    for f in ("run.py", "topology.yaml"):
+        assert "--drivers" not in (JIG / f).read_text(encoding="utf-8")
+    assert ("from shal.adk.reference.sqlite.driver import SqliteDatabase"
+            in (JIG / "run.py").read_text(encoding="utf-8"))
+
+
+def test_jig_writes_n_records_and_counts_n_as_the_runner_runs_it(tmp_path, capsys):
+    from shal import record
+    dest = tmp_path / "jig"
+    assert cli.main(["docs", "--sample", "jig", "--to", str(dest)]) == 0
+    cmd = capsys.readouterr().out.strip()
+    assert "--drivers" not in cmd
+    elsewhere = tmp_path / "elsewhere"
+    elsewhere.mkdir()
+    env = {**os.environ, "PATH": str(Path(sys.executable).parent) + os.pathsep
+           + os.environ.get("PATH", ""), "PYTHONUTF8": "1"}
+    for _ in range(2):   # a second run rewrites the same records: still N
+        r = subprocess.run(cmd, shell=True, cwd=elsewhere, env=env, input="",
+                           capture_output=True, text=True, encoding="utf-8", timeout=120)
+        assert r.returncode == 0, r.stdout + r.stderr
+        assert verdict(load_expect(JIG), r.returncode, r.stdout, r.stderr) == []
+        recs = record.read(elsewhere / "jig-records")    # the shipped reader accepts them
+        assert len(recs) == 5 and {x.runner for x in recs} == {"script"}
+        assert {x.unit for x in recs} == {"U001", "U002", "U003", "U004", "U005"}
+        assert r.stdout.splitlines()[-1] == f"records in jig-records/records.db: {len(recs)}"
