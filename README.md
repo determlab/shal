@@ -269,6 +269,20 @@ python quickstart.py
 
 ### Next
 
+**Samples — small programs that show what SHAL does.** They ship inside the
+package, so there is nothing to clone and no network needed:
+
+```bash
+shal docs --samples                     # what there is
+shal docs --sample limits --to mydir    # write one out, and print how to run it
+```
+
+`limits` is the one to read first: it measures, prints **PASS**, measures against
+a tighter limit and prints **FAIL**, then tries to change the device — and the
+gate stops it. Run it in a terminal and it asks *you* for permission. Every
+sample runs in CI on Linux and Windows from a clean install, so what you read
+here is what runs.
+
 `shal docs` prints the authoring guide that ships inside the package — how to
 add your own device, with no network and nothing to clone.
 
