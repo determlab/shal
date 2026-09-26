@@ -18,7 +18,7 @@ from __future__ import annotations
 from importlib.metadata import entry_points, packages_distributions
 from typing import TYPE_CHECKING
 
-from .driver import _GATED_EFFECTS, inferred_side_effect
+from .driver import get_gated_effects, inferred_side_effect
 from .errors import LoadError
 
 if TYPE_CHECKING:
@@ -144,8 +144,10 @@ def _op_entries(cls: type) -> list[dict]:
             "input_schema": _limits.merged_params_schema(fn),
             "annotations": {"readOnlyHint": side == "none",
                             "idempotentHint": idem,
-                            # destructive == gated (actuator OR config) — issue #14
-                            "destructiveHint": side in _GATED_EFFECTS},
+                            # destructive == gated. A class catalog has no Hal, so
+                            # no topology policy: the host-level set (default ∪ the
+                            # host's widenings), never the constant (#114, 5b)
+                            "destructiveHint": side in get_gated_effects()},
         })
     return ops
 

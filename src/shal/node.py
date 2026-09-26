@@ -5,6 +5,7 @@ from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
     from .driver import Driver
+    from .hal import Hal
     from .transport import Transport
 
 
@@ -27,6 +28,9 @@ class Node:
         self.ref_target: Node | None = None  # $ref: name pointer, never routed through
         self.exposed_bus: Transport | None = None  # set when parent provides a
         # per-child bus (mux channels); otherwise parent's driver is the bus
+        self.hal: Hal | None = None  # the Hal that loaded it (set by shal.load) —
+        # a plain back-reference for people and `conformance`; the gate never reads
+        # it (the op wrapper captured its policy at bind, ADR-001 addendum 5b)
 
     @property
     def description(self) -> str | None:

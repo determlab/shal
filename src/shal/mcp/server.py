@@ -73,10 +73,18 @@ def _import_drivers(paths: list[str]) -> None:
     skips ``_``-prefixed files (``__init__`` / private helpers), but a file named
     **explicitly** on the command line is always imported even if it starts with
     ``_`` (#85 — no silent skip). Operator-controlled on the command line — the
-    topology YAML stays pure data and never imports code."""
+    topology YAML stays pure data and never imports code.
+
+    The approval policy (gated set + approver) is the operator's, never a
+    driver's (ADR-001 addendum 5): it is snapshotted before each import, and a
+    module that changed it is refused — the policy restored, the attempt audited
+    (``outcome="policy-changed"``) and ``LoadError("<module> changed the approval
+    policy at import")`` raised."""
     import importlib
     import sys
     from pathlib import Path
+
+    from ..driver import _policy_snapshot, _refuse_import_change, _refuse_rebound_names
 
     for raw in paths:
         p = Path(raw).resolve()
@@ -93,11 +101,14 @@ def _import_drivers(paths: list[str]) -> None:
         for f in files:
             if f.suffix != ".py":
                 continue
+            _refuse_rebound_names(f"--drivers {f.stem}")  # rebound since import?
+            before = _policy_snapshot()
             try:
                 importlib.import_module(f.stem)
             except Exception as e:
                 raise SystemExit(f"shal-mcp: failed importing driver '{f}': "
                                  f"{type(e).__name__}: {e}") from e
+            _refuse_import_change(before, f.stem, str(f))  # LoadError if it did
 
 
 def _resolve_hal(topology: str | None):

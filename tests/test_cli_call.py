@@ -186,6 +186,56 @@ def test_refusal_comes_before_argument_checks(lab):
     assert r.returncode == 2
 
 
+# ---- the refusal reads the LIVE gated set, like the runtime gate (#114) ------------
+# A CLI process seats no policy from code: the operator declares it in the
+# topology (`policy: {gated: [...]}`, ADR-001 addendum 5). `shal call` must then
+# refuse exactly what the runtime would stop, and run exactly what it would run.
+# A --drivers module that tries to seat a policy is refused at load.
+
+def _policy_topology(lab, gated: str) -> str:
+    (lab / "policy.yaml").write_text(_MARKER_YAML + f"policy:\n  gated: {gated}\n",
+                                     encoding="utf-8")
+    return "policy.yaml"
+
+
+def test_a_widened_topology_policy_makes_shal_call_refuse_a_write(lab):
+    topo = _policy_topology(lab, "[write, actuator, config]")
+    r = _shal("call", topo, "thing", "set_level", "5", "--json",
+              "--drivers", "marker_driver.py", cwd=lab)
+    assert r.returncode == 2, r.stderr
+    out = json.loads(r.stdout)
+    assert out["rejected"] == "approval" and out["side_effect"] == "write"
+    assert out["sent"] is False
+    assert _marks(lab) == []
+    # a read stays free under any policy ("none" cannot be gated)
+    r = _shal("call", topo, "thing", "level", "--drivers", "marker_driver.py", cwd=lab)
+    assert r.returncode == 0, r.stderr
+
+
+def test_a_narrowed_topology_policy_lets_shal_call_run_what_the_runtime_runs(lab):
+    topo = _policy_topology(lab, "[config]")
+    r = _shal("call", topo, "thing", "arm", "--drivers", "marker_driver.py", cwd=lab)
+    assert r.returncode == 0, r.stderr
+    assert _marks(lab) == ["arm"]
+
+
+@pytest.mark.parametrize("seat", ['shal.set_gated_effects({"write", "actuator", "config"})',
+                                  "shal.driver._DEFAULT_GATED = frozenset()",
+                                  "shal.set_approver(shal.AutoApprove())"])
+def test_a_drivers_module_that_seats_a_policy_fails_to_load(lab, seat):
+    """Round 1 let a --drivers module narrow the set and `shal call` honoured it:
+    that is exactly the case ADR-001 addendum 5 forbids. It is a load failure now,
+    and nothing runs."""
+    (lab / "seating_driver.py").write_text(
+        _MARKER_DRIVER + f"\nimport shal\n{seat}\n", encoding="utf-8")
+    r = _shal("call", "marker.yaml", "thing", "arm",
+              "--drivers", "seating_driver.py", cwd=lab)
+    assert r.returncode == 3, r.stderr
+    assert "seating_driver changed the approval policy at import" in r.stderr
+    assert "Traceback" not in r.stderr
+    assert _marks(lab) == []
+
+
 # ---- a write op runs ---------------------------------------------------------------
 
 def test_write_op_runs_and_its_effect_is_real(lab):

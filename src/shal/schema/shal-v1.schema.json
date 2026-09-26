@@ -25,6 +25,18 @@
       "description": "Relative paths to other topology files. Each is a full topology with its own `root:`; their `root:` maps merge as siblings into this file's `root:` (nothing nests). A main file may be include-only (no `root:` of its own).",
       "minItems": 1,
       "items": { "type": "string", "minLength": 1 }
+    },
+    "policy": {
+      "type": "object",
+      "description": "The operator's approval policy (ADR-001 addendum 5). `gated` lists the side effects that stop for approval; default [actuator, config]. It is the only place that may NARROW the set; host code may only widen it. Main topology file only.",
+      "additionalProperties": false,
+      "properties": {
+        "gated": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": { "enum": ["write", "actuator", "config"] }
+        }
+      }
     }
   },
   "$defs": {

@@ -184,4 +184,5 @@ def test_reads_are_not_audited(motor_hal, audit_records):
 def test_bus_helpers_are_not_audited(audit_records):
     with shal.load(SETUP) as hal:
         hal.get_node("bench").driver.model_for(0x48)  # bus helper, not a device op
-    assert audit_records == []
+    # the load's one `policy` event (ADR-001 addendum 5) is not a call record
+    assert [r for r in audit_records if r.event != "policy"] == []

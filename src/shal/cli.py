@@ -277,11 +277,17 @@ def _load_check_target(target: str) -> type:
         raise ValueError(f"'{target}' is not module:Class (e.g. driver:MyThing)")
     if os.getcwd() not in sys.path:
         sys.path.insert(0, os.getcwd())
+    from .driver import _policy_snapshot, _refuse_import_change
+    before = _policy_snapshot()
     try:
         mod = importlib.import_module(mod_name)
     except Exception as e:  # noqa: BLE001 - any import failure is a clean exit 2
         raise ValueError(f"failed importing module '{mod_name}': "
                          f"{type(e).__name__}: {e}") from e
+    try:  # driver code never changes the approval policy (ADR-001 addendum 5)
+        _refuse_import_change(before, mod_name)
+    except LoadError as e:
+        raise ValueError(str(e)) from e
     cls = getattr(mod, cls_name, None)
     if cls is None:
         raise ValueError(f"module '{mod_name}' has no attribute '{cls_name}'")
@@ -427,12 +433,17 @@ def _cmd_call(args) -> int:
     """Run one op from the command line (shal#160, ADK R11). A ``none``/``write`` op
     runs; a ``config``/``actuator`` op is refused from its declared label BEFORE it
     is invoked — nothing is sent. The label is read with the wrapper's own
-    ``inferred_side_effect`` and ``_GATED_EFFECTS`` (one source of truth, D4), and
-    the op that does run runs under ``DenyAll``, so the op-layer gate still backs
-    this up: anything that reached it would be denied, never prompted or passed."""
+    ``inferred_side_effect`` and the node's ENFORCED gated set (one source of
+    truth, D4), and the op that does run runs under ``DenyAll``, so the op-layer
+    gate still backs this up: anything that reached it would be denied, never
+    prompted or passed. The gated set is the one the wrapper captured at bind
+    (issue #114, ADR-001 addendum 5b: the topology's ``policy:`` ∪ the host's
+    widenings), not the shipped default, so this refusal and the runtime gate
+    cannot disagree. There is no flag: the caller cannot choose its own gate."""
     from .approval import DenyAll, approver
-    from .driver import _GATED_EFFECTS, inferred_side_effect
+    from .driver import inferred_side_effect
     from .errors import HOW_TO_APPROVE_LINE
+    from .hal import _node_gated
     from .mcp.server import _import_drivers, _resolve_hal
 
     def emit(payload: dict) -> None:
@@ -457,7 +468,7 @@ def _cmd_call(args) -> int:
         name, node, fn = _find_call_tool(hal, args.node, args.op)
         device = node.id or node.path
         side_effect = inferred_side_effect(fn)
-        if side_effect in _GATED_EFFECTS:  # decided from the label: never invoked
+        if side_effect in _node_gated(node):  # from the label: never invoked
             msg = (f"refused: {device}.{args.op} is labelled '{side_effect}'. A "
                    f"'{side_effect}' op needs a person's approval, and shal call "
                    f"cannot give it. Nothing was sent to the device.\n"

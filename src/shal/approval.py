@@ -20,6 +20,28 @@ injects the *decision*:
 Order is always **limits -> approval -> I/O**: an impossible call is rejected by
 limits before anyone is asked to approve it. Every decision (allow or deny) is
 written to ``shal.audit`` so runs stay deterministic and replayable.
+
+**Pair this with the gated set — the one trap in this design (issue #114).** There
+are TWO policies here, not one, and they answer different questions:
+
+* ``set_approver`` / ``approver`` — WHO decides (this module).
+* ``shal.set_gated_effects`` / ``shal.gated_effects`` — WHICH effects even reach
+  that decision (``shal.driver``; default ``{"actuator", "config"}``).
+
+A host that seats one and forgets the other gets weaker enforcement than it
+thinks. Seating a strict Approver alone still lets every ``side_effect="write"``
+op through untouched — it is never gated, so the Approver is never asked::
+
+    shal.set_approver(MyHumanApprover())               # WHO
+    shal.set_gated_effects({"write", "actuator", "config"})  # WHICH — don't forget
+
+Both live in :class:`~contextvars.ContextVar`\\ s with the same caveat: a raw newly
+spawned OS thread inherits neither and falls back to the safe defaults (asyncio
+tasks and ``anyio.to_thread`` workers inherit both). Together they are ONE policy
+and it is the operator's (ADR-001 addendum 5/5b): the host may only widen the
+gated set, a topology's ``policy: {gated: [...]}`` loosens the default for its own
+Hal only, and driver code that changes either half — at import, at load or during
+an op — is refused and audited.
 """
 from __future__ import annotations
 
@@ -125,10 +147,16 @@ def get_approver() -> Approver:
 def set_approver(approver: Approver) -> Token:
     """Install ``approver`` as the active policy. Returns a token for ``reset``.
 
-    Note: the policy lives in a :class:`~contextvars.ContextVar`. A newly spawned
-    OS thread does NOT inherit the caller's context, so it falls back to the safe
-    default (deny-when-headless) until you call ``set_approver`` inside that
-    thread. ``asyncio`` tasks created with the running loop DO inherit it."""
+    Note: the policy lives in a :class:`~contextvars.ContextVar`. Only a raw newly
+    spawned OS thread (``threading.Thread``) does NOT inherit the caller's context;
+    it falls back to the safe default (deny-when-headless) until you call
+    ``set_approver`` inside that thread. ``asyncio`` tasks DO inherit it, and so do
+    ``anyio.to_thread`` workers — anyio copies the context — so ``shal mcp``'s
+    off-loop dispatch sees the approver seated before serving.
+
+    The approver is the OPERATOR's (ADR-001 addendum 5): never call this from
+    driver code. A ``--drivers`` module that changes it at import fails to load,
+    and an op that changes it during a call is restored and refused."""
     return _current.set(approver)
 
 

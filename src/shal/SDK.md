@@ -299,6 +299,47 @@ def start_cleaning(self) -> None:
 - A denied call raises `shal.ApprovalDenied` (nothing sent, like `LimitError`);
   `call_tool` returns `{"ok": False, "rejected": "approval"}`. Every decision is
   written to `shal.audit` (`outcome` = `approved` | `denied`).
+- **Which effects are gated is policy too, and the policy is the operator's**
+  (#114, ADR-001 addendum 5, D27). The default is `{"actuator", "config"}`. The
+  gated set and the Approver are ONE policy: seat both, since a strict Approver
+  never sees an effect that is not gated. Host or test code may WIDEN freely:
+
+  ```python
+  shal.set_gated_effects({"write", "actuator", "config"})   # a stricter rig
+  with shal.gated_effects({"write", "actuator", "config"}): ...   # scoped
+  shal.get_gated_effects()                                  # the active set
+  ```
+
+  NARROWING (dropping `actuator` or `config`) raises `ValueError` from code. A
+  topology may loosen the default for ITS OWN devices, in its main file — the
+  declaration belongs to the Hal that loads it, never to the process (ADR-001
+  addendum 5b):
+
+  ```yaml
+  policy:
+    gated: [config]      # this rig: motion runs without a human; config still asks
+  ```
+
+  The effective set for an op = (its Hal's declared set, or the default) ∪ (the
+  host's widenings); `hal.get_gated_effects()` returns it. Two Hals in one process
+  gate independently, `close()` has nothing to reset, and no topology can undo a
+  host widening. `shal.catalog()` describes a class, not a Hal, so it shows the
+  host-level set. Each op enforces the policy its wrapper captured at bind, in its
+  closure (the ContextVars, the defaults, and its Hal's declared set) — never
+  through `node.hal`, a Hal attribute or a module global, so editing those after
+  load changes nothing enforced. A driver that modifies the framework's own objects from inside its process can defeat the gate; run untrusted driver code in its own process with the approver outside it — which is how AOS runs SHAL and how the ADK wall runs a cold agent's driver (ADR-001 addendum 5c).
+
+  A bare string is a `TypeError`; an unknown name or `"none"` (a read is never
+  gated, D6) is a `ValueError`. **A driver never touches the policy**: a
+  `--drivers` module that changes it at import is a `LoadError`; an op that
+  changes it during a call is restored and raises `shal.Error`; both are audited
+  (`outcome: "policy-changed"`). The advertised `destructiveHint`, `shal
+  tools`/`probe` and `shal call`'s refusal read the same live set as the gate (per
+  Hal), so seat a host widening before the tool list is served. The audit follows the LABEL, never the
+  set: narrowing removes the stop, never the trail (D26). Every approval record
+  carries the active set (`gated`), and each load writes one `policy` audit event
+  (`gated`, `approver`, `source` = `hal:<path>` / `host` / `default`, `widened`). It lives in a `ContextVar`: asyncio tasks and
+  `anyio.to_thread` workers inherit it; a raw new OS thread starts from the default.
 - Use `actuator` for motion/dispense and `config` for destructive/configuration
   writes — anything you'd want a human to confirm. Plain `write` (a register, a
   setpoint) is audited but **not** gated, so a benign write never prompts.
