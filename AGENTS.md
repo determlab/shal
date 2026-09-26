@@ -74,8 +74,11 @@ write did not.
 - Python: `hal = shal.load("sim.yaml")`, then `hal.tool_schemas()` and
   `hal.call_tool("ambient_temp__read_celsius", {})` → `{'ok': True, 'result': 26.33}`.
 
-`--json`: `shal call` and `shal check` take it. `shal probe` and `shal tools` print
-text only.
+`--json`: `shal probe`, `shal tools`, `shal docs --list`, `shal call` and `shal check`
+take it. Each prints one JSON document on stdout; `--help` shows its shape. On an
+error the exit code is the same, the message is on stderr, and stdout holds
+`{"ok": false, "error": ...}`. `shal probe --json` lists the writes it did not run,
+each with the `shal call` line that runs it.
 
 ## Side effects
 

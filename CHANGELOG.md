@@ -14,6 +14,18 @@ All notable changes to this project are documented here. The format follows
 ## [Unreleased]
 
 ### Added
+- **`--json` on `shal probe`, `shal tools` and `shal docs --list`** (#185) — each
+  prints one JSON document on stdout, its shape shown in the command's `--help`.
+  `probe`: `{ok, topology, reads: [{tool, device, op, ok, value|error, unit}],
+  writes_not_run: [{tool, device, op, side_effect, gated, run_with}]}` — `run_with`
+  is the `shal call` line for that write. `tools`: every device op with `tool, device,
+  op, kind, side_effect, gated, idempotent, unit`, the full `description` and the
+  `input_schema` (the MCP-only `shal_approve`/`shal_deny` are not listed). `docs
+  --list`: each reference's `name, compatible, summary, folder, files, has_sim,
+  run_with, print_with`. An error keeps its exit code (1) and its stderr message, and
+  stdout holds `{"ok": false, "error": <the message>}`; a topology that does not
+  load is that JSON error, not a traceback. Without `--json` the output is
+  unchanged, byte for byte.
 - **`check_driver` warns when an `@op` has no `side_effect`** (#162) — the op is
   still legal and still gated (it infers `"actuator"`, fail-closed), so this is a
   warning, never a problem, and `shal check` still exits 0. The warning names the op
