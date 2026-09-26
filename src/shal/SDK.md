@@ -299,22 +299,36 @@ def start_cleaning(self) -> None:
 - A denied call raises `shal.ApprovalDenied` (nothing sent, like `LimitError`);
   `call_tool` returns `{"ok": False, "rejected": "approval"}`. Every decision is
   written to `shal.audit` (`outcome` = `approved` | `denied`).
-- **Which effects are gated is also host policy** (#114). The default is
-  `{"actuator", "config"}`; a host seats another set the same way it seats the
-  Approver — and should seat both, since a strict Approver never sees an effect
-  that is not gated:
+- **Which effects are gated is policy too, and the policy is the operator's**
+  (#114, ADR-001 addendum 5, D27). The default is `{"actuator", "config"}`. The
+  gated set and the Approver are ONE policy: seat both, since a strict Approver
+  never sees an effect that is not gated. Host or test code may WIDEN freely:
 
   ```python
   shal.set_gated_effects({"write", "actuator", "config"})   # a stricter rig
-  with shal.gated_effects({"actuator"}): ...                # scoped policy
+  with shal.gated_effects({"write", "actuator", "config"}): ...   # scoped
   shal.get_gated_effects()                                  # the active set
   ```
 
-  An unknown name, or `"none"` (a read is never gated, D6), raises `ValueError` at
-  the call. The advertised `destructiveHint`, `shal tools`/`probe` and `shal call`'s
-  refusal all read the same live set as the gate, so seat it before the tool list
-  is served. The audit does not move with it: it follows the label (#194). Like
-  the Approver it lives in a `ContextVar`, so a new OS thread starts from the default.
+  NARROWING (dropping `actuator` or `config`) raises `ValueError` from code; only
+  the operator declares it, in the main topology file:
+
+  ```yaml
+  policy:
+    gated: [config]      # this rig: motion runs without a human; config still asks
+  ```
+
+  A bare string is a `TypeError`; an unknown name or `"none"` (a read is never
+  gated, D6) is a `ValueError`. **A driver never touches the policy**: a
+  `--drivers` module that changes it at import is a `LoadError`; an op that
+  changes it during a call is restored and raises `shal.Error`; both are audited
+  (`outcome: "policy-changed"`). The advertised `destructiveHint`, `shal
+  tools`/`probe` and `shal call`'s refusal read the same live set as the gate, so
+  seat it before the tool list is served. The audit follows the LABEL, never the
+  set: narrowing removes the stop, never the trail (D26). Every approval record
+  carries the active set (`gated`), and each load writes one `policy` audit event
+  (`gated`, `approver`, `source`). It lives in a `ContextVar`: asyncio tasks and
+  `anyio.to_thread` workers inherit it; a raw new OS thread starts from the default.
 - Use `actuator` for motion/dispense and `config` for destructive/configuration
   writes — anything you'd want a human to confirm. Plain `write` (a register, a
   setpoint) is audited but **not** gated, so a benign write never prompts.

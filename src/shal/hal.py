@@ -4,6 +4,7 @@ from __future__ import annotations
 import logging
 import re
 
+from . import driver as _driver
 from . import limits
 from .driver import get_gated_effects, inferred_side_effect
 from .errors import ApprovalDenied, Error, HopError, LimitError, LoadError
@@ -12,6 +13,7 @@ from .node import Node
 from .transport import Transport
 
 logger = logging.getLogger("shal.loader")
+_audit = logging.getLogger("shal.audit")
 
 _NAME_SAFE = re.compile(r"[^a-zA-Z0-9_-]")
 
@@ -21,6 +23,7 @@ class Hal:
         self._roots = roots
         self._ids = ids
         self._closed = False
+        self._seated_over: tuple | None = None  # gated set to restore on close
         self._tool_idx: dict[str, tuple[Node, str]] | None = None
 
     # -- lookup (topology immutable after load -> lock-free) -----------------
@@ -161,6 +164,9 @@ class Hal:
         if self._closed:
             return
         self._closed = True
+        if self._seated_over is not None:  # un-seat this topology's `policy:`
+            _driver._current_gated.set(self._seated_over[0])
+            self._seated_over = None
         for root in self._roots:
             self._close_subtree(root, set())
         logger.info("teardown complete", extra={"event": "teardown"})
@@ -192,9 +198,40 @@ class Hal:
 
 
 def load(source) -> Hal:
-    """Load a topology from a YAML file path or an in-memory mapping (dict)."""
-    roots, ids = load_tree(source)
-    return Hal(roots, ids)
+    """Load a topology from a YAML file path or an in-memory mapping (dict).
+
+    The approval policy is the operator's (ADR-001 addendum 5). Driver code runs
+    here too (entry-point imports, ``bind``): if it changed the policy, the policy
+    is restored and the load is a ``LoadError``. A topology's top-level
+    ``policy: {gated: [...]}`` is the operator's declaration — the one place that
+    may NARROW the gated set — and is seated until ``close()``. Either way one
+    ``policy`` audit event records the active gated set and the approver class, so
+    a narrowing leaves a trace even if no gated call is ever made."""
+    from .approval import get_approver
+    before = _driver._policy_snapshot()
+    roots, ids, policy = load_tree(source)
+    changed = _driver._policy_changed(before)
+    if changed:
+        _driver._restore_policy(before)
+        _audit.info("a driver changed the approval policy while loading (%s); refused",
+                    ", ".join(changed),
+                    extra={"event": "audit", "outcome": "policy-changed",
+                           "changed": changed})
+        raise LoadError("a driver changed the approval policy while loading "
+                        f"({', '.join(changed)}); only the operator sets it")
+    hal = Hal(roots, ids)
+    source_of = "default" if before[0] is None else "host"
+    if policy and "gated" in policy:
+        hal._seated_over = (before[0],)
+        _driver._seat_operator_gated(policy["gated"])
+        source_of = "topology"
+    gated = sorted(get_gated_effects())
+    _audit.info("approval policy: gated %s, approver %s", gated,
+                type(get_approver()).__name__,
+                extra={"event": "policy", "gated": gated,
+                       "approver": type(get_approver()).__name__,
+                       "source": source_of})
+    return hal
 
 
 # -- LLM tool-schema helpers ----------------------------------------------------

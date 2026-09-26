@@ -48,29 +48,48 @@ _SIDE_EFFECTS = frozenset({"none", "write", "actuator", "config"})
 # The SHIPPED default (issue #14): physical motion ("actuator") and destructive /
 # configuration writes ("config"). A plain "write" (a benign setpoint/register) is
 # audited but NOT gated. Like the Approver next door, SHAL ships the *mechanism*
-# plus a *safe default* and lets the host seat the *policy*:
+# plus a *safe default* and the operator seats the *policy*:
 #
 #     import shal
-#     shal.set_gated_effects({"write", "actuator", "config"})   # stricter rig
-#     with shal.gated_effects({"actuator"}):                    # scoped policy
+#     shal.set_gated_effects({"write", "actuator", "config"})    # stricter rig
+#     with shal.gated_effects({"write", "actuator", "config"}):  # scoped policy
 #         ...
 #
 # A consumer that never calls the API sees byte-identical behaviour. The gated set
 # decides only which calls ASK; the audit follows the LABEL (#194) and does not
 # move with it.
+#
+# WHO may set it (ADR-001 addendum 5): the gated set and the Approver are ONE
+# policy, and it is the operator's — a driver never sets it:
+#   * WIDENING is free: host/test code may seat any superset of the default.
+#   * NARROWING (dropping "actuator" or "config") raises ValueError, unless it
+#     comes through the operator's entry point — the topology's top-level
+#     `policy: {gated: [...]}`, which `shal.load` seats through the private
+#     `_seat_operator_gated` below.
+#   * Driver code is checked where it runs: a `--drivers` import
+#     (mcp.server._import_drivers -> LoadError), binding at load (shal.load ->
+#     LoadError), and every op call (the wrapper restores the policy, audits
+#     outcome "policy-changed", and raises shal.Error).
 _DEFAULT_GATED: frozenset[str] = frozenset({"actuator", "config"})
 _current_gated: ContextVar[frozenset[str] | None] = ContextVar("shal_gated", default=None)
 
 
-def _coerce_gated(effects: Iterable[str]) -> frozenset[str]:
+def _coerce_gated(effects: Iterable[str], *, operator: bool = False) -> frozenset[str]:
     """Validate a candidate gated set AT THE CALL SITE — an unknown or meaningless
     effect name must fail where the host wrote it, not silently at the next op.
 
-    ``"none"`` is rejected outright: it marks a READ, and "stop the world and ask a
-    human before this read" is not a thing the gate can mean (D6: reads are free and
-    human-runnable). Gating it would also make the advertised hints
-    self-contradictory — the same op would carry ``readOnlyHint: true`` and
-    ``destructiveHint: true``."""
+    A bare ``str`` is a ``TypeError``: ``set_gated_effects("write")`` would iterate
+    its characters, and ``""`` would silently gate nothing. ``"none"`` is rejected
+    outright: it marks a READ, and "stop the world and ask a human before this
+    read" is not a thing the gate can mean (D6: reads are free and human-runnable).
+    Gating it would also make the advertised hints self-contradictory — the same
+    op would carry ``readOnlyHint: true`` and ``destructiveHint: true``. Unless
+    ``operator`` (the private entry-point path), the set must be a superset of the
+    default: narrowing is the operator's declaration, never a library call."""
+    if isinstance(effects, (str, bytes)):
+        raise TypeError(
+            f"gated effects must be a set of side_effect names, not a string "
+            f"({effects!r}); e.g. {{'write', 'actuator', 'config'}}")
     given = frozenset(effects)
     if "none" in given:
         raise ValueError(
@@ -82,6 +101,12 @@ def _coerce_gated(effects: Iterable[str]) -> frozenset[str]:
         raise ValueError(
             f"unknown side_effect(s) {unknown}: gated effects must be a subset of "
             f"{sorted(_SIDE_EFFECTS - {'none'})}")
+    dropped = sorted(_DEFAULT_GATED - given)
+    if dropped and not operator:
+        raise ValueError(
+            f"gated effects {sorted(given)} drop {dropped} from the default "
+            f"{sorted(_DEFAULT_GATED)}: only the operator may narrow the gate, in the "
+            f"topology (policy: {{gated: [...]}}). Widening is always allowed.")
     return given
 
 
@@ -95,16 +120,19 @@ def get_gated_effects() -> frozenset[str]:
 
 def set_gated_effects(effects: Iterable[str]) -> Token:
     """Install ``effects`` as the active gated set. Returns a token for
-    :func:`reset_gated_effects`. Raises ``ValueError`` immediately for an unknown
-    effect name or for ``"none"``.
+    :func:`reset_gated_effects`. Raises at the call: ``TypeError`` for a bare
+    string; ``ValueError`` for an unknown name, for ``"none"``, or for a set that
+    drops ``"actuator"``/``"config"`` — narrowing is the operator's, declared in the
+    topology's ``policy: {gated: [...]}`` (ADR-001 addendum 5). Never call it from
+    driver code: a ``--drivers`` import or an op that changes the policy is refused.
 
     Note: the policy lives in a :class:`~contextvars.ContextVar`. A newly spawned
-    OS thread does NOT inherit the caller's context, so it falls back to the safe
-    default (``{"actuator", "config"}``) until you call ``set_gated_effects``
-    inside that thread. ``asyncio`` tasks created with the running loop DO inherit
-    it. Seat it BEFORE the tool list is served (MCP ``list_tools``): the advertised
-    hints are computed then, the gate on every call. Pair it with
-    :func:`shal.set_approver` — see ``shal.approval``."""
+    raw OS thread does NOT inherit the caller's context, so it falls back to the
+    safe default (``{"actuator", "config"}``). ``asyncio`` tasks and
+    ``anyio.to_thread`` workers (``shal mcp``'s dispatch) DO inherit it. Seat it
+    BEFORE the tool list is served (MCP ``list_tools``): the advertised hints are
+    computed then, the gate on every call. Pair it with :func:`shal.set_approver`
+    — see ``shal.approval``."""
     return _current_gated.set(_coerce_gated(effects))
 
 
@@ -115,13 +143,49 @@ def reset_gated_effects(token: Token) -> None:
 
 @contextmanager
 def gated_effects(effects: Iterable[str]):
-    """Scope a gated set to a ``with`` block; the previous set is restored on exit."""
+    """Scope a gated set to a ``with`` block; the previous set is restored on exit.
+    Same rules as :func:`set_gated_effects` (widen only)."""
     chosen = _coerce_gated(effects)  # raise at the `with`, before the block runs
     token = _current_gated.set(chosen)
     try:
         yield chosen
     finally:
         _current_gated.reset(token)
+
+
+def _seat_operator_gated(effects: Iterable[str]) -> Token:
+    """PRIVATE — the operator's entry point, and the ONLY path that may narrow the
+    gated set (ADR-001 addendum 5). ``shal.load`` calls it for a topology's
+    ``policy: {gated: [...]}``. Driver code has no honest reason to import it."""
+    return _current_gated.set(_coerce_gated(effects, operator=True))
+
+
+# -- tampering by driver code is loud, not trusted (ADR-001 addendum 5) ---------
+# The policy is (raw gated set, raw Approver). Python is not a sandbox: comparing a
+# snapshot taken before driver code runs with one taken after makes a change
+# structural and visible instead of silent.
+_PolicySnap = tuple  # (frozenset | None, Approver | None)
+# the policy the ENCLOSING op started with, so a nested op call (a driver op that
+# calls another device) catches a change made before it, not only after
+_op_policy: ContextVar[tuple | None] = ContextVar("shal_op_policy", default=None)
+
+
+def _policy_snapshot() -> _PolicySnap:
+    from . import approval
+    return (_current_gated.get(), approval._current.get())
+
+
+def _policy_changed(snap: _PolicySnap) -> list[str]:
+    """Which halves differ from ``snap`` now: [] if none, else "gated"/"approver"."""
+    gated, appr = _policy_snapshot()
+    return [name for name, same in (("gated", gated == snap[0]),
+                                    ("approver", appr is snap[1])) if not same]
+
+
+def _restore_policy(snap: _PolicySnap) -> None:
+    from . import approval
+    _current_gated.set(snap[0])
+    approval._current.set(snap[1])
 
 
 def op(description: str, *, unit: str | None = None,
@@ -315,7 +379,15 @@ class Driver:
             t0 = time.perf_counter()
             attempt = 1  # 2 once the idempotent reconnect-and-retry fires
             dropped: dict = {}  # {"hop": <hop that dropped>} once the retry fires
+            before = op_token = None
             try:
+                # the policy is the operator's (ADR-001 addendum 5): an ENCLOSING op
+                # that changed it before calling this one is caught here, pre-I/O
+                outer = _op_policy.get()
+                if outer is not None:
+                    _refuse_policy_change(self, op, outer)
+                before = _policy_snapshot()
+                op_token = _op_policy.set(before)
                 if guard is not None:
                     try:
                         guard.check(self, *args, **kwargs)  # LimitError: pre-I/O reject
@@ -380,10 +452,35 @@ class Driver:
                                        **dropped, "txn": _log.current_txn.get()})
                 raise
             finally:
-                _log.current_txn.reset(token)
+                try:
+                    if op_token is not None:  # ...and THIS op changing it is caught here
+                        _op_policy.reset(op_token)
+                        _refuse_policy_change(self, op, before)
+                finally:
+                    _log.current_txn.reset(token)
 
         call.__shal_wrapped__ = True
         return call
+
+
+def _refuse_policy_change(driver, op: str, snap: _PolicySnap) -> None:
+    """If the policy differs from ``snap``, driver code changed it during a call:
+    restore it, audit the attempt (outcome ``policy-changed``) and raise
+    ``shal.Error``. No-op when nothing changed (ADR-001 addendum 5)."""
+    from .errors import Error
+    changed = _policy_changed(snap)
+    if not changed:
+        return
+    _restore_policy(snap)
+    node = driver.node
+    _audit.info("%s %s changed the approval policy (%s); restored",
+                node.id or node.path, op, ", ".join(changed),
+                extra={"event": "audit", "id": node.id or "", "path": node.path,
+                       "op": op, "outcome": "policy-changed", "changed": changed,
+                       "txn": _log.current_txn.get()})
+    raise Error(f"{node.path}  {op} changed the approval policy ({', '.join(changed)}) "
+                f"during the call. It was restored. Only the operator sets the policy "
+                f"(the gated set and the approver), never a driver.")
 
 
 def _approve_or_raise(driver, op: str, side_effect: str, sig, args, kwargs) -> None:
@@ -409,7 +506,10 @@ def _approve_or_raise(driver, op: str, side_effect: str, sig, args, kwargs) -> N
     _audit.info("%s %s %s by approval", node.id or node.path, op, outcome,
                 extra={"event": "audit", "id": node.id or "",
                        "path": node.path, "op": op, "outcome": outcome,
-                       "side_effect": side_effect, "txn": txn})
+                       "side_effect": side_effect, "txn": txn,
+                       # the ACTIVE gated set that decided it, so a narrowing
+                       # leaves a trace (ADR-001 addendum 5, D27)
+                       "gated": sorted(get_gated_effects())})
     if not allowed:
         no_one = isinstance(approver, ConsoleApprover) and not approver.has_person()
         raise ApprovalDenied(

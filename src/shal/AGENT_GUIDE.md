@@ -87,10 +87,12 @@ class MyThing(Driver):                     # a capability is OPTIONAL — see be
      **empty / "no data yet" success** (raise instead; the device just isn't ready).
    - `"write"` → a **benign** write (instant, reversible — runs free).
    - `"actuator"` (physical motion) / `"config"` → **gated**: stops for human approval.
-   - Which labels are gated is the HOST's policy, not the driver's: the default is
-     `{"actuator", "config"}`, and a host may widen it (`shal.set_gated_effects(...)`),
-     so a `"write"` can be gated on a stricter rig. Label the op honestly; do not
-     pick a label to get or avoid the gate.
+   - Which labels are gated is the OPERATOR's policy, never the driver's: the
+     default is `{"actuator", "config"}`; a host may widen it, and only the
+     topology's `policy: {gated: [...]}` may narrow it. So a `"write"` can be gated
+     on a stricter rig. Label the op honestly; do not pick a label to get or avoid
+     the gate. **Never call `set_gated_effects` or `set_approver` in a driver**: at
+     import it fails to load, and inside an op it raises and is audited.
    - *Forget to annotate? The op is treated as `"actuator"` — gated and audited
      (fail-closed), `@idempotent` or not — and `check_driver` warns: declare it.
      `side_effect="none"` is the only way to declare a read.*

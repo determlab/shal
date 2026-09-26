@@ -251,9 +251,26 @@ _ADVERTISED_EQ_ENFORCED = [
                                            "rig__set_reg": False}),   # shipped default
     ({"write", "actuator", "config"},     {"rig__read": False, "rig__move": True,
                                            "rig__set_reg": True}),
-    ({"write"},                           {"rig__read": False, "rig__move": False,
+    # narrowing is the operator's (ADR-001 addendum 5): seated via the private
+    # entry-point path, as a topology's `policy: {gated: [write]}` would
+    (("operator", {"write"}),             {"rig__read": False, "rig__move": False,
                                            "rig__set_reg": True}),
 ]
+
+
+def _scope(policy):
+    if policy is None:
+        return contextlib.nullcontext()
+    if isinstance(policy, tuple):           # ("operator", effects)
+        @contextlib.contextmanager
+        def seat():
+            token = shal.driver._seat_operator_gated(policy[1])
+            try:
+                yield
+            finally:
+                shal.driver._current_gated.reset(token)
+        return seat()
+    return shal.gated_effects(policy)       # a host widening
 
 
 @pytest.mark.parametrize("policy,expected", _ADVERTISED_EQ_ENFORCED)
@@ -265,8 +282,7 @@ def test_advertised_gated_set_equals_enforced(hal, policy, expected):
     two readers cannot disagree; a hint computed from the shipped constant while the
     gate consults the live policy would advertise a `write` as free while stopping it
     for a human — the tool surface lying to the agent."""
-    scope = contextlib.nullcontext() if policy is None else shal.gated_effects(policy)
-    with scope:
+    with _scope(policy):
         b = Bridge(hal)
         defs = {d["name"]: d for d in b.tool_defs()}
         for name, want in expected.items():

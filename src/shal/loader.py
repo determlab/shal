@@ -102,7 +102,9 @@ def _apply_dotenv(base_dir: Path) -> None:
                        extra={"event": "dotenv_unignored", "file": str(env_path)})
 
 
-def load_tree(source: str | os.PathLike | Mapping) -> tuple[list[Node], dict[str, Node]]:
+def load_tree(
+    source: str | os.PathLike | Mapping,
+) -> tuple[list[Node], dict[str, Node], dict | None]:
     """Load a topology from a YAML file path, or from an in-memory mapping (the
     shape produced by curated/zero-config entry and a future setup flow). A dict
     is taken as the already-parsed document; includes (`use:`, `include:`) in a
@@ -115,7 +117,12 @@ def load_tree(source: str | os.PathLike | Mapping) -> tuple[list[Node], dict[str
     any two files is a `LoadError` naming both files, so include order never
     matters. Only the main file's `.env` is read (`_apply_dotenv` runs once,
     above, before any include is even parsed) — an included file's sibling
-    `.env` is never consulted, so one setup has exactly one source of secrets."""
+    `.env` is never consulted, so one setup has exactly one source of secrets.
+
+    The third value is the main file's top-level `policy:` mapping (or None) —
+    the operator's approval policy, seated by `shal.load` (ADR-001 addendum 5).
+    Only the main file may declare it: an included file or a `use:` template
+    that carries `policy:` is a `LoadError`."""
     if isinstance(source, Mapping):
         doc: Any = source
         src_label = "<dict>"
@@ -153,7 +160,7 @@ def load_tree(source: str | os.PathLike | Mapping) -> tuple[list[Node], dict[str
     logger.info("topology loaded: %d nodes, %d ids, %d refs",
                 n_nodes, len(ids), len(refs),
                 extra={"event": "loaded", "file": src_label})
-    return roots, ids
+    return roots, ids, doc.get("policy")
 
 
 _ADDRESS_ROUTES_TO = ("address", "routes", "to")
@@ -274,6 +281,7 @@ def _merge_includes(
 
         sub_doc = yaml.safe_load(target.read_text(encoding="utf-8"))  # safe_load only
         _validate_schema(sub_doc, source=str(target))  # per file, before merge
+        _no_policy(sub_doc, target)
         # An included file must contribute something: either its own `root:`
         # or a further `include:` chain (legal, shal#136/D21 point 6). A file
         # with neither — e.g. a `use:` template (`template:`, no `root:`) —
@@ -295,6 +303,14 @@ def _merge_includes(
                     f"{merged[name][2]} and {entry[2]}")
             merged[name] = entry
     return merged
+
+
+def _no_policy(doc: Mapping, target: Path) -> None:
+    """`policy:` is the operator's declaration and lives in the main topology file
+    only (ADR-001 addendum 5): a composed file must not carry it."""
+    if "policy" in doc:
+        raise LoadError(f"{target}: `policy:` may only be set in the main topology "
+                        f"file, not in an included file or a use: template")
 
 
 def _build(name: str, spec: Mapping, *, parent: Node | None,
@@ -353,6 +369,7 @@ def _expand_use(name: str, spec: Mapping, ctx: _IncludeCtx) -> tuple[dict, _Incl
     doc = {**doc, "template": _apply_params(doc["template"],
                                             dict(spec.get("with") or {}), target, name)}
     _validate_schema(doc, source=str(target))
+    _no_policy(doc, target)
     base = doc["template"]
     merged = {**base, **{k: v for k, v in spec.items() if k not in ("use", "with")}}
     return merged, ctx.descend(target)
