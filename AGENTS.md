@@ -98,6 +98,9 @@ shal call sim.yaml ambient_temp set_target 30 --json
 call. A person approves through an MCP host (`shal mcp`), or code runs it inside
 `with shal.approver(<your Approver>):` in Python.
 
+Before any gated op in Python, set an approver; with none, a headless run is denied
+and a terminal run asks a person.
+
 ## Where the contract lives
 
 - [docs/ARCHITECTURE.md §5](docs/ARCHITECTURE.md) — the Decision Ledger of record.

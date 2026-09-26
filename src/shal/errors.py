@@ -5,6 +5,14 @@ from typing import Literal
 
 Delivered = Literal["no", "unknown"]
 
+# How to approve a gated op, in one line. ONE source (#186): the no-approver denial
+# below and `shal call --json`'s refusal (`how_to_approve`) both use this constant.
+HOW_TO_APPROVE_LINE = ("In Python: shal.approver(...) — AutoApprove() for a sim, or an "
+                       "approver that asks a person; under an agent host: shal mcp.")
+# The console approver denied because no one can answer: no approver is set and
+# stdin is not a TTY (#186). Carried by ApprovalDenied with reason="no-approver".
+NO_APPROVER_MESSAGE = "no approver is set and stdin is not a terminal. " + HOW_TO_APPROVE_LINE
+
 
 class Error(Exception):
     """Base for all SHAL errors."""
@@ -72,15 +80,22 @@ class ApprovalDenied(Error):
                        "`shal mcp`, which asks a human")
 
     def __init__(self, msg: str, *, path: str = "?", op: str = "?",
-                 side_effect: str = "actuator", params: dict | None = None) -> None:
-        # idempotent: unpickling calls __init__ again with the full message in args
-        if not msg.endswith(self._HOW_TO_APPROVE):
-            msg = f"{msg}; {self._HOW_TO_APPROVE}"
+                 side_effect: str = "actuator", params: dict | None = None,
+                 reason: str | None = None) -> None:
+        # ONE how-to hint per message: the no-approver line replaces the general one
+        # (#186). Idempotent: unpickling calls __init__ again with the full message
+        # (and no kwargs; `reason` comes back from __dict__).
+        if not msg.endswith((self._HOW_TO_APPROVE, NO_APPROVER_MESSAGE)):
+            hint = NO_APPROVER_MESSAGE if reason == "no-approver" else self._HOW_TO_APPROVE
+            msg = f"{msg}; {hint}"
         super().__init__(msg)
         self.path = path
         self.op = op
         self.side_effect = side_effect
         self.params = dict(params or {})
+        # why it was denied, for --json consumers: "no-approver" when the default
+        # console approver had no one to ask; None when the approver gave no reason
+        self.reason = reason
 
 
 class Busy(Error):

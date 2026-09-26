@@ -290,14 +290,15 @@ def _approve_or_raise(driver, op: str, side_effect: str, sig, args, kwargs) -> N
     audits the decision — independent of the op's idempotency, since an
     @idempotent actuator is still gated — and raises ApprovalDenied (pre-I/O,
     nothing sent) on refusal (issue #14)."""
-    from .approval import ApprovalRequest, get_approver
+    from .approval import ApprovalRequest, ConsoleApprover, get_approver
     from .errors import ApprovalDenied
     bound = sig.bind(driver, *args, **kwargs)
     bound.apply_defaults()
     params = {k: v for k, v in bound.arguments.items() if k != "self"}
     node = driver.node
     txn = _log.current_txn.get()
-    allowed = bool(get_approver().approve(ApprovalRequest(
+    approver = get_approver()
+    allowed = bool(approver.approve(ApprovalRequest(
         op=op, path=node.path, id=node.id or "", side_effect=side_effect,
         params=params, txn=txn)))
     # every approval decision is on the record (deterministic/replayable)
@@ -307,10 +308,12 @@ def _approve_or_raise(driver, op: str, side_effect: str, sig, args, kwargs) -> N
                        "path": node.path, "op": op, "outcome": outcome,
                        "side_effect": side_effect, "txn": txn})
     if not allowed:
+        no_one = isinstance(approver, ConsoleApprover) and not approver.has_person()
         raise ApprovalDenied(
             f"{node.path}  {op} denied by the approval policy "
             f"— nothing was sent to the device",
-            path=node.path, op=op, side_effect=side_effect, params=params)
+            path=node.path, op=op, side_effect=side_effect, params=params,
+            reason="no-approver" if no_one else None)
 
 
 def _is_capability(fn: Callable) -> bool:

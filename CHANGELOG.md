@@ -14,6 +14,16 @@ All notable changes to this project are documented here. The format follows
 ## [Unreleased]
 
 ### Added
+- **A no-approver denial says how to approve, with `reason: "no-approver"`** (#186) —
+  when the default console approver denies because stdin is not a terminal, the
+  `ApprovalDenied` text ends with `no approver is set and stdin is not a terminal.
+  In Python: shal.approver(...) — AutoApprove() for a sim, or an approver that asks
+  a person; under an agent host: shal mcp.` and `ApprovalDenied.reason` is
+  `"no-approver"` (other denials: `None`); `hal.call_tool`'s approval refusal
+  carries it as `"reason"`. The how-to part is one constant,
+  `shal.errors.HOW_TO_APPROVE_LINE`, also added to `shal call --json`'s refusal as
+  `how_to_approve`; `shal call`'s printed refusal is unchanged. The default
+  approver and its TTY check are unchanged.
 - **`check_driver` reports an `@idempotent` op with no `side_effect` as a problem**
   (#183) — that op is inferred `"none"` and runs **ungated**, the one omission that
   opens the gate, and an idempotent op is not always a read (an absolute setpoint is

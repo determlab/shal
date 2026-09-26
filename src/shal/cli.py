@@ -281,6 +281,7 @@ def _cmd_call(args) -> int:
     this up: anything that reached it would be denied, never prompted or passed."""
     from .approval import DenyAll, approver
     from .driver import _GATED_EFFECTS, inferred_side_effect
+    from .errors import HOW_TO_APPROVE_LINE
     from .mcp.server import _import_drivers, _resolve_hal
 
     def emit(payload: dict) -> None:
@@ -321,6 +322,7 @@ def _cmd_call(args) -> int:
                   "op": args.op, "side_effect": side_effect, "sent": False,
                   "approve_with": [f"shal mcp {args.topology}",
                                    "with shal.approver(...): in Python"],
+                  "how_to_approve": HOW_TO_APPROVE_LINE,
                   "error": msg})
             return _CALL_REFUSED
         schema = next(s["input_schema"] for s in hal.tool_schemas() if s["name"] == name)
