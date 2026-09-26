@@ -327,7 +327,7 @@ def start_cleaning(self) -> None:
   host-level set. Each op enforces the policy its wrapper captured at bind, in its
   closure (the ContextVars, the defaults, and its Hal's declared set) — never
   through `node.hal`, a Hal attribute or a module global, so editing those after
-  load changes nothing enforced. The residual is exactly one thing and it is honest: reflection into `call.__closure__`.
+  load changes nothing enforced. A driver that modifies the framework's own objects from inside its process can defeat the gate; run untrusted driver code in its own process with the approver outside it — which is how AOS runs SHAL and how the ADK wall runs a cold agent's driver (ADR-001 addendum 5c).
 
   A bare string is a `TypeError`; an unknown name or `"none"` (a read is never
   gated, D6) is a `ValueError`. **A driver never touches the policy**: a

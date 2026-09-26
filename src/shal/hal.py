@@ -231,6 +231,7 @@ def load(source) -> Hal:
     ``default``), so a narrowing leaves a trace even if no gated call is made."""
     from .approval import get_approver
     label = "<dict>" if isinstance(source, Mapping) else str(source)
+    _driver._refuse_rebound_names(label)  # a name rebound since import: refuse
     before = _driver._policy_snapshot()
     try:
         roots, ids, policy = load_tree(source)
@@ -247,7 +248,7 @@ def load(source) -> Hal:
             raise LoadError(f"{label}: policy.gated: {e}") from e
     hal = Hal(roots, ids, declared_gated=declared)  # the ONE write of the policy
     hal._source_label = label
-    widened = sorted(_driver.get_gated_effects() - _driver._DEFAULT_GATED)
+    widened = sorted(_driver.get_gated_effects() - _driver._canon()[2])
     source_of = (f"hal:{label}" if hal._declared_gated is not None
                  else "host" if widened else "default")
     gated = sorted(hal.get_gated_effects())

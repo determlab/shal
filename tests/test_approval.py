@@ -1175,3 +1175,59 @@ def test_host_or_driver_edits_after_load_change_nothing_enforced(tmp_path):
         with pytest.raises(shal.ApprovalDenied):
             other.get_device("rig").move(3)
     assert RECEIVED == []
+
+
+
+@pytest.mark.parametrize("what", ["default", "contextvar"])
+def test_a_name_rebound_between_loads_refuses_the_next_load(
+        tmp_path, monkeypatch, audit_records, what):
+    """ADR-001 addendum 5c fix: a thread rebinds `driver._DEFAULT_GATED` (or the
+    approver ContextVar NAME) BETWEEN two loads. The next `shal.load` refuses —
+    LoadError naming what was rebound — audits it and points the name back at the
+    canonical object; the pre-existing Hal stays gated; a later load binds from
+    the canonical objects and gates; no ping-pong."""
+    import contextvars as cv
+    monkeypatch.setattr(shal.driver, "_DEFAULT_GATED", shal.driver._DEFAULT_GATED)
+    monkeypatch.setattr(shal.approval, "_current", shal.approval._current)
+    auto = shal.AutoApprove()
+    RECEIVED.clear()
+    with shal.approver(shal.DenyAll()):
+        first = _load_plain(tmp_path, "first.yaml")
+
+        def rebind():
+            if what == "default":
+                shal.driver._DEFAULT_GATED = frozenset()
+            else:
+                shal.approval._current = cv.ContextVar("fake", default=auto)
+        t = threading.Thread(target=rebind)
+        t.start()
+        t.join()
+        changed = "gated" if what == "default" else "approver"
+        with pytest.raises(shal.LoadError, match=f"approval policy \\({changed}\\) was "
+                                                 f"rebound since import"):
+            _load_plain(tmp_path, "second.yaml")
+        assert shal.driver._rebound_names() == []           # names point back
+        with pytest.raises(shal.ApprovalDenied):
+            first.get_device("rig").move(1)                 # the old Hal: gated
+        with _load_plain(tmp_path, "third.yaml") as third:
+            with pytest.raises(shal.ApprovalDenied):
+                third.get_device("rig").move(2)             # a new Hal: gated
+            with pytest.raises(shal.ApprovalDenied):
+                first.get_device("rig").move(3)             # no ping-pong
+        first.close()
+    assert RECEIVED == []
+    refused = [r for r in audit_records if getattr(r, "before_load", False)]
+    assert len(refused) == 1 and refused[0].changed == [changed]
+
+
+def test_wrappers_bind_from_the_canonical_objects_not_the_names(hal, monkeypatch):
+    """Even a bind the load check never saw (a name rebound, then a driver bound
+    directly) captures the canonical objects taken at `shal` import."""
+    monkeypatch.setattr(shal.driver, "_DEFAULT_GATED", frozenset())   # an impostor
+    rig = Rig()
+    node = shal.Node("lone", address=9)
+    rig.bind(node)
+    rig._shal_bind_hal(hal, None)
+    with shal.approver(shal.DenyAll()), pytest.raises(shal.ApprovalDenied):
+        rig.move(1)
+    assert RECEIVED == []

@@ -40,8 +40,12 @@ All notable changes to this project are documented here. The format follows
     attribute, an instance `__dict__` or a module global — so rebinding a name or
     writing an attribute between calls changes nothing it enforces; a module
     name found rebound is pointed back at the next call and audited
-    (`between_calls`). The tool surface and `shal call` advertise from the same
-    capture. The residual is exactly one thing and it is honest: reflection into `call.__closure__`.
+    (`between_calls`). The wrappers bind from the CANONICAL objects taken once at
+    `shal` import, never from the names, and `shal.load` (and each `--drivers`
+    import) refuses with a `LoadError` — audited, names restored — if a name was
+    rebound since import, so a name rebound between two loads cannot become the
+    next Hal's policy. The tool surface and `shal call` advertise from the same
+    capture. A driver that modifies the framework's own objects from inside its process can defeat the gate; run untrusted driver code in its own process with the approver outside it — which is how AOS runs SHAL and how the ADK wall runs a cold agent's driver (ADR-001 addendum 5c).
   - **A driver can never change the policy** (gated set or approver). A
     `--drivers` module that changes it at import is refused with
     `LoadError("<module> changed the approval policy at import")`; driver code

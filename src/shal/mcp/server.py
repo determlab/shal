@@ -84,7 +84,7 @@ def _import_drivers(paths: list[str]) -> None:
     import sys
     from pathlib import Path
 
-    from ..driver import _policy_snapshot, _refuse_import_change
+    from ..driver import _policy_snapshot, _refuse_import_change, _refuse_rebound_names
 
     for raw in paths:
         p = Path(raw).resolve()
@@ -101,6 +101,7 @@ def _import_drivers(paths: list[str]) -> None:
         for f in files:
             if f.suffix != ".py":
                 continue
+            _refuse_rebound_names(f"--drivers {f.stem}")  # rebound since import?
             before = _policy_snapshot()
             try:
                 importlib.import_module(f.stem)

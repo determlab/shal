@@ -21,6 +21,7 @@ from contextlib import contextmanager
 from contextvars import ContextVar, Token
 from typing import TYPE_CHECKING, Any
 
+from . import approval as _approval_mod
 from . import log as _log
 from .errors import Error as _ShalError
 from .errors import HopError
@@ -79,6 +80,17 @@ _DEFAULT_GATED: frozenset[str] = frozenset({"actuator", "config"})
 _current_gated: ContextVar[frozenset[str] | None] = ContextVar("shal_gated", default=None)
 
 
+def _canon(_c=(_current_gated, _approval_mod._current, _DEFAULT_GATED,
+               _approval_mod._DEFAULT)) -> tuple:
+    """The CANONICAL policy objects — the gated-set ContextVar, the approver
+    ContextVar, and the two defaults — taken ONCE, here at import, into this
+    function's defaults; never re-read from the module names. Every op wrapper
+    binds from these (so a name rebound between two loads cannot become the next
+    Hal's policy), `shal.load` refuses a load while a name points elsewhere, and
+    between-call healing points names back at THESE (ADR-001 addendum 5)."""
+    return _c
+
+
 def _coerce_gated(effects: Iterable[str], *, operator: bool = False) -> frozenset[str]:
     """Validate a candidate gated set AT THE CALL SITE — an unknown or meaningless
     effect name must fail where the host wrote it, not silently at the next op.
@@ -106,11 +118,12 @@ def _coerce_gated(effects: Iterable[str], *, operator: bool = False) -> frozense
         raise ValueError(
             f"unknown side_effect(s) {unknown}: gated effects must be a subset of "
             f"{sorted(_SIDE_EFFECTS - {'none'})}")
-    dropped = sorted(_DEFAULT_GATED - given)
+    default = _canon()[2]
+    dropped = sorted(default - given)
     if dropped and not operator:
         raise ValueError(
             f"gated effects {sorted(given)} drop {dropped} from the default "
-            f"{sorted(_DEFAULT_GATED)}: the host may only widen the gate. A topology "
+            f"{sorted(default)}: the host may only widen the gate. A topology "
             f"may loosen it for its own devices (policy: {{gated: [...]}}).")
     return given
 
@@ -120,8 +133,9 @@ def get_gated_effects() -> frozenset[str]:
     (``{"actuator", "config"}``) plus the host's widenings. A Hal whose topology
     declares ``policy: {gated: [...]}`` gates its own devices by
     :meth:`shal.Hal.get_gated_effects` instead (its set ∪ these widenings)."""
-    got = _current_gated.get()
-    return _DEFAULT_GATED if got is None else got
+    gv, _, dg, _ = _canon()
+    got = gv.get()
+    return dg if got is None else got
 
 
 def _effective_gated(hal=None) -> frozenset[str]:
@@ -135,7 +149,7 @@ def _effective_gated(hal=None) -> frozenset[str]:
     declared = getattr(hal, "_declared_gated", None)
     if declared is None:
         return host
-    return declared | (host - _DEFAULT_GATED)
+    return declared | (host - _canon()[2])
 
 
 def set_gated_effects(effects: Iterable[str]) -> Token:
@@ -154,12 +168,12 @@ def set_gated_effects(effects: Iterable[str]) -> Token:
     BEFORE the tool list is served (MCP ``list_tools``): the advertised hints are
     computed then, the gate on every call. Pair it with :func:`shal.set_approver`
     — see ``shal.approval``."""
-    return _current_gated.set(_coerce_gated(effects))
+    return _canon()[0].set(_coerce_gated(effects))
 
 
 def reset_gated_effects(token: Token) -> None:
     """Undo a :func:`set_gated_effects`, restoring the previous gated set."""
-    _current_gated.reset(token)
+    _canon()[0].reset(token)
 
 
 @contextmanager
@@ -167,11 +181,12 @@ def gated_effects(effects: Iterable[str]):
     """Scope a gated set to a ``with`` block; the previous set is restored on exit.
     Same rules as :func:`set_gated_effects` (widen only)."""
     chosen = _coerce_gated(effects)  # raise at the `with`, before the block runs
-    token = _current_gated.set(chosen)
+    gv = _canon()[0]
+    token = gv.set(chosen)
     try:
         yield chosen
     finally:
-        _current_gated.reset(token)
+        gv.reset(token)
 
 
 # -- tampering by driver code is loud, not trusted (ADR-001 addendum 5) ---------
@@ -181,8 +196,10 @@ def gated_effects(effects: Iterable[str]):
 # with a one-slot cell Hal.__init__ fills once with (Hal, declared set) — and reads
 # the policy ONLY from them, never through `node.hal`, a Hal attribute or a module
 # global. So rebinding a name, or writing an attribute or an instance `__dict__`,
-# between calls changes nothing a bound driver enforces. What remains is
-# reflection into `call.__closure__`. Python is not a sandbox.
+# between calls changes nothing a bound driver enforces. A driver that sets out
+# to modify the framework's own objects from inside its process is out of scope
+# (ADR-001 addendum 5c): the boundary against hostile code is a process boundary
+# with the approver on the other side.
 #
 # A snapshot is (gated var, approver var, their values, default gated, default
 # approver). Comparing one taken before driver code runs with the state after it
@@ -202,8 +219,8 @@ def _module_policy() -> tuple:
 
 def _policy_snapshot(captured: tuple | None = None) -> _PolicySnap:
     """Snapshot through ``captured`` (an op's bind-time objects) or, for an import
-    or a load, through the module names."""
-    gv, av, dg, da = captured or _module_policy()
+    or a load, through the canonical objects (never the names)."""
+    gv, av, dg, da = captured or _canon()
     return (gv, av, gv.get(), av.get(), dg, da)
 
 
@@ -218,23 +235,50 @@ def _policy_changed(snap: _PolicySnap) -> list[str]:
         ("approver", av.get() is a and nav is av and nda is da)) if not same]
 
 
-def _heal_moved_names(driver, op: str, captured: tuple) -> None:
-    """Before an op runs: if a module policy NAME was rebound since this driver
-    was bound (between calls, e.g. by a thread a driver started), the gate is
-    unaffected — it reads its captured objects — but the host-level API and later
-    binds would read the impostor. Point the names back at the captured objects
-    and audit it (outcome ``policy-changed``, ``between_calls``). The op itself did
-    nothing, so it is not refused; the gate below decides it as usual."""
+def _rebound_names() -> list[str]:
+    """Which module policy NAMES no longer point at the canonical objects."""
+    gv, av, dg, da = _canon()
+    ngv, nav, ndg, nda = _module_policy()
+    return [n for n, ok in (("gated", ngv is gv and ndg is dg),
+                            ("approver", nav is av and nda is da)) if not ok]
+
+
+def _point_names_at_canon() -> None:
     global _current_gated, _DEFAULT_GATED
-    from . import approval
-    gv, av, dg, da = captured
-    moved = ([n for n, ok in (("gated", _current_gated is gv and _DEFAULT_GATED is dg),
-                              ("approver", approval._current is av
-                               and approval._DEFAULT is da)) if not ok])
+    gv, av, dg, da = _canon()
+    _current_gated, _DEFAULT_GATED = gv, dg
+    _approval_mod._current, _approval_mod._DEFAULT = av, da
+
+
+def _refuse_rebound_names(where: str) -> None:
+    """Before a load (or a ``--drivers`` import): if a module policy name was
+    rebound since import — e.g. by a thread a driver started, between two loads —
+    point it back at the canonical object, audit it, and refuse with a
+    ``LoadError`` naming what was rebound. The wrappers bind from the canonical
+    objects anyway; refusing keeps the attempt loud and the names honest."""
+    moved = _rebound_names()
     if not moved:
         return
-    _current_gated, _DEFAULT_GATED = gv, dg
-    approval._current, approval._DEFAULT = av, da
+    _point_names_at_canon()
+    _audit.info("%s: the approval policy (%s) was rebound before it; restored, refused",
+                where, ", ".join(moved),
+                extra={"event": "audit", "outcome": "policy-changed",
+                       "changed": moved, "before_load": True})
+    raise _LoadError(f"{where}: the approval policy ({', '.join(moved)}) was rebound "
+                     f"since import — it was restored; only the operator sets it")
+
+
+def _heal_moved_names(driver, op: str, captured: tuple) -> None:
+    """Before an op runs: if a module policy NAME was rebound (between calls, e.g.
+    by a thread a driver started), the gate is unaffected — it reads the
+    canonical objects it captured — but the host-level API would read the
+    impostor. Point the names back at the CANONICAL objects (never at anything
+    else, so two Hals cannot ping-pong) and audit it (outcome ``policy-changed``,
+    ``between_calls``). The op itself did nothing, so it is not refused."""
+    moved = _rebound_names()
+    if not moved:
+        return
+    _point_names_at_canon()
     node = driver.node
     _audit.info("%s %s: the approval policy (%s) was rebound between calls; restored",
                 node.id or node.path, op, ", ".join(moved),
@@ -398,7 +442,7 @@ class Driver:
             ops[name] = unwrapped
         return ops
 
-    def _wrap_capabilities(self) -> None:
+    def _wrap_capabilities(self, _policy: tuple = _canon()) -> None:
         from . import limits as _limits  # local: avoid import cycle at module load
         ops = type(self).capability_ops()
         if self.llm_ready:  # opt-in conformance: every op must carry @shal.op
@@ -420,12 +464,12 @@ class Driver:
         self._op_schemas: dict[str, dict] = {}  # effective, advertised == enforced
         # the POLICY these ops enforce, captured ONCE, here at bind, in the
         # wrappers' closure (ADR-001 addendum 5; CTO review of #114): the two
-        # ContextVar objects, the two defaults, and a one-slot cell for this node's
-        # Hal and its declared `policy:` set, which Hal.__init__ fills once. Nothing
-        # at call time reads `node.hal`, a Hal attribute or a module global.
-        from . import approval as _approval
-        captured = (_current_gated, _approval._current, _DEFAULT_GATED,
-                    _approval._DEFAULT)
+        # ContextVar objects and the two defaults — the CANONICAL ones taken at
+        # import (`_policy`, this method's default; never the module names, which
+        # a thread could have rebound before this load) — and a one-slot cell for
+        # this node's Hal and its declared `policy:` set, which Hal.__init__ fills
+        # once. Nothing at call time reads `node.hal`, a Hal attribute or a name.
+        captured = _policy
         cell: list = [None]
 
         def bind_hal(hal, declared: frozenset[str] | None) -> None:
@@ -518,7 +562,9 @@ class Driver:
                 # limits passed -> ask before moving (pre-I/O, unbypassable)
                 gated_now = gated_set()  # captured at bind: this op's Hal (5b)
                 if gatable and side_effect in gated_now:
-                    approver = captured[1].get() or captured[3]
+                    approver = captured[1].get()
+                    if approver is None:
+                        approver = captured[3]
                     _approve_or_raise(self, op, side_effect, sig, args, kwargs,
                                       gated_now, approver)
                 in_body = True
