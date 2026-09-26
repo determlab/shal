@@ -370,6 +370,9 @@ well-formed, declared limits **actually reject** out-of-range calls pre-I/O,
 write ops **actually produce audit records**, capability protocols actually
 `isinstance`. Warnings flag numeric write params with no declared limit, and an
 `@op` with no `side_effect` (legal, inferred `"actuator"` and gated — but declare it).
+An `@idempotent` op with no `side_effect` is a **problem**, not a warning: it is
+inferred `"none"` and runs ungated, and an idempotent op is not always a read (an
+absolute setpoint is an idempotent write). Declare `"none"` or `"write"` (#183).
 A generated driver is not done until this is green.
 
 **Your tests must additionally cover** (with the sim): one value-correctness

@@ -266,3 +266,43 @@ def test_a_driver_that_declares_every_label_gets_no_such_warning():
         report = conformance.check_driver(compatible)
         assert not any("no side_effect declared" in w for w in report.warnings), (
             compatible, report.warnings)
+
+
+# ---- issue #183: an @idempotent op with no side_effect runs ungated -- a problem ----
+
+IDEMPOTENT_PROBLEM = (
+    'set_level: @idempotent with no side_effect is inferred "none" and runs '
+    'ungated. An idempotent op is not always a read (an absolute setpoint is an '
+    'idempotent write): declare side_effect explicitly — "none" for a read, '
+    '"write" for a benign, reversible change.')
+
+
+def _setpoint_driver(label: dict) -> type:
+    class _Setpoint(shal.Driver):
+        compatible = ""   # unregistered: skip the catalog, check the ops
+        kind = None
+        llm_ready = True
+
+        @shal.idempotent
+        @shal.op("Set the output to an absolute level.", **label)
+        def set_level(self) -> str:
+            return "set"
+    return _Setpoint
+
+
+def test_an_idempotent_op_without_side_effect_is_a_problem_word_for_word():
+    report = conformance.check_driver(_setpoint_driver({}))
+    assert report.problems == [IDEMPOTENT_PROBLEM] and not report.ok
+    assert report.warnings == []   # reported once: not ALSO #162's warning
+
+
+@pytest.mark.parametrize("side_effect", ["none", "write"])
+def test_the_same_op_with_side_effect_declared_is_clean(side_effect):
+    report = conformance.check_driver(_setpoint_driver({"side_effect": side_effect}))
+    assert report.problems == [] and report.warnings == [], report
+
+
+def test_runtime_inference_is_unchanged_for_the_unlabelled_idempotent_op():
+    # the check catches it; the runtime still infers "none" (driver.py, #19)
+    fn = _setpoint_driver({}).capability_ops()["set_level"]
+    assert shal.driver.inferred_side_effect(fn) == "none"

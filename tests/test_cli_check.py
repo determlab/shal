@@ -72,6 +72,28 @@ class UnlabelledThing(Driver):
         return "started"
 """
 
+# One @idempotent op; `{label}` is empty (no side_effect: inferred "none", runs
+# ungated — a problem, #183) or a declared `, side_effect="..."`.
+_IDEMPOTENT = """
+from shal import Driver, idempotent, op
+
+class SetpointThing(Driver):
+    compatible = "test,check-idempotent"
+    kind = None
+    llm_ready = True
+
+    @idempotent
+    @op("Set the output to an absolute level."{label})
+    def set_level(self) -> str:
+        return "set"
+"""
+
+IDEMPOTENT_PROBLEM = (
+    'set_level: @idempotent with no side_effect is inferred "none" and runs '
+    'ungated. An idempotent op is not always a read (an absolute setpoint is an '
+    'idempotent write): declare side_effect explicitly — "none" for a read, '
+    '"write" for a benign, reversible change.')
+
 _YAML = ("shal_version: 1\n"
          "root:\n"
          "  dev: {id: dev, driver: 'test,check-good', address: a}\n")
@@ -89,6 +111,11 @@ def drivers(tmp_path, monkeypatch):
     (tmp_path / "check_bad_driver.py").write_text(_BAD, encoding="utf-8")
     (tmp_path / "check_shadow_driver.py").write_text(_SHADOW, encoding="utf-8")
     (tmp_path / "check_unlabelled_driver.py").write_text(_UNLABELLED, encoding="utf-8")
+    for mod, label in (("check_idem_bare_driver", ""),
+                       ("check_idem_none_driver", ', side_effect="none"'),
+                       ("check_idem_write_driver", ', side_effect="write"')):
+        (tmp_path / f"{mod}.py").write_text(_IDEMPOTENT.format(label=label),
+                                            encoding="utf-8")
     (tmp_path / "sim.yaml").write_text(_YAML, encoding="utf-8")
     monkeypatch.chdir(tmp_path)
     monkeypatch.setattr(sys, "path", list(sys.path))  # `check` puts cwd on it
@@ -123,6 +150,26 @@ def test_an_unlabelled_op_is_a_json_warning_and_exits_0(drivers):
         'start: no side_effect declared; inferred "actuator" (gated). Declare '
         'side_effect= — "none" for a read, "write" for a benign, reversible change, '
         '"config" or "actuator" for a gated one.']
+
+
+def test_an_idempotent_op_without_side_effect_is_a_problem_and_exits_1(drivers):
+    r = _shal("check", "check_idem_bare_driver:SetpointThing", "--json",
+              cwd=drivers)
+    assert r.returncode == 1, r.stdout + r.stderr   # it runs ungated: a hard stop
+    report = json.loads(r.stdout)
+    assert report["ok"] is False
+    assert report["problems"] == [IDEMPOTENT_PROBLEM]
+    assert report["warnings"] == []   # not ALSO #162's warning
+    assert "Traceback" not in r.stderr
+
+
+@pytest.mark.parametrize("mod", ["check_idem_none_driver", "check_idem_write_driver"])
+def test_the_same_idempotent_op_with_side_effect_declared_is_clean(drivers, mod):
+    r = _shal("check", f"{mod}:SetpointThing", "--json", cwd=drivers)
+    assert r.returncode == 0, r.stdout + r.stderr
+    report = json.loads(r.stdout)
+    assert report["ok"] is True
+    assert report["problems"] == [] and report["warnings"] == []
 
 
 def test_unregistered_module_class_checks_clean(drivers, capsys):
