@@ -95,6 +95,7 @@ structured fields as kwargs: `self.log.debug("conv ready", event="...")`).
 6. **Device-said-no is not a HopError.** If transport succeeded but the device
    answered with an error code, raise a driver-level error (subclass
    `shal.Error`) — delivery was certain, so the retry machinery must not see it.
+   Its text is audited as `outcome="device-error"` (#198), so keep secrets out of it.
 
 ## The agent tool surface (`@op` metadata)
 

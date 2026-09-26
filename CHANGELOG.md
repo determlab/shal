@@ -13,6 +13,16 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+### Fixed
+- **A device refusal now leaves an outcome audit record** (#198). When the body of
+  an audited op (not `side_effect="none"`, on a device driver) raises a
+  `shal.Error` — the device said no — `shal.audit` gets one outcome record,
+  `outcome="device-error"`, with the error text in the message, `attempt` (and the
+  dropped `hop` if the retry fired). The caller still gets the same error object,
+  unchanged. A `HopError` keeps its own `outcome="error"` record (never both), a
+  limit rejection or approval denial is not also a device error, and a read still
+  writes nothing. Before, this was the one outcome with no trail.
+
 ## [0.3.0] - 2026-09-27
 
 **Upgrading from 0.2.x — two breaking changes:**

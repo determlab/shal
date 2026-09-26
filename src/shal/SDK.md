@@ -322,7 +322,9 @@ def start_cleaning(self) -> None:
   `@idempotent` — declare `side_effect="none"` for a read.
 - **Device-said-no ≠ transport failure.** If the transport succeeded but the
   device returned an error code, raise your own `shal.Error` subclass — the
-  retry machinery must not see it.
+  retry machinery must not see it. On an audited op the framework records it in
+  `shal.audit` as `outcome="device-error"` with your error text (#198), so keep
+  secrets out of that text.
 - Buses (not drivers) raise `HopError(msg, path=..., hop=..., txn=..., delivered=...)`
   (`txn` optional — pass the current transaction id when you have it):
   `delivered="no"` = certainly not delivered (refused/never sent); `"unknown"` =
