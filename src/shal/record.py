@@ -26,8 +26,11 @@ Invariants this file enforces — they are the contract, and the tests check the
     `records/<id>.yaml` beside it is the audit copy. `read()` returns what the
     YAML says whenever a YAML file exists (`record.md` §4).
 6.  **Fields are added, never renamed or removed**, and `record_version` is the
-    first field so a reader knows what it holds (`record.md` §7). A record
-    written by a *newer* version than this one is refused, not half-read.
+    first field so a reader knows what it holds (`record.md` §7). A change an
+    older reader cannot read (a required key made optional, as #218 did to
+    `calls`) bumps it; this reader reads every version from 1 up to its own.
+    A record written by a *newer* version is refused, not half-read, in one
+    sentence that names both versions and never a key (#223).
 
 Determinism: `started`/`ended` are ISO-8601 UTC **strings**, not `datetime` —
 PyYAML would parse a bare timestamp back into a `datetime` while JSON would hand
@@ -56,8 +59,9 @@ import yaml
 
 from .errors import Error
 
-# `record.md` §7 — the first field, so a reader knows what it holds.
-RECORD_VERSION = 1
+# `record.md` §7 — the first field, so a reader knows what it holds. 2 since
+# #218 made `calls` optional, which a version-1 reader cannot read (#223).
+RECORD_VERSION = 2
 
 #: File layout under a store directory (`record.md` §4).
 DB_NAME = "records.db"
@@ -232,11 +236,15 @@ class Record:
         """Rebuild a record from plain data, validating every invariant above."""
         m = _as_mapping(data, "record", source)
         version = _req(m, "record_version", int, source)
+        # Checked before any other key: a newer record may lack a key this
+        # reader requires, and that is not what is wrong with it (#223).
         if version > RECORD_VERSION:
             raise RecordError(
-                f"{source}: record_version {version} is newer than this reader "
-                f"understands ({RECORD_VERSION})"
+                f"{source}: this record is version {version}, newer than this SHAL "
+                f"reads (up to {RECORD_VERSION}) — upgrade pyshal"
             )
+        if version < 1:
+            raise RecordError(f"{source}: record_version must be 1 or more")
 
         abort_raw = m.get("abort")
         abort = None
