@@ -58,15 +58,9 @@ Documentation = "https://github.com/determlab/shal#readme"
 Changelog = "https://github.com/determlab/shal/blob/main/CHANGELOG.md"
 Source = "https://github.com/determlab/shal"
 
-# Bundled drivers, discovered the same way community drivers are (decision 3):
+# The framework's own buses, discovered the same way community drivers are
+# (decision 3). No device driver ships registered (D1, #149).
 [project.entry-points."shal.drivers"]
-"ti,tmp102" = "shal.drivers.tmp102:Tmp102"
-"ti,ina219" = "shal.drivers.ina219:Ina219"
-"rigol,dp832" = "shal.drivers.rigol_dp832:RigolDp832"
-"keysight,34461a" = "shal.drivers.keysight_34461a:Keysight34461a"
-"microchip,mcp9808" = "shal.drivers.mcp9808:Mcp9808"
-"ti,ads1115" = "shal.drivers.ads1115:Ads1115"
-"microchip,mcp23017" = "shal.drivers.mcp23017:Mcp23017"
 "shal,sim-i2c" = "shal.buses.sim:SimI2cBus"
 "shal,sim-scpi" = "shal.buses.sim_scpi:SimScpiBus"
 "shal,sim-msg" = "shal.buses.sim_msg:SimMsgBus"
@@ -77,13 +71,13 @@ Source = "https://github.com/determlab/shal"
 "shal,tcp" = "shal.buses.tcp:TcpBus"
 "shal,scpi-raw" = "shal.buses.scpi_raw:ScpiRawBus"
 "shal,http" = "shal.buses.http_bus:HttpBus"
-"nxp,pca9548" = "shal.buses.mux:Pca9548"
 
 [tool.setuptools.packages.find]
 where = ["src"]       # src/ layout — playground/ and tests/ are never packaged
 
 [tool.setuptools.package-data]
-shal = ["schema/*.json", "py.typed", "AGENT_GUIDE.md", "SDK.md"]
+shal = ["schema/*.json", "py.typed", "AGENT_GUIDE.md", "SDK.md",
+        "adk/reference/*/*.yaml"]   # the ADK reference set: guide material, unregistered (#149)
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

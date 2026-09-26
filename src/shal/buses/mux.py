@@ -1,9 +1,12 @@
-"""nxp,pca9548 — a node that is also a bus (DESIGN V2 'Muxes').
+"""The I2C mux mechanism — a node that is also a bus (DESIGN V2 'Muxes').
 
 One MuxChannel bus instance per channel; ALL channels of one physical mux share
 one per-mux state object (the v1 cross-mux cache-poisoning bug, fixed by design).
 Explicit per-kind delegation, selection inside the call, under state.lock —
 no __getattr__ magic; attribute access stays side-effect-free.
+
+This is the mechanism, and it ships. A mux chip is a vendor part, so it does not:
+the PCA9548 driver built on it lives in ``examples/drivers/pca9548/`` (#149).
 """
 from __future__ import annotations
 
@@ -11,10 +14,7 @@ import threading
 from collections.abc import Sequence
 from typing import Any
 
-from .. import registry
-from ..driver import Driver
-from ..errors import LoadError
-from ..log import bus_logger, redact_url
+from ..log import bus_logger
 from ..node import Node
 from ..transport import ByteTransport, Op, Transport, Write
 
@@ -61,26 +61,3 @@ class MuxChannel(Transport, ByteTransport):
     def close(self) -> None:
         if self.state.selected == self.channel:
             self.state.selected = None
-
-
-@registry.register
-class Pca9548(Driver):
-    """The mux driver itself is NOT a Transport; it provides one bus per channel."""
-
-    compatible = "nxp,pca9548"
-    kind = ByteTransport
-    N_CHANNELS = 8
-
-    def __init__(self) -> None:
-        self._state = MuxState()  # per physical mux
-
-    def provide_child_bus(self, child: Node) -> Transport:
-        ch = child.address
-        if not isinstance(ch, int) or not (0 <= ch < self.N_CHANNELS):
-            # redact_url: child address is ${ENV}-resolved like any other
-            # address, so its content isn't constrained by the expected int
-            # grammar (#126)
-            raise LoadError(f"{child.path}: pca9548 channel must be 0-"
-                            f"{self.N_CHANNELS - 1}, got {redact_url(str(ch))!r}")
-        return MuxChannel(child, upstream=self.bus, state=self._state,
-                          channel=ch, mux_addr=self.addr)

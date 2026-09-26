@@ -77,10 +77,21 @@ if it runs.
 - `src/shal/hal.py` — lookup API, lifecycle, LLM tool surface (`tool_schemas`/`call_tool`)
 - `src/shal/node.py` `errors.py` `log.py` `logging.py` `capabilities.py`
 - `src/shal/buses/` — `sim`, `local`, `ssh`, `i2c_cli`, `spi_cli`, `tcp`, `http_bus`, `mux`
-- `src/shal/drivers/` — `tmp102` (the canonical driver)
+  (`mux` is the mechanism only — `MuxState`/`MuxChannel`; the PCA9548 chip is an example)
+- `src/shal/adk/reference/` — the ADK reference set: `tmp102`, `mcp23017`, `rigol_dp832`,
+  each `driver.py` + `sim.py` + `test_<name>.py` + `topology.yaml`. **Package data, not
+  registered drivers** (D1, D7; #149): no entry point, not imported by `import shal`,
+  absent from `catalog()`. `shal docs --list` / `shal docs --example <name>` print them.
+  The core suite imports them in `tests/conftest.py`; each reference's own test runs in
+  its own process (`tests/test_adk_reference.py`)
+- **No device driver ships registered.** `catalog()` on a bare install lists only `shal,*`
+  (enforced by `tests/test_sim_sensor.py`)
 - `src/shal/schema/shal-v1.schema.json` — the canonical topology schema
 - `tests/` — pytest suite (mirrors `src/` concerns)
 - `examples/demos/` — runnable showcases (Deebot cloud, microservice mesh); **not shipped**
+- `examples/drivers/` — the demoted vendor drivers (`mcp9808`, `ads1115`, `ina219`,
+  `keysight_34461a`, the `pca9548` mux) with their sim models and tests; **not shipped**.
+  Tests run in CI's `examples` job: `pytest examples/drivers`
 - `examples/driver-creator/` — the doc→driver generation benchmark; **not shipped**
 - `docs/design/` — `DESIGN V2.md` (architecture detail); superseded design docs live in
   `docs/design/archive/`
@@ -102,8 +113,9 @@ amend it in the same PR.
 
 ## Extending (the common case)
 Don't edit the core to add a device or link. Publish a driver/bus via the
-`shal.drivers` entry point (bundled drivers are wired the same way in
-`pyproject.toml`). The agent-agnostic authoring contract is `src/shal/SDK.md` + the
+`shal.drivers` entry point (the `shal,*` buses are wired the same way in
+`pyproject.toml`; no `vendor,part` driver is). Start from an ADK reference
+(`shal docs --example <name>`). The agent-agnostic authoring contract is `src/shal/SDK.md` + the
 shipped `shal docs` guide (`AGENT_GUIDE.md`). Step-by-step **Claude Code** skills —
 one host's rendering of that contract — live in `integrations/claude-code/skills/`:
 `shal-build-yaml`, `shal-build-bus`, `shal-build-driver`.

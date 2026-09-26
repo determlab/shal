@@ -175,13 +175,13 @@ sequenceDiagram
 
 | # | Decision | Source |
 |---|---|---|
-| D1 | **Device-agnostic core:** device **drivers** + **examples** aren't bundled (repo / community). Capability **contracts** and the Authoring Kit *do* ship (governed content — D8/D13). The line: **contracts ship, drivers don't** | #46 |
+| D1 | **Device-agnostic core:** device **drivers** + **examples** aren't bundled (repo / community). Capability **contracts** and the Authoring Kit *do* ship (governed content — D8/D13). The line: **contracts ship, drivers don't** | #46; re-affirmed #110 |
 | D2 | **One self-contained core; non-MCP is primary.** The `shal` CLI, MCP, and skills are thin adapters over it | reframe |
 | D3 | **Two faces to an agent:** *Run* (Bridge) and *Author* (Authoring Kit) | this doc |
 | D4 | **One gate**, enforced at the **op-wrapper layer** (on `@op side_effect`), every call path — independent of whether a Capability is declared. The **Bridge renders** it as the ticket flow (not a second gate). Transport (mux select) rides *inside* the op | core |
 | D5 | **YAML is pure data;** code is imported only via operator-controlled `--drivers` | #47 |
 | D6 | Reads are free + **human-runnable** (`probe`); writes are **gated** (ticket → approve/deny) | #36 / #39 |
-| D7 | Agent guidance + the **Authoring Kit ship in-package, provider-neutral** (examples stay repo-linked) | this doc |
+| D7 | Agent guidance + the **Authoring Kit ship in-package, provider-neutral** (examples stay repo-linked); the ADK reference set ships inside the Authoring Kit as unregistered guide material | this doc; #149 |
 | D8 | **Capabilities:** the *mechanism* is framework; *contracts* are a governed standards set (semver, curated) — **optional** (just `@op` works) and **user-definable** | this doc |
 | D9 | **Agents reach SHAL two ways:** the Python API (direct, in-process) + the `shal` CLI (the *primary adapter*, for shell agents) | this doc |
 | D10 | Drivers are **isolated, self-registering** units → authoring *N* drivers parallelizes | this doc |

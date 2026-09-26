@@ -56,6 +56,10 @@ jobs:
           python examples/demos/sonos/demo_sim.py
           python examples/demos/deebot/demo_sim.py
           python examples/demos/mesh/demo_mesh.py
+      - name: Example drivers pass their tests where they live (#149)
+        # the four vendor drivers and the pca9548 mux chip that left the wheel;
+        # testpaths=tests keeps them out of the core run, so they run here
+        run: python -m pytest examples/drivers
 
   packaging:
     # Checks the *built wheel's* metadata, not the source that declares it
@@ -109,6 +113,11 @@ jobs:
           /tmp/ws/bin/shal-mcp --help > /dev/null
           # the in-package agent guide must ship (the self-sufficiency promise, #55)
           /tmp/ws/bin/python -c "from importlib.resources import files; assert (files('shal')/'AGENT_GUIDE.md').is_file(), 'AGENT_GUIDE.md missing from the wheel'"
+          # D1 (#149): a fresh wheel registers only shal,* — and the ADK reference
+          # set ships as guide material, printable with `shal docs --example`
+          /tmp/ws/bin/python -c "import shal; c = shal.catalog(); bad = [e['compatible'] for e in c['drivers'] + c['buses'] if not e['compatible'].startswith('shal,')]; assert not bad, bad"
+          /tmp/ws/bin/shal docs --list
+          /tmp/ws/bin/shal docs --example tmp102 | grep -q "==== topology.yaml"
       - name: agenticQA release-acceptance — cold-install the sdist + drive the gate (sim, #78)
         run: python dev/eval/agenticqa/run.py --all --from-tarball "$(ls dist/*.tar.gz)"
       - uses: actions/upload-artifact@v4
@@ -168,6 +177,7 @@ jobs:
         run: |
           python - <<'PY'
           import shal
+          import shal.adk.reference.tmp102.driver, shal.adk.reference.tmp102.sim  # setup_sim.yaml's device (#149)
           from shal.mcp import Bridge
           from shal.mcp.server import _build_server
           print("shal", shal.__version__)

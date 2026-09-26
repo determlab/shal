@@ -22,6 +22,13 @@ from shal.log import redact_url
 from shal.node import Node
 from shal.transport import CommandTransport, Completed, Read, Transport, Write
 
+# nxp,pca9548 is a vendor part, so the chip and its sim model live in examples/
+# (#149, ADK §3.6). The mechanism these mux tests pin — MuxState, MuxChannel —
+# is core. Imported from there so the chip is tested where it now lives.
+sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "examples/drivers/pca9548"))
+import pca9548_driver  # noqa: E402,F401  (registers nxp,pca9548)
+import pca9548_sim  # noqa: E402,F401     (registers its sim model)
+
 
 def write(tmp_path, body: str) -> Path:
     p = tmp_path / "setup.yaml"

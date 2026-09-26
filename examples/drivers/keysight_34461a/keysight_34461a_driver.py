@@ -3,10 +3,10 @@
 """
 from __future__ import annotations
 
-from .. import registry
-from ..capabilities import DigitalMultimeter
-from ..driver import Driver, idempotent, op
-from ..transport import MessageTransport
+from shal import registry
+from shal.capabilities import DigitalMultimeter
+from shal.driver import Driver, idempotent, op
+from shal.transport import MessageTransport
 
 
 @registry.register
