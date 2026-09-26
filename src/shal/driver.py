@@ -230,6 +230,7 @@ class Driver:
             token = _log.current_txn.set(_log.new_txn())
             t0 = time.perf_counter()
             attempt = 1  # 2 once the idempotent reconnect-and-retry fires
+            dropped: dict = {}  # {"hop": <hop that dropped>} once the retry fires
             try:
                 if guard is not None:
                     try:
@@ -254,8 +255,11 @@ class Driver:
                         # but a handled anomaly is WARNED, never silent (rule 4).
                         # Nothing reached the device the first time, so the ONE
                         # approval above covers this send (no second ask), and the
-                        # call keeps ONE outcome record, marked attempt=2 (#194)
+                        # call keeps ONE outcome record, marked attempt=2 and
+                        # carrying the dropped hop in the stable `hop` field — the
+                        # same key and meaning as this WARNING line (#194)
                         attempt = 2
+                        dropped = {"hop": e.hop}
                         self.log.warning("reconnect-and-retry after drop (1/1)",
                                          event="retry", op=op, attempt=2, hop=e.hop)
                         self.bus.close()
@@ -270,7 +274,7 @@ class Driver:
                                 extra={"event": "audit", "id": self.node.id or "",
                                        "path": self.node.path, "op": op,
                                        "outcome": "ok", "duration_ms": duration,
-                                       "attempt": attempt,
+                                       "attempt": attempt, **dropped,
                                        "txn": _log.current_txn.get()})
                 return result
             except HopError as e:
@@ -288,7 +292,7 @@ class Driver:
                                        "path": self.node.path, "op": op,
                                        "outcome": "error", "delivered": e.delivered,
                                        "duration_ms": duration, "attempt": attempt,
-                                       "txn": _log.current_txn.get()})
+                                       **dropped, "txn": _log.current_txn.get()})
                 raise
             finally:
                 _log.current_txn.reset(token)

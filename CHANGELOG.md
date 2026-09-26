@@ -25,7 +25,7 @@ All notable changes to this project are documented here. The format follows
   `how_to_approve`; `shal call`'s printed refusal is unchanged. The default
   approver and its TTY check are unchanged.
 - **`check_driver` warns when an op has no `side_effect`** (#162, text and scope
-  set by #194) — the op is still legal and fails closed (it is treated as
+  set by #194; device drivers only — a bus's ops are never gated) — the op is still legal and fails closed (it is treated as
   `"actuator"`, gated and audited), so this is a warning, never a problem, and
   `shal check` still exits 0. It is one rule with one text for every op,
   `@idempotent` or not: `<op>: no side_effect declared; treated as actuator (gated,
@@ -266,8 +266,13 @@ All notable changes to this project are documented here. The format follows
   unchanged:** an `@idempotent` op still reconnects and retries once on
   `delivered="no"`. A gated op is approved once, before the first send; the retry
   does not ask again (nothing reached the device), and the call keeps one outcome
-  audit record, which carries `attempt: 2` when the retry fired (`attempt: 1`
-  otherwise). The mesh demo's `ping`, `get_user`, `get_order` and `job_status`
+  audit record, which carries `attempt: 2` and the dropped `hop` when the retry
+  fired (`attempt: 1` and no `hop` otherwise). The tool description follows the
+  label too: only an `@idempotent` `"none"` op says "Idempotent read"; an
+  `@idempotent` op with another label says `Side effect (<label>): safe to
+  re-send; a lost delivery is retried once.` (plus `It needs a person's
+  approval.` when gated), so `rigol,dp832`'s `set_voltage` is no longer
+  described as a read. The mesh demo's `ping`, `get_user`, `get_order` and `job_status`
   and the deebot demo's `get_battery_percent` and `get_clean_state` gain
   `@op(..., side_effect="none")`; without it they would now stop at the gate.
   AGENT_GUIDE rule 4, SDK.md §5 and §7 and the `shal-build-driver` skill say the

@@ -97,6 +97,7 @@ def test_an_idempotent_write_is_audited(rig, audit):
     (rec,) = [r for r in audit if r.op == "set_level"]
     assert rec.event == "audit" and rec.outcome == "ok" and rec.id == "psu"
     assert rec.attempt == 1
+    assert not hasattr(rec, "hop")           # no retry fired: no dropped hop
 
 
 def test_an_unlabelled_idempotent_op_is_gated_no_approval_no_io(rig, audit):
@@ -137,6 +138,8 @@ def test_retry_of_an_idempotent_write_keeps_one_outcome_record(rig, audit):
     assert psu.set_level(5) is True
     assert RECEIVED == [{"cmd": "set", "level": 5}]
     assert _for(audit, "set_level") == [("ok", 2)]
+    (rec,) = [r for r in audit if r.op == "set_level"]
+    assert rec.hop == "sim-msg"              # the hop that dropped the first send
 
 
 def test_retry_of_an_approved_gated_op_asks_once(rig, audit):
@@ -154,6 +157,7 @@ def test_retry_of_an_approved_gated_op_asks_once(rig, audit):
     assert asked == ["home"]                 # the retry did not ask again
     assert RECEIVED == [{"cmd": "home"}]
     assert _for(audit, "home") == [("approved", None), ("ok", 2)]
+    assert [r.hop for r in audit if r.op == "home" and r.outcome == "ok"] == ["sim-msg"]
 
 
 def test_two_drops_exhaust_the_retry_and_the_error_is_audited(rig, audit):
@@ -163,3 +167,49 @@ def test_two_drops_exhaust_the_retry_and_the_error_is_audited(rig, audit):
         psu.set_level(5)
     assert RECEIVED == []
     assert _for(audit, "set_level") == [("error", 2)]
+    (rec,) = [r for r in audit if r.op == "set_level"]
+    assert rec.hop == "sim-msg" and rec.delivered == "no"
+
+
+# ---- the LLM surface says what the label says (advertised == enforced) ----------
+
+def _descriptions(hal) -> dict:
+    return {s["name"].split("__", 1)[1]: s["description"] for s in hal.tool_schemas()}
+
+
+def test_an_idempotent_write_is_not_described_as_a_read(rig):
+    d = _descriptions(rig[0])["set_level"]
+    assert "read" not in d.lower()
+    assert "Side effect (write): safe to re-send; a lost delivery is retried once." in d
+
+
+def test_an_unlabelled_idempotent_op_is_described_as_a_gated_actuator(rig):
+    d = _descriptions(rig[0])["set_level_unlabelled"]
+    assert "read" not in d.lower()
+    assert "Side effect (actuator)" in d and "approval" in d
+
+
+def test_an_idempotent_none_read_keeps_the_read_sentence(rig):
+    d = _descriptions(rig[0])["read_level"]
+    assert "Idempotent read — safe to call repeatedly." in d
+
+
+def test_the_shipped_rigol_set_voltage_is_not_described_as_a_read():
+    # a fresh interpreter, so registering the reference cannot leak into this one
+    import json
+    import subprocess
+    import sys
+    code = (
+        "import json, os, sys; from importlib.resources import files; "
+        "ref = str(files('shal') / 'adk' / 'reference' / 'rigol_dp832'); "
+        "sys.path.insert(0, ref); import sim, driver, shal; "
+        "hal = shal.load(os.path.join(ref, 'topology.yaml')); "
+        "print(json.dumps({s['name']: s['description'] for s in hal.tool_schemas()}))")
+    out = subprocess.run([sys.executable, "-c", code], capture_output=True,
+                         text=True, encoding="utf-8", check=True).stdout
+    described = {k: v for k, v in json.loads(out).items()
+                 if k.endswith("__set_voltage")}
+    assert described, out
+    for name, d in described.items():
+        assert "read" not in d.lower(), (name, d)
+        assert "Side effect (write): safe to re-send" in d, (name, d)

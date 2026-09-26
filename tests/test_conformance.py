@@ -321,3 +321,20 @@ def test_runtime_inference_is_actuator_for_the_unlabelled_idempotent_op():
     fn = _setpoint_driver({}).capability_ops()["set_level"]
     assert shal.driver.inferred_side_effect(fn) == "actuator"
 
+
+def test_a_bus_op_with_no_side_effect_is_not_warned():
+    # a Transport's ops are never gated or audited, so "treated as actuator
+    # (gated, audited)" would not be true for them (#194)
+    class _Bus(shal.Driver, shal.transport.Transport, shal.MessageTransport):
+        compatible = ""
+        kind = None
+
+        def exchange(self, addr, msg):
+            return {}
+
+        @shal.op("Flush the bus buffers.")
+        def flush(self) -> None:
+            pass
+
+    report = conformance.check_driver(_Bus)
+    assert not any("no side_effect declared" in w for w in report.warnings), report

@@ -317,7 +317,8 @@ def start_cleaning(self) -> None:
   (`@idempotent`, `side_effect="write"`) is retried on a lost delivery AND lands
   in the audit log. A gated op is approved once; the retry after a
   `delivered="no"` drop does not ask again, and its one outcome record carries
-  `attempt: 2`. An op with no label is `"actuator"` even when it is
+  `attempt: 2` and the dropped `hop`. The tool description says the same: only
+  a `"none"` op is described as a read. An op with no label is `"actuator"` even when it is
   `@idempotent` — declare `side_effect="none"` for a read.
 - **Device-said-no ≠ transport failure.** If the transport succeeded but the
   device returned an error code, raise your own `shal.Error` subclass — the
@@ -369,7 +370,7 @@ Verifies: `llm_ready` + complete `@op` metadata, catalog entry + all schemas
 well-formed, declared limits **actually reject** out-of-range calls pre-I/O,
 write ops **actually produce audit records**, capability protocols actually
 `isinstance`. Warnings flag numeric write params with no declared limit, and any
-op with no `side_effect`, `@idempotent` or not (legal: it is treated as
+device op with no `side_effect` (a bus's ops are never gated, so not a bus's), `@idempotent` or not (legal: it is treated as
 `"actuator"`, gated and audited — but declare it; #194). The warning reads
 `<op>: no side_effect declared; treated as actuator (gated, audited). Declare it — "none" for a read, "write" for a benign, reversible change, "config"/"actuator" for a gated one.`
 A generated driver is not done until this is green.

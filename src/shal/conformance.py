@@ -86,11 +86,12 @@ def _static_checks(cls: type, report: Report) -> None:
     # driver.py `inferred_side_effect` makes it "actuator" (gated, audited),
     # @idempotent or not. Safe, but silent: say so once, as a warning, and name
     # the fix. A device op with no @op at all is unlabelled too (its missing
-    # description is already a problem above); a bus helper needs @op to be named.
+    # description is already a problem above). A bus (Transport) is skipped: its
+    # ops are never gated or audited, so the warning's text would not be true.
     for name, fn in ops.items():
+        if issubclass(cls, Transport):
+            break
         meta = getattr(fn, "__shal_op__", None)
-        if meta is None and issubclass(cls, Transport):
-            continue
         if (meta or {}).get("side_effect") is None:
             report.warnings.append(
                 f'{name}: no side_effect declared; treated as actuator (gated, '
