@@ -146,6 +146,9 @@ All notable changes to this project are documented here. The format follows
   that lacks a key is not reported as a missing key. `read()` over a store
   that holds one newer record refuses the whole read; it does not skip it. A
   `record_version` below 1 is a `RecordError`.
+- **The `jig` sample writes `calls=None`** (#222). Its loop does not collect
+  SHAL calls, so each record now says "not collected" and the record file has
+  no `calls` key, instead of `calls: []` ("collected, and there were none").
 
 ### Fixed
 - **A device refusal now leaves an outcome audit record** (#198). When the body of

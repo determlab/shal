@@ -43,7 +43,7 @@ with shal.load(str(TOPOLOGY)) as hal:
         record.write(record.Record(
             record=f"jig-{unit}", unit=unit, station="jig", sequence="jig",
             sequence_version="1", setup="topology.yaml", setup_version="1",
-            runner="script", started=started, ended=now(), steps=[step]), STORE)
+            runner="script", started=started, ended=now(), steps=[step], calls=None), STORE)
         print(f"{unit}: {celsius:.2f} C  {'PASS' if ok else 'FAIL'}")
 
     rows = hal.get_device("db").query("records", limit=1000)
