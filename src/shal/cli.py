@@ -25,6 +25,7 @@ import argparse
 import asyncio
 import json
 import os
+import re
 import sys
 
 
@@ -85,13 +86,37 @@ def _json_load(args, cmd: str):
                            f"{type(e).__name__}: {e}")
 
 
-def _call_command(args, tool: str, schema: dict) -> str:
-    """The `shal call` line that runs ``tool`` (placeholders for required values)."""
-    handle, _, op = tool.rpartition("__")
-    parts = ["shal call", args.topology, handle, op]
-    parts += [f"<{p}>" for p in schema.get("required", [])]
-    parts += [f"--drivers {d}" for d in args.drivers]
-    return " ".join(parts)
+# A token made only of these pastes as-is into bash, PowerShell and cmd.
+_PLAIN_TOKEN = re.compile(r"[\w\-./:\\+]+\Z")
+# Inside double quotes, bash still expands $ ` ! (and " ends the quote), PowerShell
+# expands $ `, cmd expands % and !. No one quoting is safe in all three for these.
+_UNQUOTABLE = re.compile(r"[\"$`%!\r\n]")
+
+
+def _shell_token(token: str) -> str | None:
+    """``token`` as it can be pasted into bash, PowerShell and cmd alike: bare when
+    it is plain, else in double quotes (the quoting all three share). None when no
+    such form exists (a ", $, `, %, ! or newline in it)."""
+    if _PLAIN_TOKEN.match(token):
+        return token
+    if _UNQUOTABLE.search(token):
+        return None
+    return f'"{token}"'
+
+
+def _call_command(args, fact: dict, schema: dict) -> str | None:
+    """The `shal call` line that runs one op: its device and op from the catalog,
+    and a ``name=<name>`` placeholder per required value (by name, so the order of
+    the op's parameters does not matter). None when a path in it cannot be quoted
+    for every shell (see `_shell_token`)."""
+    tokens = [args.topology, fact["device"], fact["op"]]
+    for d in args.drivers:
+        tokens += ["--drivers", d]
+    quoted = [_shell_token(t) for t in tokens]
+    if None in quoted:
+        return None
+    required = [f"{p}=<{p}>" for p in schema.get("required", [])]
+    return " ".join(["shal call", *quoted[:3], *required, *quoted[3:]])
 
 
 def _probe_json(args) -> int:
@@ -132,7 +157,8 @@ def _probe_json(args) -> int:
                       "op": facts[d["name"]]["op"],
                       "side_effect": facts[d["name"]]["side_effect"],
                       "gated": bool(d["annotations"].get("destructiveHint")),
-                      "run_with": _call_command(args, d["name"], d["input_schema"])}
+                      "run_with": _call_command(args, facts[d["name"]],
+                                                d["input_schema"])}
                      for d in writes]
     finally:
         hal.close()
@@ -623,11 +649,15 @@ def main(argv: list[str] | None = None) -> int:
                '              "device": "ambient_temp", "op": "set_target",\n'
                '              "side_effect": "config", "gated": true,\n'
                '              "run_with":\n'
-               '                "shal call sim.yaml ambient_temp set_target <celsius>"}]}\n'
+               '                "shal call sim.yaml ambient_temp set_target celsius=<celsius>"}]}\n'
                '  A read that failed has "ok": false and "error" instead of "value"; the\n'
                '  top-level "ok" is still true (the probe ran, exit 0). With a named\n'
                '  tool, "reads" holds that one read. A gated write is refused by\n'
                '  `shal call` (exit 2) until a person approves it.\n'
+               '  run_with: replace each name=<name> with a value. A path with a space\n'
+               '  or other special character is in double quotes, so the line pastes\n'
+               '  into bash, PowerShell and cmd. A path with " $ ` % ! in it cannot be\n'
+               '  quoted for all three: then run_with is null.\n'
                "\n"
                "exit: 0 ran; 1 no such tool, the tool is a write, or the topology\n"
                "  does not load. The message is on stderr; with --json, stdout also\n"

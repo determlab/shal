@@ -119,7 +119,7 @@ def test_probe_json_shape(lab):
     assert doc["writes_not_run"] == [{
         "tool": "ambient_temp__set_target", "device": "ambient_temp",
         "op": "set_target", "side_effect": "config", "gated": True,
-        "run_with": "shal call sim.yaml ambient_temp set_target <celsius>"}]
+        "run_with": "shal call sim.yaml ambient_temp set_target celsius=<celsius>"}]
 
 
 def test_probe_json_named_read(lab):
@@ -166,6 +166,91 @@ def test_probe_json_run_with_carries_drivers(tmp_path):
         "tool": "rig__clear", "device": "rig", "op": "clear", "side_effect": "write",
         "gated": False,
         "run_with": "shal call rig.yaml rig clear --drivers json_rig_driver.py"}]
+
+
+# A write whose required values are one positional-or-keyword and one keyword-only
+# parameter: run_with names them (name=<name>), so their order cannot misassign one.
+_SPACE_DRIVER = textwrap.dedent('''\
+    import pathlib
+
+    from shal import Driver, op, register
+
+    @register
+    class SpaceRig(Driver):
+        compatible = "test,space-rig"
+        kind = None
+        llm_ready = True
+
+        @op("Put a value.", side_effect="write")
+        def put(self, count: int, *, label: str, gain: float = 1.0,
+                loud: bool = False) -> None:
+            pathlib.Path(self.addr).write_text(f"{count} {label} {gain} {loud}")
+    ''')
+
+
+@pytest.fixture
+def space_lab(tmp_path):
+    (tmp_path / "sp ace").mkdir()
+    (tmp_path / "my drivers").mkdir()
+    (tmp_path / "my drivers" / "space_rig_driver.py").write_text(_SPACE_DRIVER,
+                                                                 encoding="utf-8")
+    (tmp_path / "sp ace" / "rig.yaml").write_text(
+        "shal_version: 1\nroot:\n"
+        "  rig: {id: rig, driver: 'test,space-rig', address: marks.txt}\n",
+        encoding="utf-8")
+    return tmp_path
+
+
+def _space_run_with(lab, topology: str) -> str | None:
+    r = _run("probe", topology, "--drivers", "my drivers/space_rig_driver.py", "--json",
+             cwd=lab)
+    assert r.returncode == 0, r.stderr
+    [write] = _doc(r)["writes_not_run"]
+    return write["run_with"]
+
+
+def test_probe_json_run_with_quotes_paths_with_spaces(space_lab):
+    run_with = _space_run_with(space_lab, "sp ace/rig.yaml")
+    assert run_with == ('shal call "sp ace/rig.yaml" rig put count=<count> label=<label> '
+                        '--drivers "my drivers/space_rig_driver.py"')
+
+
+def test_probe_json_run_with_runs_when_pasted_into_a_shell(space_lab):
+    """The line, pasted into the platform shell (sh on POSIX, cmd on Windows) and
+    into PowerShell where there is one, runs the op with the right values."""
+    import shutil
+    run_with = _space_run_with(space_lab, "sp ace/rig.yaml")
+    assert run_with.startswith("shal call ")
+    # fill the placeholders; `shal` is this interpreter's module (it may not be on PATH)
+    rest = run_with[len("shal "):].replace("<count>", "5").replace("<label>", "hi")
+    marks = space_lab / "marks.txt"
+    runs = [("platform shell", f'"{sys.executable}" -m shal.cli {rest}', True)]
+    ps = shutil.which("pwsh") or shutil.which("powershell")
+    if ps:
+        runs.append(("powershell", [ps, "-NoProfile", "-Command",
+                                    f'& "{sys.executable}" -m shal.cli {rest}'], False))
+    for name, cmd, shell in runs:
+        marks.unlink(missing_ok=True)
+        r = subprocess.run(cmd, shell=shell, cwd=space_lab, capture_output=True,
+                           text=True, encoding="utf-8", timeout=60)
+        assert r.returncode == 0, (name, cmd, r.stdout, r.stderr)
+        assert marks.read_text() == "5 hi 1.0 False", name
+
+
+def test_call_takes_name_value_for_every_param_shape(space_lab):
+    # the name=value form run_with uses, for each type `shal call` converts and
+    # for a keyword-only parameter, given out of the op's order
+    r = _run("call", "sp ace/rig.yaml", "rig", "put", "loud=true", "gain=2.5",
+             "label=x y", "count=0x10", "--drivers", "my drivers/space_rig_driver.py",
+             cwd=space_lab)
+    assert r.returncode == 0, r.stderr
+    assert (space_lab / "marks.txt").read_text() == "16 x y 2.5 True"
+
+
+def test_probe_json_run_with_is_null_when_no_quoting_is_safe(space_lab):
+    # inside double quotes bash and PowerShell still expand $, and cmd expands %
+    (space_lab / "sp ace").rename(space_lab / "a$b")
+    assert _space_run_with(space_lab, "a$b/rig.yaml") is None
 
 
 # -- errors: same exit and stderr as without --json, a JSON error on stdout --------
