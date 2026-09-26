@@ -312,8 +312,15 @@ def test_limits_first_comment_is_the_issue_text():
     assert lines[1].startswith("# ")
     assert first == ("# In a terminal this asks you. In CI, or in a pipe, there is nobody "
                      "to ask, so it refuses and exits 2.")
-    assert len(LIMITS.read_text(encoding="utf-8").splitlines()) <= 40
     assert "approver(" not in LIMITS.read_text(encoding="utf-8")   # never pins one
+
+
+@pytest.mark.parametrize("name", sorted(_on_disk()))
+def test_every_sample_fits_on_one_screen(name):
+    # one screen, comments included (#207): counting code alone would let a
+    # sample become a wall of comments
+    run = SAMPLES_DIR / name / "run.py"
+    assert len(run.read_text(encoding="utf-8").splitlines()) <= 50
 
 
 def test_limits_no_terminal_refuses_exit_2_and_no_write_reached_the_sim(
