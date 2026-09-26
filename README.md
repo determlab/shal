@@ -366,16 +366,13 @@ shal mcp   my-setup.yaml   # or serve it to an AI host (writes gated)
 ## Write a driver in 30 seconds
 
 Need a device SHAL doesn't have yet? A driver is one small class. This is the
-*entire* reference temperature-sensor driver that the authoring kit teaches from:
+shape:
 
 ```python
-from shal import Driver, TemperatureSensor, registry, idempotent, op, ByteTransport, Read, Write
-
 @registry.register
-class Tmp102(Driver, TemperatureSensor):
-    compatible = "ti,tmp102"          # matched against the YAML `driver:` field
+class MyChip(Driver, TemperatureSensor):
+    compatible = "acme,mychip"        # matched against the YAML `driver:` field
     kind = ByteTransport
-    llm_ready = True
 
     @idempotent                        # a read: safe to auto-retry across drops
     @op("Read the ambient temperature now.", unit="celsius", side_effect="none")
@@ -384,9 +381,22 @@ class Tmp102(Driver, TemperatureSensor):
         return ((raw[0] << 4) | (raw[1] >> 4)) * 0.0625
 ```
 
-That's it — register the `compatible`, implement the capability. The `@op`
-metadata is what makes it show up as a gated agent tool. SHAL discovers your
-driver via the `shal.drivers` entry point.
+Register the `compatible`, implement the capability, and **label every op**:
+`side_effect="none"` runs freely; `"config"` and `"actuator"` stop for a person.
+That label is the only thing standing between an agent and your hardware, so
+you declare it — nothing infers it.
+
+**Working references ship inside the package**, complete with a simulator, tests
+and a topology:
+
+```bash
+shal docs --list                # the references you can read
+shal docs --example tmp102      # print one — driver, sim twin, test, topology
+```
+
+They are guide material, not registered drivers: copy the four files and edit,
+or run one as it stands with `--drivers`. `shal docs` prints the full authoring
+guide, and `shal check <compatible>` tells you what your driver is still missing.
 
 ---
 
@@ -473,7 +483,10 @@ hardware — swap in a real transport later, and your code doesn't change.
 - ✅ Declarative YAML topology: JSON-Schema validation, `id`/`path`/`$ref`,
   `${ENV}` secrets, reusable `template:` includes
 - ✅ Bundled buses: `sim-i2c`, `local`, `ssh-host`, `i2c-cli`, `spi-cli`,
-  `tcp` (TLS), `http`, `nxp,pca9548` mux
+  `tcp` (TLS), `http`, and the mux mechanism (the `nxp,pca9548` chip itself is
+  an example, not a shipped driver)
+- ✅ Bundled devices: `shal,sim-sensor` — the simulated device the Quick Start
+  reads. No vendor part ships as a registered driver
 - ✅ Capability model, driver plugin registry, trustworthy retry policy
 - ✅ Agent tool surface: `tool_schemas()` / `tool_catalog()` / `call_tool()`
 - ✅ Human-in-the-loop actuation gate: actuator ops stop for an injectable
