@@ -116,6 +116,38 @@ jobs:
           name: dist
           path: dist/*
 
+  quickstart:
+    # The README's Quick Start, run exactly as printed, the way a stranger runs
+    # it (#159): a clean venv with nothing in it, then the README's own blocks,
+    # in order. The job keeps no copy of the commands — dev/quickstart/run_readme.py
+    # reads them out of README.md, so the words the CMO writes are the words
+    # tested. It fails when a block exits non-zero (or not with the code the
+    # README states) or prints something other than the README shows; only the
+    # drifting sensor reading is matched by pattern (see the script's docstring).
+    #
+    # The one substitution: the README's `pip install pyshal` runs as printed
+    # with `pyshal` replaced by the wheel built from this commit — otherwise
+    # this job would test PyPI, not the PR. The seconds from that pip install
+    # to the first successful read go into the job summary.
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Build the wheel from this commit
+        run: |
+          pip install build
+          python -m build --wheel
+      - name: Clean venv (no dev deps, nothing installed)
+        run: python -m venv "${{ runner.temp }}/quickstart-venv"
+      - name: README Quick Start, as printed (pip line installs this commit's wheel)
+        run: python dev/quickstart/run_readme.py --venv "${{ runner.temp }}/quickstart-venv" --dist dist
+
   latest-deps:
     # Upstream canary (#106). The `test` job installs `.[dev]`, which honours the
     # declared ceilings (`mcp>=1.0,<2` since #107) — so it can never see the next

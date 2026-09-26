@@ -14,6 +14,14 @@ All notable changes to this project are documented here. The format follows
 ## [Unreleased]
 
 ### Added
+- **CI runs the README Quick Start exactly as printed** (#159) — a new `quickstart`
+  job (ubuntu + windows, every PR) builds the wheel, makes a clean venv, and runs
+  `dev/quickstart/run_readme.py`, which reads the Quick Start blocks out of
+  `README.md` and runs them in order: files saved under the name the README gives,
+  each command's output matched to what the README shows (only the drifting reading
+  by pattern). The README's `pip install pyshal` installs this commit's wheel
+  instead. The seconds from `pip install` to the first successful read go into the
+  job summary.
 - **`shal call` — run one op from the command line; the gate refuses on the first
   screen** (#160, R11 in `adk.md` §3.6) — `shal call <topology> <node> <op>
   [value…] [--json]`. An op labelled `none` or `write` runs and prints its result
