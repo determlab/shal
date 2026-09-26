@@ -214,7 +214,7 @@ shal probe sim.yaml
 ```
 # 1 read(s), 1 write(s) on this topology
 ambient_temp__read_celsius: 25.59
-# writes — not run by --probe (start the MCP server to use them): ambient_temp__set_target
+# writes — not run by `shal probe`; use `shal call` (gated ops are refused until approved): ambient_temp__set_target
 ```
 
 That is the product in one command. **The read ran. The write did not.**
