@@ -29,7 +29,9 @@ All notable changes to this project are documented here. The format follows
 `shal call` — run an op from the CLI, gated ops refused (#160); `shal check
 --json` (#148); `--json` on `shal probe`, `shal tools`, `shal docs --list` (#185);
 the ADK reference set and `shal docs --list` / `--example` (#149, #152, #157); the
-`shal,http` request envelope (#104); `AGENTS.md` (#146).
+`shal,http` request envelope (#104); a headless no-approver denial that says how
+to approve, with `reason: "no-approver"` (#186); topology `include:` (#134);
+`AGENTS.md` (#146).
 
 ### Added
 - **`--json` on `shal probe`, `shal tools` and `shal docs --list`** (#185) — each
@@ -285,6 +287,43 @@ the ADK reference set and `shal docs --list` / `--example` (#149, #152, #157); t
   `use:` node — which legitimately has none of the three, inheriting them
   from its template — is unaffected. `src/shal/AGENT_GUIDE.md` now shows a
   cloud-device example with both `config:` and `address`.
+- **Every remaining bus address echo from #101 now routes through `redact_url`**
+  (#126) — thirteen `LoadError`/`HopError` sites across `src/shal/buses/`
+  interpolate an address; a first pass redacted only two, on the premise that a
+  bus's *own* address is `${ENV}`-resolved while a *child* address is validated
+  down to a narrow non-credential type (an int, a label). That premise was
+  false: `loader.py` resolves `${ENV}` for every node, children included, so a
+  child address is just as capable of holding an arbitrary string — reproduced
+  live via a mux child address holding a creds URL that echoed verbatim in a
+  `LoadError`. All ten remaining sites (`i2c_cli.py`, `mux.py`, `scpi_raw.py`,
+  `sim.py`, `sim_msg.py`, `sim_scpi.py`) now redact too. This costs nothing for
+  legitimate errors: `redact_url` only rewrites a value containing `://` or
+  `@`, so an int, a device path, or a plain label passes through
+  byte-identical. `drivers/rigol_dp832.py:26` stays out of scope (a SCPI
+  channel label, not a credential).
+- **Every `shal` command picks the Windows selector event loop, not just `shal mcp`**
+  (#94) — on win32 a driver that wraps an `aiomqtt`-style library runs its own asyncio
+  loop, and the default `ProactorEventLoop` has no `add_reader`, so that loop dies with
+  `NotImplementedError`. `shal mcp` set `WindowsSelectorEventLoopPolicy` for itself
+  (#87); `shal probe` went straight to `bridge.call` and did not, so the same driver
+  served fine over MCP and failed under the CLI a cold user is told to try first. The
+  choice now lives in one helper (`shal.cli._use_selector_loop_on_win32`), called once
+  at the top of `shal.cli.main` — so `probe`, `tools`, `mcp` and every subcommand added
+  later are at parity — and at the top of `shal.mcp.server.main`, which the legacy
+  `shal-mcp` script enters directly; `server.py`'s own inline copy is gone, leaving one
+  mechanism. It is set by the *commands*, never at import: a host app that merely
+  imports `shal` keeps its own event-loop policy, the same rule as "the library never
+  configures logging".
+- **The bind log no longer leaks credentials** (#117) — `loader.py` wrote
+  `str(node.address)` straight into the DEBUG `bind` record's `addr` field, so an
+  address resolved from `${ENV_VAR}` carrying `user:pass@` or a token query string was
+  written in plaintext to whatever handler the host app attached, on every *successful*
+  load. The address now routes through `redact_url` like every other address that
+  reaches a log or an error. Clean addresses still log unredacted.
+- **Load-time `LoadError` redacts credential-bearing addresses** (#101) — a malformed
+  `http(s)://user:pass@...` address (e.g. resolved from `${ENV}`) no longer echoes
+  userinfo credentials in the error text; the `http`, `tcp`, and `scpi-raw` buses now
+  route the echoed address through `redact_url`. Clean addresses still echo verbatim.
 
 ### Changed
 - **BREAKING: one decorator, one meaning — `@idempotent` is only about retry**
@@ -396,45 +435,6 @@ the ADK reference set and `shal docs --list` / `--example` (#149, #152, #157); t
 - **`shal docs` strips the front-matter** (#119) — `SDK.md` and `AGENT_GUIDE.md` ship in
   the wheel and are typed like every other document, but the header is repo bookkeeping,
   so the printed guide is unchanged for an agent reading it.
-
-### Fixed
-- **Every remaining bus address echo from #101 now routes through `redact_url`**
-  (#126) — thirteen `LoadError`/`HopError` sites across `src/shal/buses/`
-  interpolate an address; a first pass redacted only two, on the premise that a
-  bus's *own* address is `${ENV}`-resolved while a *child* address is validated
-  down to a narrow non-credential type (an int, a label). That premise was
-  false: `loader.py` resolves `${ENV}` for every node, children included, so a
-  child address is just as capable of holding an arbitrary string — reproduced
-  live via a mux child address holding a creds URL that echoed verbatim in a
-  `LoadError`. All ten remaining sites (`i2c_cli.py`, `mux.py`, `scpi_raw.py`,
-  `sim.py`, `sim_msg.py`, `sim_scpi.py`) now redact too. This costs nothing for
-  legitimate errors: `redact_url` only rewrites a value containing `://` or
-  `@`, so an int, a device path, or a plain label passes through
-  byte-identical. `drivers/rigol_dp832.py:26` stays out of scope (a SCPI
-  channel label, not a credential).
-- **Every `shal` command picks the Windows selector event loop, not just `shal mcp`**
-  (#94) — on win32 a driver that wraps an `aiomqtt`-style library runs its own asyncio
-  loop, and the default `ProactorEventLoop` has no `add_reader`, so that loop dies with
-  `NotImplementedError`. `shal mcp` set `WindowsSelectorEventLoopPolicy` for itself
-  (#87); `shal probe` went straight to `bridge.call` and did not, so the same driver
-  served fine over MCP and failed under the CLI a cold user is told to try first. The
-  choice now lives in one helper (`shal.cli._use_selector_loop_on_win32`), called once
-  at the top of `shal.cli.main` — so `probe`, `tools`, `mcp` and every subcommand added
-  later are at parity — and at the top of `shal.mcp.server.main`, which the legacy
-  `shal-mcp` script enters directly; `server.py`'s own inline copy is gone, leaving one
-  mechanism. It is set by the *commands*, never at import: a host app that merely
-  imports `shal` keeps its own event-loop policy, the same rule as "the library never
-  configures logging".
-- **The bind log no longer leaks credentials** (#117) — `loader.py` wrote
-  `str(node.address)` straight into the DEBUG `bind` record's `addr` field, so an
-  address resolved from `${ENV_VAR}` carrying `user:pass@` or a token query string was
-  written in plaintext to whatever handler the host app attached, on every *successful*
-  load. The address now routes through `redact_url` like every other address that
-  reaches a log or an error. Clean addresses still log unredacted.
-- **Load-time `LoadError` redacts credential-bearing addresses** (#101) — a malformed
-  `http(s)://user:pass@...` address (e.g. resolved from `${ENV}`) no longer echoes
-  userinfo credentials in the error text; the `http`, `tcp`, and `scpi-raw` buses now
-  route the echoed address through `redact_url`. Clean addresses still echo verbatim.
 
 ### Documentation
 - **Three ledger rows: D23–D25** (#158, `adk.md` §3.6 R10 / §3.7) — what ships
