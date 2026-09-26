@@ -15,6 +15,7 @@ from __future__ import annotations
 import functools
 import inspect
 import logging
+import threading
 import time
 from collections.abc import Callable, Iterable
 from contextlib import contextmanager
@@ -72,6 +73,10 @@ _SIDE_EFFECTS = frozenset({"none", "write", "actuator", "config"})
 #   * EFFECTIVE set for an op = (its Hal's declared set, or the default)
 #     ∪ (the host's widenings) — see `_effective_gated`. Two Hals gate
 #     independently; closing one has nothing to reset.
+#   * A Hal's own APPROVER (#217) is given at load, `shal.load(path, approver=a)`,
+#     and filled into the same cell as its declared set, before any `node.hal`
+#     is published; the cell is final, so nothing sets it after load. The op
+#     wrapper asks it before the host's ContextVar approver.
 #   * Driver code is checked where it runs: a `--drivers` import
 #     (mcp.server._import_drivers -> LoadError), binding at load (shal.load ->
 #     LoadError), and every op call (the wrapper restores the policy, audits
@@ -193,10 +198,11 @@ def gated_effects(effects: Iterable[str]):
 # The policy lives in four objects: the host's gated-set ContextVar, the Approver
 # ContextVar, and the two defaults they fall back to. The op wrapper CAPTURES those
 # four objects at bind, in its closure (see Driver._wrap_capabilities), together
-# with a one-slot cell Hal.__init__ fills once with (Hal, declared set) — and reads
-# the policy ONLY from them, never through `node.hal`, a Hal attribute or a module
-# global. So rebinding a name, or writing an attribute or an instance `__dict__`,
-# between calls changes nothing a bound driver enforces. A driver that sets out
+# with a one-slot cell Hal.__init__ fills once with (Hal, declared set, the Hal's
+# own approver given to `shal.load(approver=)`, #217) — and reads the policy ONLY
+# from them, never through `node.hal`, a Hal attribute or a module global. So
+# rebinding a name, or writing an attribute or an instance `__dict__`, between
+# calls changes nothing a bound driver enforces. A driver that sets out
 # to modify the framework's own objects from inside its process is out of scope
 # (ADR-001 addendum 5c): the boundary against hostile code is a process boundary
 # with the approver on the other side.
@@ -467,16 +473,23 @@ class Driver:
         # ContextVar objects and the two defaults — the CANONICAL ones taken at
         # import (`_policy`, this method's default; never the module names, which
         # a thread could have rebound before this load) — and a one-slot cell for
-        # this node's Hal and its declared `policy:` set, which Hal.__init__ fills
-        # once. Nothing at call time reads `node.hal`, a Hal attribute or a name.
+        # this node's Hal, its declared `policy:` set and the Hal's own approver
+        # (`shal.load(approver=)`, #217: `(approver, "hal:<path>")` or None), which
+        # Hal.__init__ fills once, before any `node.hal` is published. The fill is
+        # atomic and FINAL: whoever fills the cell first, any later fill is a
+        # LoadError — so a cell a driver filled first fails its Hal's load. Nothing
+        # at call time reads `node.hal`, a Hal attribute or a name.
         captured = _policy
         cell: list = [None]
+        cell_lock = threading.Lock()
 
-        def bind_hal(hal, declared: frozenset[str] | None) -> None:
-            if cell[0] is not None:
-                raise _LoadError(f"{self.node.path}: this node is already bound to a "
-                                 f"Hal — a node belongs to exactly one Hal")
-            cell[0] = (hal, declared)
+        def bind_hal(hal, declared: frozenset[str] | None,
+                     approver: tuple | None = None) -> None:
+            with cell_lock:
+                if cell[0] is not None:
+                    raise _LoadError(f"{self.node.path}: this node is already bound "
+                                     f"to a Hal — a node belongs to exactly one Hal")
+                cell[0] = (hal, declared, approver)
 
         def gated_set() -> frozenset[str]:
             # ADR-001 addendum 5b: (the Hal's declared set, or the default)
@@ -487,14 +500,21 @@ class Driver:
             declared = None if cell[0] is None else cell[0][1]
             return host if declared is None else declared | (host - dg)
 
+        def hal_approver() -> tuple | None:
+            # this node's Hal's own approver (#217), from the cell only
+            return None if cell[0] is None else cell[0][2]
+
         self._shal_bind_hal = bind_hal   # Hal.__init__ fills the cell through this
         self._shal_gated = gated_set     # the tool surface advertises through this
+        self._shal_approver = hal_approver  # the Bridge refuses a Hal that has one
         for name, fn in ops.items():
             if not getattr(getattr(type(self), name), "__shal_wrapped__", False):
-                setattr(self, name, self._make_call(fn, captured, gated_set))
+                setattr(self, name, self._make_call(fn, captured, gated_set,
+                                                    hal_approver))
 
     def _make_call(self, fn: Callable, captured: tuple,
-                   gated_set: Callable[[], frozenset[str]]) -> Callable:
+                   gated_set: Callable[[], frozenset[str]],
+                   hal_approver: Callable[[], tuple | None]) -> Callable:
         from . import limits as _limits  # local: avoid import cycle at module load
         from .transport import Transport
         retry = getattr(fn, "__shal_idempotent__", False)
@@ -562,11 +582,16 @@ class Driver:
                 # limits passed -> ask before moving (pre-I/O, unbypassable)
                 gated_now = gated_set()  # captured at bind: this op's Hal (5b)
                 if gatable and side_effect in gated_now:
-                    approver = captured[1].get()
+                    # WHO decides: this Hal's own approver, given at load (#217),
+                    # else the host's ContextVar, else the default — all from the
+                    # objects captured at bind
+                    approver, source = hal_approver() or (None, "")
                     if approver is None:
-                        approver = captured[3]
+                        approver, source = captured[1].get(), "host"
+                        if approver is None:
+                            approver, source = captured[3], "default"
                     _approve_or_raise(self, op, side_effect, sig, args, kwargs,
-                                      gated_now, approver)
+                                      gated_now, approver, source)
                 in_body = True
                 try:
                     result = fn(self, *args, **kwargs)
@@ -674,9 +699,10 @@ def _refuse_policy_change(driver, op: str, snap: _PolicySnap, *, txn: str | None
 
 
 def _approve_or_raise(driver, op: str, side_effect: str, sig, args, kwargs,
-                      gated: frozenset[str], approver) -> None:
+                      gated: frozenset[str], approver, source: str) -> None:
     """Consult the active Approver for one gated call — an op whose side_effect is
-    in its Hal's effective gated set (``gated``), decided by ``approver`` — both
+    in its Hal's effective gated set (``gated``), decided by ``approver`` (whose
+    ``source`` is ``hal:<path>``, ``host`` or ``default``, #217) — all
     resolved by the caller from the objects captured at bind. ALWAYS
     audits the decision — a gated op is never a read, so it is audited whether
     or not it is @idempotent — and raises ApprovalDenied (pre-I/O, nothing sent)
@@ -700,7 +726,9 @@ def _approve_or_raise(driver, op: str, side_effect: str, sig, args, kwargs,
                        "side_effect": side_effect, "txn": txn,
                        # the ACTIVE gated set that decided it, so a narrowing
                        # leaves a trace (ADR-001 addendum 5, D27)
-                       "gated": sorted(gated)})
+                       "gated": sorted(gated),
+                       # and WHERE the approver that decided it came from (#217)
+                       "approver_source": source})
     if not allowed:
         no_one = isinstance(approver, ConsoleApprover) and not approver.has_person()
         raise ApprovalDenied(

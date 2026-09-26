@@ -21,10 +21,11 @@ _NAME_SAFE = re.compile(r"[^a-zA-Z0-9_-]")
 
 class Hal:
     def __init__(self, roots: list[Node], ids: dict[str, Node], *,
-                 declared_gated: frozenset[str] | None = None) -> None:
+                 declared_gated: frozenset[str] | None = None,
+                 approver=None, source_label: str = "<dict>") -> None:
         self._roots = roots
         self._ids = ids
-        self._closed = False
+        self._closed = True  # until every cell is filled: a failed Hal owns nothing
         # this topology's own `policy: {gated: [...]}` (ADR-001 addendum 5b): it
         # belongs to THIS Hal, never to the process. None = the default. What each
         # op ENFORCES is the copy handed below to its driver's bind-time cell,
@@ -32,13 +33,33 @@ class Hal:
         # `_declared_gated` and `node.hal` are plain references for people,
         # reporting and `conformance` — nothing about the gate depends on them.
         self._declared_gated = declared_gated
-        self._source_label = "<dict>"
+        self._source_label = source_label
+        # this Hal's own approver (#217), given to `shal.load(approver=)`: it goes
+        # into the SAME cells, in the same fill, and is final — there is no way to
+        # set it after this. EVERY cell is filled before ANY `node.hal` is
+        # published, so a thread waiting for `node.hal` finds the tree already
+        # bound; a cell a driver filled first (during `bind()`, or from a thread
+        # it started) makes this fill raise, and the load fails.
+        bound = None if approver is None else (approver, f"hal:{source_label}")
         for root in roots:
             for node in root.walk():
                 bind_hal = getattr(node.driver, "_shal_bind_hal", None)
-                if bind_hal is not None:
-                    bind_hal(self, declared_gated)  # LoadError if already filled
+                if bind_hal is None:
+                    continue
+                try:
+                    bind_hal(self, declared_gated, bound)  # LoadError if filled
+                except LoadError:
+                    _audit.info("%s: its policy cell was filled before this Hal's; "
+                                "load refused", node.path,
+                                extra={"event": "audit", "id": node.id or "",
+                                       "path": node.path, "outcome": "policy-changed",
+                                       "changed": ["gated", "approver"],
+                                       "prefilled": True})
+                    raise
+        for root in roots:
+            for node in root.walk():
                 node.hal = self
+        self._closed = False
         self._tool_idx: dict[str, tuple[Node, str]] | None = None
 
     # -- lookup (topology immutable after load -> lock-free) -----------------
@@ -175,6 +196,18 @@ class Hal:
                         failures.append((node.path, e))
         return failures
 
+    def _bound_approver(self) -> str | None:
+        """The source (``hal:<path>``) of the approver this Hal was loaded with
+        (#217), read from its devices' bind-time cells — the ones the op wrapper
+        asks — or None when they ask the host's."""
+        for root in self._roots:
+            for node in root.walk():
+                read = getattr(node.driver, "_shal_approver", None)
+                got = read() if read is not None else None
+                if got is not None:
+                    return got[1]
+        return None
+
     def get_gated_effects(self) -> frozenset[str]:
         """The gated set for THIS Hal's devices (ADR-001 addendum 5b): its
         topology's declared ``policy: {gated: [...]}`` (the default if none) ∪ the
@@ -188,21 +221,8 @@ class Hal:
             return
         self._closed = True
         for root in self._roots:
-            self._close_subtree(root, set())
+            _close_subtree(root, set())
         logger.info("teardown complete", extra={"event": "teardown"})
-
-    def _close_subtree(self, node: Node, seen: set[int]) -> None:
-        if id(node) in seen:  # visited-set guard, every walk
-            return
-        seen.add(id(node))
-        for child in node.children.values():
-            self._close_subtree(child, seen)
-        if node.exposed_bus is not None:
-            node.exposed_bus.close()
-        if isinstance(node.driver, Transport):
-            node.driver.close()
-            logger.debug("closed %s", node.path,
-                         extra={"event": "teardown", "path": node.path})
 
     def __enter__(self) -> Hal:
         return self
@@ -217,7 +237,22 @@ class Hal:
             pass
 
 
-def load(source) -> Hal:
+def _close_subtree(node: Node, seen: set[int]) -> None:
+    """Teardown leaf->root of one subtree."""
+    if id(node) in seen:  # visited-set guard, every walk
+        return
+    seen.add(id(node))
+    for child in node.children.values():
+        _close_subtree(child, seen)
+    if node.exposed_bus is not None:
+        node.exposed_bus.close()
+    if isinstance(node.driver, Transport):
+        node.driver.close()
+        logger.debug("closed %s", node.path,
+                     extra={"event": "teardown", "path": node.path})
+
+
+def load(source, *, approver=None) -> Hal:
     """Load a topology from a YAML file path or an in-memory mapping (dict).
 
     The approval policy is the operator's (ADR-001 addendum 5). Driver code runs
@@ -228,8 +263,24 @@ def load(source) -> Hal:
     devices, never the host's widenings, and nothing else in the process sees it.
     One ``policy`` audit event records this Hal's effective gated set, the
     approver class and the true ``source`` (``hal:<path>``, ``host`` or
-    ``default``), so a narrowing leaves a trace even if no gated call is made."""
+    ``default``), so a narrowing leaves a trace even if no gated call is made.
+
+    ``approver`` (#217) gives THIS Hal its own approver: operator code, given here
+    and nowhere else. It fills the same bind-time cells as the declared gated set,
+    inside ``Hal.__init__`` before any node is published, and it is final — no
+    method sets it after load. Each gated op on this Hal asks it BEFORE the host's
+    approver (:func:`shal.set_approver`); every other Hal keeps the host's, so a sim
+    rig's :class:`~shal.AutoApprove` never approves a Hal loaded from a real file.
+    It is not a ContextVar: it holds in every thread. A cell a driver filled first
+    makes the load fail (``LoadError``, audited). ``shal mcp`` refuses a Hal that
+    carries one: under an MCP host the ticket is the only approver. Approval
+    records and the ``policy`` event name the approver's source: ``hal:<path>``,
+    ``host`` or ``default``."""
     from .approval import get_approver
+    if approver is not None and (isinstance(approver, type)
+                                 or not callable(getattr(approver, "approve", None))):
+        raise TypeError(f"approver= needs an Approver (an instance with "
+                        f"approve(request) -> bool), not {approver!r}")
     label = "<dict>" if isinstance(source, Mapping) else str(source)
     _driver._refuse_rebound_names(label)  # a name rebound since import: refuse
     before = _driver._policy_snapshot()
@@ -246,17 +297,27 @@ def load(source) -> Hal:
         except (TypeError, ValueError) as e:  # schema catches these first; belt+braces
             Hal(roots, ids).close()
             raise LoadError(f"{label}: policy.gated: {e}") from e
-    hal = Hal(roots, ids, declared_gated=declared)  # the ONE write of the policy
-    hal._source_label = label
+    try:  # the ONE write of the policy — the approver included (#217)
+        hal = Hal(roots, ids, declared_gated=declared, approver=approver,
+                  source_label=label)
+    except LoadError:  # a cell was filled first: close the tree, fail closed
+        for root in roots:
+            _close_subtree(root, set())
+        raise
     widened = sorted(_driver.get_gated_effects() - _driver._canon()[2])
     source_of = (f"hal:{label}" if hal._declared_gated is not None
                  else "host" if widened else "default")
     gated = sorted(hal.get_gated_effects())
-    approver = type(get_approver()).__name__
-    _audit.info("approval policy: gated %s, approver %s (%s)", gated, approver,
+    if approver is not None:
+        approver_name, approver_source = type(approver).__name__, f"hal:{label}"
+    else:
+        approver_name = type(get_approver()).__name__
+        approver_source = "default" if _driver._canon()[1].get() is None else "host"
+    _audit.info("approval policy: gated %s, approver %s (%s)", gated, approver_name,
                 source_of,
-                extra={"event": "policy", "gated": gated, "approver": approver,
-                       "source": source_of, "widened": widened})
+                extra={"event": "policy", "gated": gated, "approver": approver_name,
+                       "source": source_of, "widened": widened,
+                       "approver_source": approver_source})
     return hal
 
 

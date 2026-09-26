@@ -60,6 +60,15 @@ class Bridge:
     """Adapts one loaded `Hal` to the MCP tool surface."""
 
     def __init__(self, hal, *, free_writes: bool = False) -> None:
+        # under an MCP host the ticket is the ONLY approver (#217): a Hal loaded
+        # with its own approver (`shal.load(approver=)`) would decide before the
+        # ticket is rendered, so it is refused, never served
+        bound = hal._bound_approver()
+        if bound is not None:
+            raise shal.LoadError(
+                f"shal mcp: this Hal carries its own approver ({bound}, from "
+                f"shal.load(..., approver=)). Under an MCP host the Bridge's ticket "
+                f"is the only approver — load the topology without approver=.")
         self.hal = hal
         self.free_writes = free_writes
         self._tools = {t["name"] for t in hal.tool_catalog()}  # valid op names
