@@ -128,6 +128,15 @@ All notable changes to this project are documented here. The format follows
   reaches into the framework's own objects (a closure cell) can defeat it; the
   boundary against that is a process boundary.
 
+### Changed
+- **`Record.calls` is optional: `None` means "not collected"** (#218). A producer
+  that does not collect SHAL calls now writes a record with no `calls` key, in
+  the YAML audit copy and in the db's JSON, and `read()` gives back
+  `calls is None`. `calls=()` still means "collected, and there were none": it
+  is written `calls: []` and reads back `()`. Records already written with
+  `calls: []` read back unchanged; no migration. A `calls` that is not a list
+  is still a `RecordError`.
+
 ### Fixed
 - **A device refusal now leaves an outcome audit record** (#198). When the body of
   an audited op (not `side_effect="none"`, on a device driver) raises a

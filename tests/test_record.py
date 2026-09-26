@@ -264,11 +264,75 @@ def test_a_newer_record_version_is_refused_not_half_read(tmp_path):
 
 @pytest.mark.parametrize("drop", ["unit", "station", "sequence", "setup",
                                   "setup_version", "runner", "started", "ended",
-                                  "steps", "calls"])
-def test_every_field_but_firmware_and_abort_is_required(drop):
+                                  "steps"])
+def test_every_field_but_firmware_abort_and_calls_is_required(drop):
     doc = FULL.to_mapping()
     del doc[drop]
     with pytest.raises(RecordError, match=f"missing required key '{drop}'"):
+        Record.from_mapping(doc)
+
+
+# --------------------------------------------------------------------------- #
+# #218: `calls=None` means "not collected"; `()` means "collected, none"
+# --------------------------------------------------------------------------- #
+
+def test_calls_none_is_omitted_from_both_stores_and_reads_back_as_none(tmp_path):
+    rec = _with(calls=None)
+    write(rec, tmp_path)
+
+    doc = yaml.safe_load(yaml_path(tmp_path, rec.record).read_text(encoding="utf-8"))
+    assert "calls" not in doc
+    assert "calls" not in json.loads(_db_json(tmp_path, rec.record))
+
+    from_yaml = _read_yaml(tmp_path, rec.record)
+    from_db = _read_db(tmp_path, rec.record)
+    assert from_yaml.calls is None and from_db.calls is None
+    assert from_yaml == rec == from_db
+    assert to_yaml(from_db).encode() == to_yaml(rec).encode()
+    assert read(tmp_path) == [rec]
+    assert read(tmp_path)[0].calls is None
+
+
+def test_calls_empty_still_means_collected_none_and_is_distinct_from_none(tmp_path):
+    empty = _with(calls=())
+    write(empty, tmp_path)
+
+    doc = yaml.safe_load(yaml_path(tmp_path, empty.record).read_text(encoding="utf-8"))
+    assert doc["calls"] == []
+    assert json.loads(_db_json(tmp_path, empty.record))["calls"] == []
+    assert _read_yaml(tmp_path, empty.record).calls == ()
+    assert _read_db(tmp_path, empty.record).calls == ()
+    assert read(tmp_path)[0].calls == ()
+    assert empty != _with(calls=None)
+
+
+def test_an_old_record_with_calls_empty_list_reads_back_as_empty_tuple(tmp_path):
+    """No migration: a record written before #218 carries `calls: []`."""
+    doc = MINIMAL.to_mapping()
+    doc["calls"] = []
+    path = yaml_path(tmp_path, MINIMAL.record)
+    path.parent.mkdir(parents=True)
+    path.write_text(yaml.safe_dump(doc, sort_keys=False), encoding="utf-8", newline="\n")
+    conn = sqlite3.connect(db_path(tmp_path))  # an old db row with no YAML copy
+    with conn:
+        conn.execute("CREATE TABLE records (record TEXT PRIMARY KEY, unit TEXT, "
+                     "station TEXT, sequence TEXT, verdict TEXT, started TEXT, "
+                     "record_json TEXT)")
+        old = {**doc, "record": "rec-old-db-only"}
+        conn.execute("INSERT INTO records VALUES (?, ?, ?, ?, ?, ?, ?)",
+                     (old["record"], old["unit"], old["station"], old["sequence"],
+                      old["verdict"], old["started"], json.dumps(old)))
+    conn.close()
+
+    got = read(tmp_path)
+    assert [r.calls for r in got] == [(), ()]
+
+
+@pytest.mark.parametrize("bad", ["psu.set_voltage", {"capability": "x"}, 5, True])
+def test_calls_of_a_bad_type_is_still_refused(bad):
+    doc = FULL.to_mapping()
+    doc["calls"] = bad
+    with pytest.raises(RecordError, match="'calls' must be a list"):
         Record.from_mapping(doc)
 
 
