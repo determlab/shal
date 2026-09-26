@@ -24,6 +24,16 @@ All notable changes to this project are documented here. The format follows
   `shal.errors.HOW_TO_APPROVE_LINE`, also added to `shal call --json`'s refusal as
   `how_to_approve`; `shal call`'s printed refusal is unchanged. The default
   approver and its TTY check are unchanged.
+- **`check_driver` reports an `@idempotent` op with no `side_effect` as a problem**
+  (#183) — that op is inferred `"none"` and runs **ungated**, the one omission that
+  opens the gate, and an idempotent op is not always a read (an absolute setpoint is
+  an idempotent write). So it is a problem, not a warning, and `shal check` exits 1.
+  The problem names the op: `<op>: @idempotent with no side_effect is inferred "none"
+  and runs ungated. An idempotent op is not always a read (an absolute setpoint is an
+  idempotent write): declare side_effect explicitly — "none" for a read, "write" for
+  a benign, reversible change.` The op gets only this problem, not also the #162
+  warning. Runtime inference does not change. Every ADK reference, example driver,
+  demo and guide example already declares the label, so none of them fails.
 - **`check_driver` warns when an `@op` has no `side_effect`** (#162) — the op is
   still legal and still gated (it infers `"actuator"`, fail-closed), so this is a
   warning, never a problem, and `shal check` still exits 0. The warning names the op

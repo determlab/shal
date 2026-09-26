@@ -87,7 +87,9 @@ class MyThing(Driver):                     # a capability is OPTIONAL — see be
      **empty / "no data yet" success** (raise instead; the device just isn't ready).
    - `"write"` → a **benign** write (instant, reversible — runs free).
    - `"actuator"` (physical motion) / `"config"` → **gated**: stops for human approval.
-   - *Forget to annotate? It defaults to gated (fail-closed), and `check_driver` warns.*
+   - *Forget to annotate? It defaults to gated (fail-closed), and `check_driver` warns.
+     On an `@idempotent` op it infers `"none"` and runs ungated, so `check_driver`
+     reports a problem and `shal check` exits 1: declare it.*
 4. **`@idempotent`** on a read lets the framework auto-retry it; never on a write.
 5. **Connect lazily — never in `bind()`.** `bind()` only reads config; open the connection
    on the first real op via a guarded `_ensure_connected()` (above). Why: `shal tools` /
@@ -198,7 +200,8 @@ they work.
    `side_effect`, and why you must connect lazily.
 2. **`@op` in [`driver.py`](driver.py).** `@op` is the contract behind rule 2 and
    3. It records the `side_effect` you declare, and if you forget it, the op is
-   gated by default. It never becomes free by accident.
+   gated by default. The one exception is an `@idempotent` op: it infers `"none"`
+   and runs free, so `shal check` fails it until you declare the label.
 3. **The typed protocols in [`capabilities.py`](capabilities.py).** A capability
    like `PowerSupply` or `TemperatureSensor` names a set of methods. Claim one,
    and your driver works like any other driver of that kind.
