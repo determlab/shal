@@ -90,6 +90,12 @@ All notable changes to this project are documented here. The format follows
   split a bare `-x.yaml` into `-x` and `.yaml`). A topology or `--drivers`
   path that starts with `-` is now written `./-x.yaml`, which bash, cmd and
   PowerShell all pass as one path. Not `--`: PowerShell still splits after it.
+- **`delete_row` and `insert` in the sqlite reference driver read `sqlite_temp_master` first** (#180).
+  A TEMP object wins SQLite name resolution, so a TEMP view with an INSTEAD OF
+  DELETE trigger could shadow a table name: the check saw the `main` table, and
+  the DELETE ran the trigger instead. The name must now be a plain rowid table
+  in every schema that has it (temp and main); anything else is refused and the
+  transaction rolls back, so nothing changes.
 
 ## [0.3.0] - 2026-09-27
 

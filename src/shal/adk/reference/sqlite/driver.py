@@ -84,21 +84,23 @@ def _row_arg(text: str, what: str) -> dict[str, Any]:
 def _rowid_table(conn: sqlite3.Connection, table: str, refused: str) -> None:
     """Refuse unless `table` is a real table with a rowid: the undo is by rowid,
     so a view (its INSTEAD OF trigger writes elsewhere) or a WITHOUT ROWID table
-    has no undo here."""
-    kind = conn.execute(
-        "SELECT type FROM sqlite_master WHERE name = ? COLLATE NOCASE UNION ALL "
-        "SELECT type FROM sqlite_temp_master WHERE name = ? COLLATE NOCASE",
-        (table, table)).fetchone()
-    if kind is None:
+    has no undo here. A TEMP object wins name resolution, so temp is read first,
+    and the name must be a plain rowid table in EVERY schema that has it."""
+    kinds = [(schema, *kind) for schema in ("temp", "main")
+             for kind in conn.execute(
+                 f"SELECT type FROM {schema}.sqlite_master "
+                 f"WHERE name = ? COLLATE NOCASE", (table,)).fetchall()]
+    if not kinds:
         raise sqlite3.OperationalError(f"no such table: {table}")
-    if kind[0] != "table":
-        raise ValueError(f"{refused} — it is a {kind[0]}, not a table, so this "
-                         f"driver cannot undo a change to it")
-    try:
-        conn.execute(f"SELECT rowid FROM {_name(table)} LIMIT 0")
-    except sqlite3.OperationalError as e:
-        raise ValueError(f"{refused} — it has no rowid (WITHOUT ROWID?), so this "
-                         f"driver cannot undo a change to it") from e
+    for schema, kind in kinds:
+        if kind != "table":
+            raise ValueError(f"{refused} — it is a {kind} ({schema}), not a table, "
+                             f"so this driver cannot undo a change to it")
+        try:
+            conn.execute(f"SELECT rowid FROM {schema}.{_name(table)} LIMIT 0")
+        except sqlite3.OperationalError as e:
+            raise ValueError(f"{refused} — it has no rowid (WITHOUT ROWID?), so "
+                             f"this driver cannot undo a change to it") from e
 
 
 def _one_row_changed(conn: sqlite3.Connection, before: int, refused: str) -> None:
