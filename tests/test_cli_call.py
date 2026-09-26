@@ -1,0 +1,250 @@
+"""`shal call` — run one op from the command line (shal#160, ADK R11).
+
+A `none`/`write` op runs and prints its result; a `config`/`actuator` op is refused
+from its declared label before it is invoked: exit 2, nothing sent, and the message
+names the label and both ways to approve. Exit 3 is "could not run" (a mistake),
+kept apart from 2 so an agent can tell a refusal from an error. Most tests run the
+real command in a fresh process and check the real exit code.
+"""
+import json
+import subprocess
+import sys
+import textwrap
+
+import pytest
+
+from shal import cli
+from shal.buses import sim as sim_mod
+
+_SIM_YAML = textwrap.dedent("""\
+    shal_version: 1
+    root:
+      bus:
+        driver: shal,sim-i2c
+        address: sim0
+        children:
+          temp0:
+            id: ambient_temp
+            driver: shal,sim-sensor
+            address: 0x48
+    """)
+
+# A local driver (loaded with --drivers) whose ops leave a mark in a file named by
+# the node's address: that file is how a SEPARATE process proves an op ran or not.
+_MARKER_DRIVER = textwrap.dedent('''\
+    import json
+    import pathlib
+
+    from shal import Driver, idempotent, op, register
+
+    @register
+    class Marker(Driver):
+        compatible = "test,call-marker"
+        kind = None
+        llm_ready = True
+
+        def _mark(self, what):
+            p = pathlib.Path(self.addr)
+            p.write_text((p.read_text() if p.exists() else "") + what + "\\n")
+
+        @idempotent
+        @op("Read the level.", side_effect="none")
+        def level(self) -> int:
+            return 7
+
+        @op("Set the level.", side_effect="write",
+            params={"n": {"minimum": 0, "maximum": 100}})
+        def set_level(self, n: int, loud: bool = False, tag: str = "x",
+                      gain: float = 1.0) -> dict:
+            self._mark(f"set_level {n}")
+            return {"n": n, "loud": loud, "tag": tag, "gain": gain}
+
+        @op("Clear the level.", side_effect="write")
+        def clear(self) -> None:
+            self._mark("clear")
+
+        @op("Arm the output.", side_effect="actuator")
+        def arm(self) -> None:
+            self._mark("arm")
+
+        @op("Move by some steps.")  # no label: inferred actuator, fail-closed
+        def move(self, steps: int) -> None:
+            self._mark(f"move {steps}")
+    ''')
+
+_MARKER_YAML = ("shal_version: 1\n"
+                "root:\n"
+                "  thing: {id: thing, driver: 'test,call-marker', address: marks.txt}\n")
+
+
+def _shal(*argv: str, cwd) -> subprocess.CompletedProcess:
+    """Run the real command in a fresh process (not an import of `main`)."""
+    return subprocess.run([sys.executable, "-m", "shal.cli", *argv], cwd=cwd,
+                          capture_output=True, text=True, encoding="utf-8", timeout=60)
+
+
+@pytest.fixture
+def lab(tmp_path):
+    (tmp_path / "sim.yaml").write_text(_SIM_YAML, encoding="utf-8")
+    (tmp_path / "marker_driver.py").write_text(_MARKER_DRIVER, encoding="utf-8")
+    (tmp_path / "marker.yaml").write_text(_MARKER_YAML, encoding="utf-8")
+    return tmp_path
+
+
+def _marker(*argv: str, cwd) -> subprocess.CompletedProcess:
+    return _shal("call", "marker.yaml", "thing", *argv,
+                 "--drivers", "marker_driver.py", cwd=cwd)
+
+
+def _marks(lab) -> list[str]:
+    p = lab / "marks.txt"
+    return p.read_text(encoding="utf-8").splitlines() if p.exists() else []
+
+
+# ---- a read runs -----------------------------------------------------------------
+
+def test_read_prints_the_value_as_json_and_exits_0(lab):
+    r = _shal("call", "sim.yaml", "ambient_temp", "read_celsius", "--json", cwd=lab)
+    assert r.returncode == 0, r.stderr
+    out = json.loads(r.stdout)
+    assert out["ok"] is True and isinstance(out["result"], float)
+    assert out["side_effect"] == "none" and out["tool"] == "ambient_temp__read_celsius"
+
+
+def test_read_without_json_prints_the_bare_value(lab):
+    r = _shal("call", "sim.yaml", "ambient_temp", "read_celsius", cwd=lab)
+    assert r.returncode == 0, r.stderr
+    assert isinstance(json.loads(r.stdout), float)
+
+
+def test_node_by_path_works_too(lab):
+    r = _shal("call", "sim.yaml", "/bus/temp0", "read_celsius", cwd=lab)
+    assert r.returncode == 0, r.stderr
+
+
+# ---- a gated op is refused: exit 2, nothing sent -----------------------------------
+
+def test_config_op_is_refused_with_exit_2_the_label_and_both_ways_to_approve(lab):
+    r = _shal("call", "sim.yaml", "ambient_temp", "set_target", "30", cwd=lab)
+    assert r.returncode == 2
+    assert "'config'" in r.stderr
+    assert "shal mcp sim.yaml" in r.stderr            # way 1: an MCP host
+    assert "shal.approver(" in r.stderr               # way 2: Python
+    assert "Nothing was sent" in r.stderr
+    assert r.stdout == "" and "Traceback" not in r.stderr
+
+
+def test_refusal_is_json_too(lab):
+    r = _shal("call", "sim.yaml", "ambient_temp", "set_target", "30", "--json", cwd=lab)
+    assert r.returncode == 2
+    out = json.loads(r.stdout)
+    assert out["ok"] is False and out["rejected"] == "approval"
+    assert out["side_effect"] == "config" and out["sent"] is False
+    assert any("shal mcp" in w for w in out["approve_with"])
+    assert any("shal.approver" in w for w in out["approve_with"])
+
+
+def test_refused_set_target_never_reaches_the_bus(tmp_path, monkeypatch, capsys):
+    """The sim bus is never even activated, and the sensor model sees no txn: the
+    refusal is decided from the label, before the op is called."""
+    (tmp_path / "sim.yaml").write_text(_SIM_YAML, encoding="utf-8")
+    seen: list[str] = []
+    monkeypatch.setattr(sim_mod.SimI2cBus, "activate",
+                        lambda self: seen.append("activate"))
+    monkeypatch.setattr(sim_mod.SimI2cBus, "txn",
+                        lambda self, addr, ops: seen.append("bus txn"))
+    monkeypatch.setattr(sim_mod.SimSensorModel, "txn",
+                        lambda self, ops: seen.append("model txn"))
+    rc = cli.main(["call", str(tmp_path / "sim.yaml"), "ambient_temp",
+                   "set_target", "30"])
+    assert rc == 2
+    assert seen == []
+    assert "'config'" in capsys.readouterr().err
+    # control: the same spies DO see a read reach the bus
+    cli.main(["call", str(tmp_path / "sim.yaml"), "ambient_temp", "read_celsius"])
+    assert "bus txn" in seen
+
+
+def test_refused_ops_leave_no_mark_across_processes(lab):
+    for argv in (["arm"], ["move", "3"]):
+        r = _marker(*argv, cwd=lab)
+        assert r.returncode == 2, (argv, r.stderr)
+        assert "'actuator'" in r.stderr
+    assert _marks(lab) == []
+
+
+def test_refusal_comes_before_argument_checks(lab):
+    # the label decides first: a gated op is refused, not "bad value"
+    r = _shal("call", "sim.yaml", "ambient_temp", "set_target", "hot", cwd=lab)
+    assert r.returncode == 2
+
+
+# ---- a write op runs ---------------------------------------------------------------
+
+def test_write_op_runs_and_its_effect_is_real(lab):
+    r = _marker("set_level", "42", "--json", cwd=lab)
+    assert r.returncode == 0, r.stderr
+    out = json.loads(r.stdout)
+    assert out["ok"] is True and out["side_effect"] == "write"
+    assert out["result"] == {"n": 42, "loud": False, "tag": "x", "gain": 1.0}
+    assert _marks(lab) == ["set_level 42"]
+
+
+def test_write_op_with_no_result_prints_ok(lab):
+    r = _marker("clear", cwd=lab)
+    assert r.returncode == 0, r.stderr
+    assert r.stdout.strip() == "ok"
+    assert _marks(lab) == ["clear"]
+
+
+def test_values_are_coerced_from_the_schema_positional_then_named(lab):
+    r = _marker("set_level", "0x10", "yes", "gain=2.5", "tag=a=b", "--json", cwd=lab)
+    assert r.returncode == 0, r.stderr
+    assert json.loads(r.stdout)["result"] == {"n": 16, "loud": True, "tag": "a=b",
+                                              "gain": 2.5}
+
+
+def test_a_limit_rejection_is_exit_1_with_the_violation(lab):
+    r = _marker("set_level", "500", "--json", cwd=lab)
+    assert r.returncode == 1
+    out = json.loads(r.stdout)
+    assert out["ok"] is False and out["rejected"] == "limits"
+    assert _marks(lab) == []
+
+
+# ---- a mistake is exit 3, never 2 ----------------------------------------------------
+
+@pytest.mark.parametrize("argv", [
+    ["call", "missing.yaml", "ambient_temp", "read_celsius"],
+    ["call", "sim.yaml", "nope", "read_celsius"],
+    ["call", "sim.yaml", "ambient_temp", "nope"],
+    ["call", "sim.yaml", "ambient_temp"],                        # argparse: missing op
+    ["call", "sim.yaml", "ambient_temp", "read_celsius", "5"],   # too many values
+    ["call", "sim.yaml", "ambient_temp", "read_celsius", "--approve"],
+])
+def test_a_mistake_exits_3_not_2(lab, argv):
+    r = _shal(*argv, cwd=lab)
+    assert r.returncode == 3, r.stderr
+    assert "shal call:" in r.stderr and "Traceback" not in r.stderr
+
+
+@pytest.mark.parametrize("argv", [
+    ["set_level", "ten"],          # not an integer
+    ["set_level"],                 # missing n
+    ["set_level", "n=1", "2"],     # positional after name=value
+    ["set_level", "1", "n=2"],     # n given twice
+])
+def test_bad_values_exit_3(lab, argv):
+    r = _marker(*argv, cwd=lab)
+    assert r.returncode == 3, r.stderr
+    assert _marks(lab) == []
+
+
+# ---- help ------------------------------------------------------------------------------
+
+def test_help_says_there_is_no_approve_flag_and_where_approval_happens(lab):
+    r = _shal("call", "--help", cwd=lab)
+    assert r.returncode == 0
+    assert "NO --approve flag" in r.stdout
+    assert "shal mcp <topology>" in r.stdout and "shal.approver(" in r.stdout
+    assert "2 refused" in r.stdout and "3 could not run" in r.stdout

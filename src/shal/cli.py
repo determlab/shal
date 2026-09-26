@@ -7,6 +7,7 @@ adapter — not the front door.
     shal probe lab.yaml                  # one-shot: print device state and exit
     shal probe lab.yaml dev__get_state   # read one named tool
     shal tools lab.yaml                  # list the device tools (read / gated)
+    shal call lab.yaml dev read_celsius --json   # run one op; a gated op is refused (exit 2)
     shal mcp   lab.yaml                  # serve to an MCP host (the adapter)
     shal probe lab.yaml --drivers ./drivers/   # load local/unpackaged drivers
     shal check ti,tmp102 --json          # driver conformance as a JSON report
@@ -176,6 +177,178 @@ def _cmd_check(args) -> int:
     return 0 if report.ok else 1
 
 
+# `shal call` exit codes (shal#160, ADK R11). 2 is the gate's: a config/actuator op
+# was refused and nothing was sent. So "cannot run" (usage error, unknown node/op,
+# bad args, a topology that does not load) is 3, not the 2 argparse and `shal check`
+# use — an agent must be able to tell "a person has to approve this" from "I made
+# a mistake". 1 means the op ran and failed (a device error, or its declared
+# limits rejected the value; the JSON result says which).
+_CALL_FAILED = 1
+_CALL_REFUSED = 2
+_CALL_CANNOT_RUN = 3
+
+
+class _CallCannotRun(Exception):
+    """A `shal call` mistake: printed on stderr, exit 3, never a traceback."""
+
+
+def _call_usage_error(parser: argparse.ArgumentParser):
+    """argparse exits 2 on a usage error; for `call`, 2 means a gate refusal."""
+    def error(message: str):
+        parser.print_usage(sys.stderr)
+        print(f"shal call: {message}", file=sys.stderr)
+        raise SystemExit(_CALL_CANNOT_RUN)
+    return error
+
+
+def _find_call_tool(hal, node_key: str, op: str) -> tuple[str, object, object]:
+    """(tool name, node, op function) for ``node_key``'s op on the agent surface.
+    ``node_key`` is the node's id, its /path, or its tool handle (`shal tools`)."""
+    idx = hal._tool_index()
+    hits = [(name, node) for name, (node, opname) in idx.items()
+            if (node_key in (node.id, node.path) or name == f"{node_key}__{opname}")]
+    if not hits:
+        handles = sorted({n.rsplit("__", 1)[0] for n in idx})
+        raise _CallCannotRun(f"no device '{node_key}' on this topology's agent surface "
+                             f"(devices: {', '.join(handles) or 'none'})")
+    for name, node in hits:
+        if idx[name][1] == op:
+            return name, node, type(node.driver).capability_ops()[op]
+    ops = sorted({idx[name][1] for name, _ in hits})
+    raise _CallCannotRun(f"device '{node_key}' has no op '{op}' (ops: {', '.join(ops)})")
+
+
+def _coerce(value: str, prop: dict, pname: str):
+    """One command-line string -> the JSON type the op's schema declares
+    (`limits.json_type` emits integer, number, boolean or string)."""
+    kind = prop.get("type", "string")
+    try:
+        if kind == "integer":
+            return int(value, 0) if value.lower().lstrip("-")[:2] in ("0x", "0o", "0b") \
+                else int(value)
+        if kind == "number":
+            return float(value)
+    except ValueError:
+        raise _CallCannotRun(f"'{pname}' must be a {kind}, got '{value}'") from None
+    if kind == "boolean":
+        low = value.lower()
+        if low in ("true", "1", "yes", "on"):
+            return True
+        if low in ("false", "0", "no", "off"):
+            return False
+        raise _CallCannotRun(f"'{pname}' must be true or false, got '{value}'")
+    return value
+
+
+def _call_arguments(fn, schema: dict, raw: list[str]) -> dict:
+    """Map ``shal call`` values onto the op's parameters: positional values in the
+    op's parameter order, then ``name=value`` for any parameter by name."""
+    import inspect
+    import re
+    names = [p for p in inspect.signature(fn).parameters if p != "self"]
+    listed = ", ".join(names) or "none"
+    props = schema.get("properties", {})
+    out: dict = {}
+    by_name = False
+    for tok in raw:
+        m = re.match(r"([A-Za-z_]\w*)=(.*)\Z", tok, re.S)
+        if m and m.group(1) in names:
+            by_name = True
+            pname, value = m.group(1), m.group(2)
+        elif by_name:
+            raise _CallCannotRun(f"'{tok}': a positional value cannot follow "
+                                 f"name=value (params: {listed})")
+        else:
+            free = [n for n in names if n not in out]
+            if not free:
+                raise _CallCannotRun(f"too many values (params: {listed})")
+            pname, value = free[0], tok
+        if pname in out:
+            raise _CallCannotRun(f"'{pname}' is given twice")
+        out[pname] = _coerce(value, props.get(pname, {}), pname)
+    missing = [n for n in schema.get("required", []) if n not in out]
+    if missing:
+        raise _CallCannotRun(f"missing value for {', '.join(missing)} (params: {listed})")
+    return out
+
+
+def _cmd_call(args) -> int:
+    """Run one op from the command line (shal#160, ADK R11). A ``none``/``write`` op
+    runs; a ``config``/``actuator`` op is refused from its declared label BEFORE it
+    is invoked — nothing is sent. The label is read with the wrapper's own
+    ``inferred_side_effect`` and ``_GATED_EFFECTS`` (one source of truth, D4), and
+    the op that does run runs under ``DenyAll``, so the op-layer gate still backs
+    this up: anything that reached it would be denied, never prompted or passed."""
+    from .approval import DenyAll, approver
+    from .driver import _GATED_EFFECTS, inferred_side_effect
+    from .mcp.server import _import_drivers, _resolve_hal
+
+    def emit(payload: dict) -> None:
+        if args.json:
+            print(json.dumps(payload, indent=2, default=str))
+
+    if not os.path.isfile(args.topology):
+        print(f"shal call: topology file not found: {args.topology}", file=sys.stderr)
+        return _CALL_CANNOT_RUN
+    try:
+        _import_drivers(args.drivers)
+        hal = _resolve_hal(args.topology)
+    except SystemExit as e:  # the shared loaders exit with a message, not a code
+        print(e.code if isinstance(e.code, str) else f"shal call: load failed ({e.code})",
+              file=sys.stderr)
+        return _CALL_CANNOT_RUN
+    except Exception as e:  # noqa: BLE001 - a bad topology is a clean exit 3
+        print(f"shal call: cannot load {args.topology}: {type(e).__name__}: {e}",
+              file=sys.stderr)
+        return _CALL_CANNOT_RUN
+    try:
+        name, node, fn = _find_call_tool(hal, args.node, args.op)
+        device = node.id or node.path
+        side_effect = inferred_side_effect(fn)
+        if side_effect in _GATED_EFFECTS:  # decided from the label: never invoked
+            msg = (f"refused: {device}.{args.op} is labelled '{side_effect}'. A "
+                   f"'{side_effect}' op needs a person's approval, and shal call "
+                   f"cannot give it. Nothing was sent to the device.\n"
+                   f"  To run it with approval, either:\n"
+                   f"    - serve the topology to an MCP host:  shal mcp {args.topology}\n"
+                   f"      (the host shows the call to a person, who approves it), or\n"
+                   f"    - in Python:  with shal.approver(<your Approver>): "
+                   f"hal.get_device({device!r}).{args.op}(...)\n"
+                   f"  There is no --approve flag: the agent that runs a command "
+                   f"cannot approve its own call.")
+            print(f"shal call: {msg}", file=sys.stderr)
+            emit({"ok": False, "rejected": "approval", "tool": name, "device": device,
+                  "op": args.op, "side_effect": side_effect, "sent": False,
+                  "approve_with": [f"shal mcp {args.topology}",
+                                   "with shal.approver(...): in Python"],
+                  "error": msg})
+            return _CALL_REFUSED
+        schema = next(s["input_schema"] for s in hal.tool_schemas() if s["name"] == name)
+        arguments = _call_arguments(fn, schema, args.args)
+        with approver(DenyAll()):
+            out = hal.call_tool(name, arguments)
+    except _CallCannotRun as e:
+        print(f"shal call: {e}", file=sys.stderr)
+        return _CALL_CANNOT_RUN
+    except Exception as e:  # noqa: BLE001 - the op raised past call_tool: no traceback
+        print(f"shal call: {args.node}.{args.op} failed: {type(e).__name__}: {e}",
+              file=sys.stderr)
+        return _CALL_FAILED
+    finally:
+        hal.close()
+    payload = {"ok": out["ok"], "tool": name, "device": device, "op": args.op,
+               "side_effect": side_effect, **{k: v for k, v in out.items() if k != "ok"}}
+    if not out["ok"]:
+        print(f"shal call: {device}.{args.op} failed: {out.get('error')}", file=sys.stderr)
+        emit(payload)
+        return _CALL_FAILED
+    if args.json:
+        emit(payload)
+    else:
+        print("ok" if out["result"] is None else json.dumps(out["result"], default=str))
+    return 0
+
+
 def _strip_front_matter(text: str) -> str:
     """Drop a leading `---` front-matter block. Both shipped docs carry the repo's
     doc-standard header (type/owner/reviewed) — that is bookkeeping for the repo, not
@@ -263,7 +436,49 @@ def main(argv: list[str] | None = None) -> int:
                    help="print the report as JSON on stdout (ok, problems, warnings, checked)")
     c.set_defaults(func=_cmd_check)
 
-    args = ap.parse_args(argv)
+    k = sub.add_parser(
+        "call", help="run one op — reads and writes run; config/actuator ops are refused",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        description="Run one device op and print its result. An op labelled none "
+                    "or write runs. An op labelled config or actuator is refused "
+                    "before it is called: nothing is sent to the device.",
+        epilog="arguments:\n"
+               "  Values map to the op's parameters in order, or name them:\n"
+               "    shal call sim.yaml ambient_temp read_celsius --json\n"
+               "    shal call lab.yaml psu set_voltage 3.3\n"
+               "    shal call lab.yaml psu set_voltage volts=3.3\n"
+               "  Each value is converted to the parameter's type (integer,\n"
+               "  number, true/false, string). `shal tools <topology>` lists the\n"
+               "  ops. Put `--` before a value that starts with '-' (a negative\n"
+               "  number works without it).\n"
+               "\n"
+               "approval:\n"
+               "  There is NO --approve flag. The agent that runs a command cannot\n"
+               "  approve its own call. A config or actuator op is approved in a host:\n"
+               "    - an MCP host:  shal mcp <topology>  (a person approves each call)\n"
+               "    - Python:       with shal.approver(<your Approver>): ...\n"
+               "\n"
+               "exit: 0 ran, 1 the op ran and failed (device error or limits),\n"
+               "      2 refused by the gate (config/actuator; nothing sent),\n"
+               "      3 could not run (usage error, unknown device or op, bad value,\n"
+               "        topology does not load) — not 2, so a refusal is never\n"
+               "        mistaken for a mistake")
+    k.error = _call_usage_error(k)  # 2 is the gate's code, not argparse's
+    k.add_argument("topology", help="path to the topology YAML")
+    k.add_argument("node", help="the device: its id, its /path, or its handle in `shal tools`")
+    k.add_argument("op", help="the op to run (e.g. read_celsius)")
+    k.add_argument("args", nargs="*", metavar="value",
+                   help="op arguments: values in parameter order, or name=value")
+    k.add_argument("--json", action="store_true",
+                   help="print the result (or the refusal) as JSON on stdout")
+    _add_drivers_arg(k)
+    k.set_defaults(func=_cmd_call)
+
+    args, extra = ap.parse_known_args(argv)
+    if extra:  # parse_args would exit 2 here — for `call`, 2 is the gate's code
+        if args.cmd == "call":
+            k.error(f"unrecognized arguments: {' '.join(extra)}")
+        ap.error(f"unrecognized arguments: {' '.join(extra)}")
     return args.func(args)
 
 
