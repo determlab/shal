@@ -18,12 +18,21 @@ class RigolDp832(Driver, PowerSupply):
     llm_ready = True
 
     def bind(self, node: Node) -> None:
-        super().bind(node)
+        # parse the channel BEFORE super().bind(): the framework compiles the
+        # limit guards there, and op_limits() below needs self.ch to do it
         try:
             self.ch = int(str(node.address).lower().lstrip("ch"))
         except ValueError as e:
             raise LoadError(f"{node.path}: rigol,dp832 address must be a channel "
                             f"number 1-3, got {node.address!r}") from e
+        super().bind(node)
+
+    def op_limits(self) -> dict:
+        # CH3 is the 5 V rail: 0-5 V (Rigol DP800 Series datasheet, DP832 output
+        # ratings). Narrows the 0-30 V family envelope on set_voltage.
+        if self.ch == 3:
+            return {"set_voltage": {"volts": {"maximum": 5.0}}}
+        return {}
 
     def _write(self, cmd: str) -> None:
         self.bus.exchange(self.addr, {"scpi": cmd})
@@ -31,9 +40,13 @@ class RigolDp832(Driver, PowerSupply):
     def _query(self, cmd: str) -> str:
         return self.bus.exchange(self.addr, {"scpi": cmd, "query": True})["reply"]
 
+    # 0-30 V is the widest DP832 channel rating: CH1 and CH2 are 0-30 V (Rigol
+    # DP800 Series datasheet, DP832 output ratings). CH3 (0-5 V) narrows this in
+    # op_limits(). Both are checked by the framework before any bus I/O.
     @idempotent  # absolute setpoint: re-asserting the same volts is safe
     @op("Set this channel's output voltage (absolute setpoint).",
-        unit="volt", side_effect="write")
+        unit="volt", side_effect="write",
+        params={"volts": {"minimum": 0.0, "maximum": 30.0}})
     def set_voltage(self, volts: float) -> None:
         self._write(f":SOUR{self.ch}:VOLT {volts}")
 
