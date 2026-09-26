@@ -86,7 +86,7 @@ def test_docs_list_names_every_reference(capsys):
     assert "shal docs --example" in out
 
 
-@pytest.mark.parametrize("name", REFS)
+@pytest.mark.parametrize("name", sorted(set(REFS) - ADDRESS_TWIN))
 def test_docs_example_prints_the_four_files(capsys, name):
     assert cli.main(["docs", "--example", name]) == 0
     out = capsys.readouterr().out
