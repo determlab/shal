@@ -14,6 +14,19 @@ All notable changes to this project are documented here. The format follows
 ## [Unreleased]
 
 ### Added
+- **Samples: `shal docs --samples`, `--sample <name>` and `--sample <name> --to DIR`**
+  (#206). A sample is a small program for a person deciding whether SHAL does
+  their job; the ADK references stay the cold agent's (`--list` / `--example`
+  never show a sample, `--samples` never shows a reference). `--samples` lists
+  them one line each, `--samples --json` gives the same list as JSON,
+  `--sample <name>` prints one, and `--to DIR` writes its files into a new or
+  empty folder and prints the one command that runs it, alone on stdout. A
+  non-empty DIR is refused with the reason, nothing written, exit 1. Samples
+  ship as package data under `shal/samples/<name>/` (a `run.py`, found by
+  listing the folder); this change adds one placeholder, `hello`. A new `samples`
+  CI job (Linux + Windows) runs every sample from a clean venv holding the built
+  wheel and fails on a non-zero exit, unless the sample's `expect.json` names
+  the exit code and output it must end with (`dev/samples/run_samples.py`).
 - **Which side effects require approval is now a policy input, and the policy is
   the operator's** (#114, RFC-001 Q2, ADR-001 addendum 5, D27) —
   `shal.set_gated_effects(...)` / `shal.gated_effects(...)` (a `with` scope) /

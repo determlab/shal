@@ -195,6 +195,40 @@ jobs:
       - name: shal check on every installed reference (fails on any problem or warning)
         run: python dev/adk/check_references.py --venv "${{ runner.temp }}/references-venv"
 
+  samples:
+    # The samples are for a person deciding whether SHAL does their job (#206);
+    # one that no longer runs from a fresh install tells them no. So every change
+    # runs every sample the way a person would: `shal docs --sample <name> --to
+    # DIR`, then the one command it prints, stdin closed. A sample fails on a
+    # non-zero exit, unless its folder's expect.json names the exit (and the
+    # output) it must end with. The set comes from `shal docs --samples --json`,
+    # which lists the installed folder — never a hard-coded list; see
+    # dev/samples/run_samples.py.
+    #
+    # It runs what ships: a clean venv holding the wheel built from this commit,
+    # as the references and quickstart jobs do. Both OSes, for the same reason.
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Build the wheel from this commit
+        run: |
+          pip install build
+          python -m build --wheel
+      - name: Clean venv with only the wheel installed
+        shell: bash
+        run: |
+          python -m venv "${{ runner.temp }}/samples-venv"
+          "${{ runner.temp }}/samples-venv/${{ runner.os == 'Windows' && 'Scripts' || 'bin' }}/python" -m pip install dist/*.whl
+      - name: Run every installed sample from a scratch folder (fails on an unexpected exit)
+        run: python dev/samples/run_samples.py --venv "${{ runner.temp }}/samples-venv" --scratch "${{ runner.temp }}/samples-scratch"
+
   latest-deps:
     # Upstream canary (#106). The `test` job installs `.[dev]`, which honours the
     # declared ceilings (`mcp>=1.0,<2` since #107) — so it can never see the next
