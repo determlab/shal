@@ -20,7 +20,10 @@ All notable changes to this project are documented here. The format follows
   `topology.yaml`), a root driver (`kind = None`) over the stdlib `sqlite3`.
   `query` is `none`; `insert` is `write`, undone by `delete_row`; `delete_row` is
   `write` too, because it returns the removed row (rowid included) and `insert`
-  of that row puts it back exactly; `execute_ddl` (one CREATE or ALTER TABLE ...
+  of that row puts it back exactly. Both `write` ops prove it on every call, inside
+  their transaction: exactly one row changed (`total_changes` delta 1) and the row
+  is one `insert` accepts; a trigger writing another table, an `ON DELETE CASCADE`,
+  a `REPLACE` conflict or a BLOB value rolls back and is refused; `execute_ddl` (one CREATE or ALTER TABLE ...
   ADD/RENAME, never DROP) is `config`; `drop_table` is `actuator`. Values are
   always `?` parameters; a table or column name must be a plain identifier and is
   checked before any SQL. `address: ":memory:"` is the twin, so there is **no

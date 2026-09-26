@@ -19,6 +19,15 @@ software"):
                               database accepts next. Gated.
 - `drop_table`  -> `actuator` DROP: cannot be undone by any op here. Gated.
 
+A `write` runs without asking, so `insert` and `delete_row` PROVE, inside their
+own transaction, that one op can undo them: exactly one row changed
+(`total_changes` went up by exactly 1), and every value in it is one `insert`
+accepts. Anything else rolls back and is refused with the reason: a trigger that
+writes another table, an `ON DELETE CASCADE`, a `REPLACE` conflict that removed
+another row, or a row `insert` could not put back (a BLOB). The label is static
+metadata, so it cannot depend on the address; the proof runs on every call, on
+`":memory:"` and on a real file alike.
+
 SQL injection: a VALUE is always a `?` parameter, never text in the SQL. A table
 or column NAME cannot be a parameter, so it must match `_IDENT` and is then
 double-quoted. Both checks run before the connection is touched. `execute_ddl`
@@ -66,6 +75,16 @@ def _row_arg(text: str, what: str) -> dict[str, Any]:
         if isinstance(value, bool) or not isinstance(value, _SCALARS):
             raise ValueError(f"{what}[{col!r}] must be text, a number or null")
     return row
+
+
+def _one_row_changed(conn: sqlite3.Connection, before: int, refused: str) -> None:
+    """Raise (so the caller's transaction rolls back) unless exactly one row
+    changed since `before`. `total_changes` counts trigger and cascade writes."""
+    delta = conn.total_changes - before
+    if delta != 1:
+        raise ValueError(f"{refused} — {delta} rows changed, not exactly 1 (a trigger "
+                         f"or a cascade touched other rows), so one op could not undo "
+                         f"it; rolled back")
 
 
 @registry.register
@@ -150,7 +169,17 @@ class SqliteDatabase(Driver):
         marks = ", ".join("?" for _ in values)
         sql = (f"INSERT INTO {_name(table)} ({cols}) VALUES ({marks})" if values
                else f"INSERT INTO {_name(table)} DEFAULT VALUES")
-        return self._change(lambda c: c.execute(sql, tuple(values.values())).lastrowid)
+        count = f"SELECT count(*) FROM {_name(table)}"
+
+        def work(conn):
+            before, rows = conn.total_changes, conn.execute(count).fetchone()[0]
+            rowid = conn.execute(sql, tuple(values.values())).lastrowid
+            _one_row_changed(conn, before, f"{table}: not inserted")
+            if conn.execute(count).fetchone()[0] != rows + 1:  # REPLACE hides a delete
+                raise ValueError(f"{table}: not inserted — a REPLACE conflict removed "
+                                 f"another row, so delete_row could not undo it")
+            return rowid
+        return self._change(work)
 
     @op("Delete one row by rowid and return it (rowid included). Undo it by "
         "passing that row, as JSON, to insert.", side_effect="write",
@@ -165,7 +194,19 @@ class SqliteDatabase(Driver):
             if found is None:
                 raise LookupError(f"{table}: no row with rowid {rowid}")
             removed = dict(zip([d[0] for d in cur.description], found, strict=True))
+            # `write` promises insert can put this row back. Check it BEFORE the
+            # DELETE: a BLOB, or a column name insert would refuse, means no undo,
+            # so raise (the transaction rolls back) and delete nothing.
+            try:
+                _row_arg(json.dumps(removed), "row")
+            except (TypeError, ValueError) as e:
+                raise ValueError(
+                    f"{table} rowid {rowid}: not deleted — insert could not put this "
+                    f"row back ({e}), and delete_row is a `write`, so it only deletes "
+                    f"what it can undo") from e
+            before = conn.total_changes
             conn.execute(f"DELETE FROM {name} WHERE rowid = ?", (rowid,))
+            _one_row_changed(conn, before, f"{table} rowid {rowid}: not deleted")
             return removed
         return self._change(work)
 

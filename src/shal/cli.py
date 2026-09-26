@@ -395,7 +395,8 @@ def _cmd_docs_list() -> int:
     refs = _references()
     print("ADK reference drivers — guide material to copy, not registered drivers.")
     print("Each is driver.py, sim.py (its twin), test_<name>.py, topology.yaml — no sim.py")
-    print("when the address is the twin (sqlite: address \":memory:\").")
+    twins = [n for n, r in refs.items() if not (r / "sim.py").is_file()]
+    print(f"when the address is the twin ({', '.join(twins) or 'none'}).")
     print()
     for name, ref in refs.items():
         print(f"  {name:<14} {_reference_summary(ref)}")
