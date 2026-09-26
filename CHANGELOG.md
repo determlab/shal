@@ -151,6 +151,15 @@ All notable changes to this project are documented here. The format follows
   no `calls` key, instead of `calls: []` ("collected, and there were none").
 
 ### Fixed
+- **On Windows, a NUL stdin is no person** (#210). `NUL` (`subprocess.DEVNULL`,
+  `< NUL`) is a character device, so `isatty()` says True. `ConsoleApprover`
+  thought a person was there, prompted, read EOF and denied with the generic
+  reason. On Windows `has_person()` now also needs stdin to be a real console
+  (`GetConsoleMode` on its handle, stdlib `ctypes` only), so a gated op run with
+  a NUL stdin is denied with the "no approver is set and stdin is not a
+  terminal" text and `reason="no-approver"`, and nothing is asked. Any error in
+  the check counts as no person. Other systems, an empty pipe, a real terminal,
+  the default approver, the policy and the audit order are unchanged.
 - **A device refusal now leaves an outcome audit record** (#198). When the body of
   an audited op (not `side_effect="none"`, on a device driver) raises a
   `shal.Error` — the device said no — `shal.audit` gets one outcome record,

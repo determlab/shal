@@ -1811,3 +1811,135 @@ def test_a_non_load_error_during_the_fill_closes_the_tree_once_and_re_raises(
     del ei
     gc.collect()
     assert closes == ["/bus"]                              # and never again
+
+
+# ---- has_person() needs a REAL console on Windows (#210) --------------------------
+# On Windows the NUL device (subprocess.DEVNULL, `< NUL`) is a character device, so
+# isatty() says True. It is not a console, and no one is there to answer.
+
+_HEADLESS_SCRIPT = '''\
+import shal
+
+@shal.register
+class Arm(shal.Driver):
+    compatible = "test,nul-arm"
+    kind = None
+
+    @shal.op("Move.", side_effect="actuator")
+    def move(self, dx: int) -> str:
+        print("MOVED")
+        return "moved"
+
+asked = []
+shal.approval._DEFAULT._prompt = lambda text: asked.append(text) or "n"
+with shal.load("rig.yaml") as hal:
+    try:
+        hal.get_device("arm").move(1)
+    except shal.ApprovalDenied as e:
+        print("REASON", e.reason)
+        print("TEXT", e)
+print("ASKED", len(asked))
+'''
+
+
+def _run_headless(tmp_path, **stdin_kw):
+    import subprocess
+    import sys
+    (tmp_path / "go.py").write_text(_HEADLESS_SCRIPT, encoding="utf-8")
+    (tmp_path / "rig.yaml").write_text(
+        "shal_version: 1\nroot:\n  arm: {id: arm, driver: 'test,nul-arm', address: 1}\n",
+        encoding="utf-8")
+    import os
+    env = {**os.environ, "PYTHONIOENCODING": "utf-8"}
+    return subprocess.run([sys.executable, "go.py"], cwd=tmp_path, env=env,
+                          capture_output=True, text=True, encoding="utf-8",
+                          timeout=60, **stdin_kw)
+
+
+@pytest.mark.skipif(__import__("sys").platform != "win32",
+                    reason="the NUL device is a TTY only on Windows; /dev/null is not a "
+                           "TTY on POSIX, so there is nothing to prove there")
+def test_nul_stdin_on_windows_is_no_person_and_no_prompt(tmp_path):
+    import subprocess
+
+    from shal.errors import NO_APPROVER_MESSAGE
+    r = _run_headless(tmp_path, stdin=subprocess.DEVNULL)
+    assert r.returncode == 0, r.stderr
+    assert "REASON no-approver" in r.stdout
+    assert NO_APPROVER_MESSAGE in r.stdout
+    assert "ASKED 0" in r.stdout and "MOVED" not in r.stdout
+
+
+def test_empty_pipe_stdin_is_no_person_on_every_os(tmp_path):
+    r = _run_headless(tmp_path, input="")
+    assert r.returncode == 0, r.stderr
+    assert "REASON no-approver" in r.stdout
+    assert "ASKED 0" in r.stdout and "MOVED" not in r.stdout
+
+
+@pytest.mark.skipif(__import__("sys").platform != "win32",
+                    reason="the NUL device is a TTY only on Windows")
+def test_nul_file_on_windows_is_a_tty_but_not_a_person():
+    import os
+    with open(os.devnull) as nul:
+        assert nul.isatty() is True                      # the trap itself
+        assert shal.ConsoleApprover(stream=nul).has_person() is False
+
+
+class _FdStream:
+    """A stream with a real OS fd whose isatty() says True."""
+
+    def __init__(self, fd):
+        self._fd = fd
+
+    def isatty(self):
+        return True
+
+    def fileno(self):
+        return self._fd
+
+
+def test_a_real_console_on_windows_is_a_person(monkeypatch):
+    monkeypatch.setattr("sys.platform", "win32")
+    seen = []
+    monkeypatch.setattr(shal.approval, "_is_windows_console",
+                        lambda fd: seen.append(fd) or True)
+    assert shal.ConsoleApprover(stream=_FdStream(7)).has_person() is True
+    assert seen == [7]
+
+
+def test_a_windows_tty_that_is_not_a_console_is_no_person(monkeypatch):
+    monkeypatch.setattr("sys.platform", "win32")
+    monkeypatch.setattr(shal.approval, "_is_windows_console", lambda fd: False)
+    assert shal.ConsoleApprover(stream=_FdStream(7)).has_person() is False
+
+
+@pytest.mark.parametrize("broken", ["isatty", "fileno", "console"])
+def test_has_person_fails_closed_on_any_error(monkeypatch, broken):
+    monkeypatch.setattr("sys.platform", "win32")
+
+    def boom(*_a):
+        raise OSError("broken")
+
+    stream = _FdStream(7)
+    if broken == "isatty":
+        stream.isatty = boom
+    elif broken == "fileno":
+        stream.fileno = boom
+    monkeypatch.setattr(shal.approval, "_is_windows_console",
+                        boom if broken == "console" else (lambda fd: True))
+    assert shal.ConsoleApprover(stream=stream).has_person() is False
+
+
+@pytest.mark.skipif(__import__("sys").platform != "win32",
+                    reason="calls the real Windows console API")
+def test_is_windows_console_fails_closed_on_a_bad_fd():
+    assert shal.approval._is_windows_console(-1) is False
+    assert shal.approval._is_windows_console(987654) is False
+
+
+def test_posix_has_person_is_still_isatty(monkeypatch):
+    monkeypatch.setattr("sys.platform", "linux")
+    monkeypatch.setattr(shal.approval, "_is_windows_console",
+                        lambda fd: pytest.fail("no console check off Windows"))
+    assert shal.ConsoleApprover(stream=_FdStream(7)).has_person() is True
