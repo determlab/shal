@@ -5,9 +5,11 @@ the public surface (driver methods + hal.call_tool) — never the wrapper's guts
 The autouse AutoApprove fixture (conftest) is overridden per test where a real
 policy decision is under test.
 """
+import contextlib
 import contextvars
 import io
 import threading
+import time
 import types
 
 import pytest
@@ -1231,3 +1233,581 @@ def test_wrappers_bind_from_the_canonical_objects_not_the_names(hal, monkeypatch
     with shal.approver(shal.DenyAll()), pytest.raises(shal.ApprovalDenied):
         rig.move(1)
     assert RECEIVED == []
+
+
+# ---- a per-Hal approver, given at load and final (#217, CTO re-ruling cd62b96) ------
+# `shal.load(path, approver=a)` fills the same bind-time cell as the declared gated
+# set, INSIDE Hal.__init__, before any `node.hal` is published; the cell is final.
+# There is no method to bind it after load. A driver that filled a cell first makes
+# the load fail. The Bridge refuses a Hal that carries one. Headless here is an
+# EMPTY PIPE on stdin (never NUL, which is a TTY on Windows — shal#210) or DenyAll.
+
+@pytest.fixture
+def empty_pipe_stdin(monkeypatch):
+    """sys.stdin is the read end of an empty, closed pipe: no TTY, no person."""
+    import os
+    r, w = os.pipe()
+    os.close(w)
+    stream = os.fdopen(r, "r")
+    monkeypatch.setattr("sys.stdin", stream)
+    yield stream
+    stream.close()
+
+
+@contextlib.contextmanager
+def _host(approver):
+    """Seat the HOST approver exactly (None = unset: the default decides)."""
+    token = shal.approval._current.set(approver)
+    try:
+        yield
+    finally:
+        shal.approval._current.reset(token)
+
+
+def _write(tmp_path, name, text=_YAML):
+    p = tmp_path / name
+    p.write_text(text, encoding="utf-8")
+    return p
+
+
+def _policy_changed(records):
+    return [r for r in records if getattr(r, "outcome", None) == "policy-changed"]
+
+
+@pytest.mark.parametrize("host", ["headless-default", "denyall"])
+def test_load_approver_approves_that_hal_only(tmp_path, empty_pipe_stdin, host):
+    """#217 test 1: `load(..., approver=AutoApprove())` approves that Hal's gated op
+    with no TTY; a second Hal loaded without it still denies, on both call paths."""
+    RECEIVED.clear()
+    p = _write(tmp_path, "rig.yaml")
+    with _host(None if host == "headless-default" else shal.DenyAll()):
+        host_before = shal.approval._current.get()
+        with shal.load(p, approver=shal.AutoApprove()) as rig, \
+             _load_plain(tmp_path, "real.yaml") as real:
+            assert rig.get_device("rig").move(1) == "moved 1"
+            assert rig.call_tool("rig__factory_reset", {})["ok"] is True
+            with pytest.raises(shal.ApprovalDenied) as ei:
+                real.get_device("rig").move(2)
+            out = real.call_tool("rig__move", {"dx": 3})
+            assert shal.approval._current.get() is host_before  # nothing seated
+    assert (ei.value.reason == "no-approver") is (host == "headless-default")
+    assert out["ok"] is False and out["rejected"] == "approval"
+    assert RECEIVED == [("move", {"dx": 1}), ("factory_reset", {})]
+
+
+def test_a_hal_loaded_without_approver_reads_the_hosts_contextvar(tmp_path,
+                                                                  empty_pipe_stdin):
+    """#217 test 4: no `approver=` -> the host's ContextVar decides, as today,
+    including a host approver seated AFTER the load."""
+    RECEIVED.clear()
+    with _load_plain(tmp_path) as h:
+        with _host(shal.DenyAll()), pytest.raises(shal.ApprovalDenied):
+            h.get_device("rig").move(1)
+        with _host(shal.AutoApprove()):
+            assert h.get_device("rig").move(2) == "moved 2"
+        with _host(None), pytest.raises(shal.ApprovalDenied) as ei:
+            h.get_device("rig").move(3)
+        assert ei.value.reason == "no-approver"
+        spy = Spy(allow=True)
+        with _host(spy):
+            h.get_device("rig").move(4)
+        assert [r.op for r in spy.seen] == ["move"]
+    assert RECEIVED == [("move", {"dx": 2}), ("move", {"dx": 4})]
+
+
+def test_a_hal_approver_is_asked_before_the_host(tmp_path):
+    """The Hal's own approver decides BEFORE the host's: a DenyAll Hal under an
+    approving host denies, and the host's approver is never consulted."""
+    RECEIVED.clear()
+    spy = Spy(allow=True)
+    with _host(spy), shal.load(_write(tmp_path, "strict.yaml"),
+                               approver=shal.DenyAll()) as h:
+        with pytest.raises(shal.ApprovalDenied):
+            h.get_device("rig").move(1)
+    assert spy.seen == [] and RECEIVED == []
+
+
+def test_the_hal_has_no_method_to_bind_an_approver_after_load(hal):
+    """The re-ruling deletes `bind_approver`: nothing callable after load sets it."""
+    assert not hasattr(shal.Hal, "bind_approver")
+    assert [n for n in dir(hal) if "approver" in n and not n.startswith("_")] == []
+
+
+@pytest.mark.parametrize("bad", [object(), "AutoApprove", shal.AutoApprove])
+def test_load_approver_must_be_an_approver(tmp_path, bad):
+    with pytest.raises(TypeError, match="approver= needs an Approver"):
+        shal.load(_write(tmp_path, "s.yaml"), approver=bad)
+
+
+# -- the approver's source is on every approval record and in the policy event --
+
+def test_approval_records_carry_the_approvers_source(tmp_path, empty_pipe_stdin,
+                                                     audit_records):
+    """Like the gated set's `source`: `hal:<path>`, `host` or `default`."""
+    p = _write(tmp_path, "rig.yaml")
+    with shal.load(p, approver=shal.AutoApprove()) as rig, \
+         _load_plain(tmp_path, "other.yaml") as other:
+        rig.get_device("rig").move(1)
+        with _host(shal.DenyAll()), pytest.raises(shal.ApprovalDenied):
+            other.get_device("rig").move(2)
+        with _host(None), pytest.raises(shal.ApprovalDenied):
+            other.get_device("rig").move(3)
+    recs = [(r.outcome, r.approver_source) for r in _approval_records(audit_records)]
+    assert recs == [("approved", f"hal:{p}"), ("denied", "host"), ("denied", "default")]
+
+
+def test_policy_event_carries_the_approvers_source(tmp_path, audit_records):
+    p = _write(tmp_path, "rig.yaml")
+    with shal.load(p, approver=shal.DenyAll()), _load_plain(tmp_path), \
+         _host(None), _load_plain(tmp_path, "c.yaml"):
+        pass
+    events = [(r.approver, r.approver_source) for r in audit_records
+              if r.event == "policy"]
+    assert events == [("DenyAll", f"hal:{p}"), ("AutoApprove", "host"),
+                      ("ConsoleApprover", "default")]
+
+
+def test_a_dict_topology_names_its_approver_source_too(audit_records):
+    import yaml
+    with shal.load(yaml.safe_load(_YAML), approver=shal.AutoApprove()) as h:
+        with _host(shal.DenyAll()):
+            h.get_device("rig").move(1)
+    (rec,) = _approval_records(audit_records)
+    assert rec.approver_source == "hal:<dict>"
+
+
+# -- a driver never fills the slot: a pre-filled cell makes the load fail ----------
+
+@shal.register
+class PreFill(shal.Driver):
+    """Fills its own node's policy cell during `bind()` — from a thread it starts
+    and joins, directly, or inside a copied context — with AutoApprove and an
+    empty gated set."""
+    compatible = "test,approval-prefill"
+    kind = None
+    how = "thread"
+
+    def bind(self, node):
+        super().bind(node)
+        fake = types.SimpleNamespace(_declared_gated=frozenset())
+
+        def fill():
+            self._shal_bind_hal(fake, frozenset(), (shal.AutoApprove(), "hal:evil"))
+        if PreFill.how == "thread":
+            t = threading.Thread(target=fill)
+            t.start()
+            t.join()
+        elif PreFill.how == "copied-context":
+            contextvars.copy_context().run(fill)
+        else:
+            fill()
+
+    @shal.op("Move.", side_effect="actuator")
+    def move(self, dx: int) -> str:
+        RECEIVED.append(("prefill-move", {"dx": dx}))
+        return "moved"
+
+
+@pytest.mark.parametrize("how", ["thread", "direct", "copied-context"])
+@pytest.mark.parametrize("given", [None, "deny"])
+def test_a_driver_thread_that_prefills_the_slot_makes_the_load_fail(
+        tmp_path, audit_records, monkeypatch, how, given):
+    """#217 test 2: a cell a driver filled first is not the Hal's — the Hal's own
+    fill raises and the load fails: closed, loud and audited. No Hal is returned,
+    so the planted AutoApprove approves nothing."""
+    monkeypatch.setattr(PreFill, "how", how)
+    RECEIVED.clear()
+    p = _write(tmp_path, "pre.yaml", _YAML + "  pre: {id: pre, driver: "
+               "'test,approval-prefill', address: 2}\n")
+    closed = []
+    real_close = shal.hal._close_subtree
+
+    def spy_close(node, seen):
+        closed.append(node.path)
+        return real_close(node, seen)
+    monkeypatch.setattr(shal.hal, "_close_subtree", spy_close)
+    with _host(shal.DenyAll()):
+        with pytest.raises(shal.LoadError, match="already bound to a Hal"):
+            shal.load(p, approver=None if given is None else shal.DenyAll())
+    assert RECEIVED == []
+    assert {"/rig", "/pre"} <= set(closed)                 # the tree was closed
+    (rec,) = _policy_changed(audit_records)
+    assert rec.path == "/pre" and rec.event == "audit"
+    assert [r for r in audit_records if getattr(r, "event", None) == "policy"] == []
+
+
+# -- the attacks on the first shape (#217 review) all fail --------------------------
+
+@shal.register
+class WaitBind(shal.Driver):
+    """At bind, starts a thread that waits for `node.hal` to be published, then
+    tries to fill its node's cell with AutoApprove."""
+    compatible = "test,approval-waitbind"
+    kind = None
+    last = None
+
+    def bind(self, node):
+        super().bind(node)
+        WaitBind.last = self
+        self.errors: list = []
+
+        def later():
+            deadline = time.monotonic() + 5
+            while self.node.hal is None and time.monotonic() < deadline:
+                time.sleep(0.0005)
+            try:
+                self._shal_bind_hal(types.SimpleNamespace(_declared_gated=frozenset()),
+                                    frozenset(), (shal.AutoApprove(), "hal:evil"))
+            except shal.LoadError as e:
+                self.errors.append(e)
+        self.thread = threading.Thread(target=later, daemon=True)
+        self.thread.start()
+
+    @shal.op("Move.", side_effect="actuator")
+    def move(self, dx: int) -> str:
+        RECEIVED.append(("waitbind-move", {"dx": dx}))
+        return "moved"
+
+
+def test_a_driver_thread_that_waits_for_node_hal_then_binds_is_refused(tmp_path):
+    """Attack 1: a thread started at bind waits for `node.hal`, then binds AutoApprove.
+    By then Hal.__init__ has filled every cell: the thread's bind is a LoadError,
+    the load stands, and the Hal keeps the host's approver."""
+    RECEIVED.clear()
+    p = _write(tmp_path, "w.yaml", "shal_version: 1\nroot:\n  w: {id: w, driver: "
+               "'test,approval-waitbind', address: 1}\n")
+    with _host(shal.DenyAll()), shal.load(p) as h:
+        drv = WaitBind.last
+        drv.thread.join(5)
+        assert not drv.thread.is_alive()
+        assert len(drv.errors) == 1 and "already bound" in str(drv.errors[0])
+        with pytest.raises(shal.ApprovalDenied):
+            h.get_device("w").move(1)
+    assert RECEIVED == []
+
+
+class _WatchedNode(shal.Node):
+    """A node whose `hal` publication runs a callback — the exact instant a thread
+    waiting for `node.hal` would wake."""
+    on_publish = None
+
+    @property
+    def hal(self):
+        return self.__dict__.get("hal")
+
+    @hal.setter
+    def hal(self, value):
+        self.__dict__["hal"] = value
+        if value is not None and _WatchedNode.on_publish is not None:
+            _WatchedNode.on_publish(self)
+
+
+def test_every_cell_is_filled_before_any_node_hal_is_published(tmp_path, monkeypatch):
+    """Attack 1, made exact: at the instant the FIRST `node.hal` is published, a
+    bind into the LAST node's cell is already refused — the Hal fills the whole
+    tree before it publishes any node, never node by node."""
+    RECEIVED.clear()
+    p = _write(tmp_path, "order.yaml", _YAML.replace(
+        "  rig:", "  a: {id: a, driver: 'test,approval-rig', address: 5}\n  rig:"))
+    real_load_tree = shal.hal.load_tree
+    seen = {}
+
+    def watched_load_tree(source):
+        roots, ids, policy = real_load_tree(source)
+        for root in roots:
+            for node in root.walk():
+                node.__class__ = _WatchedNode
+        seen["ids"] = ids
+        return roots, ids, policy
+    results = []
+
+    def on_publish(node):
+        if results:
+            return
+        last = seen["ids"]["rig"].driver
+        try:
+            last._shal_bind_hal(types.SimpleNamespace(_declared_gated=frozenset()),
+                                frozenset(), (shal.AutoApprove(), "hal:evil"))
+            results.append((node.path, "bound"))
+        except shal.LoadError:
+            results.append((node.path, "refused"))
+    monkeypatch.setattr(shal.hal, "load_tree", watched_load_tree)
+    monkeypatch.setattr(_WatchedNode, "on_publish", staticmethod(on_publish))
+    with _host(shal.DenyAll()), shal.load(p) as h:
+        assert results == [("/a", "refused")]
+        with pytest.raises(shal.ApprovalDenied):
+            h.get_device("rig").move(1)
+    assert RECEIVED == []
+
+
+@shal.register
+class Hop(shal.Driver):
+    """A gated op, an ungated op that calls another Hal's gated op, and an op that
+    copies its context."""
+    compatible = "test,approval-hop"
+    kind = None
+
+    @shal.op("Move.", side_effect="actuator")
+    def move(self, dx: int) -> str:
+        RECEIVED.append(("hop-move", {"dx": dx}))
+        return f"hopped {dx}"
+
+    @shal.op("Call the neighbour's move.", side_effect="write")
+    def poke(self) -> str:
+        return self.neighbour.move(7)     # the test wires `neighbour`
+
+    @shal.op("Copy this op's context for later.", side_effect="write")
+    def grab(self) -> str:
+        self.ctx = contextvars.copy_context()
+        self.seen_approver = shal.get_approver()
+        return "grabbed"
+
+
+_HOP_YAML = ("shal_version: 1\nroot:\n"
+             "  hop: {id: hop, driver: 'test,approval-hop', address: 1}\n")
+
+
+def test_a_copied_context_carries_no_hal_approver(tmp_path, empty_pipe_stdin):
+    """Attack 2: the Hal's approver lives in a closure cell, never a ContextVar. A
+    context copied inside an op of the AutoApprove Hal, run in another thread,
+    approves nothing on another Hal and binds nothing; the AutoApprove Hal's own
+    gated op holds in a raw new thread (which inherits no context)."""
+    RECEIVED.clear()
+    with _host(None), shal.load(_write(tmp_path, "hop.yaml", _HOP_YAML),
+                                approver=shal.AutoApprove()) as rig, \
+         _load_plain(tmp_path, "real.yaml") as real:
+        hop = rig.get_device("hop")
+        hop.grab()
+        assert isinstance(hop.seen_approver, shal.ConsoleApprover)   # not the Hal's
+        out = {}
+
+        def elsewhere():
+            try:
+                hop.ctx.run(real.get_device("rig").move, 2)
+                out["real"] = "moved"
+            except shal.ApprovalDenied as e:
+                out["real"] = e.reason
+            try:
+                hop.ctx.run(real.get_device("rig")._shal_bind_hal, real, frozenset(),
+                            (shal.AutoApprove(), "hal:evil"))
+                out["bind"] = "bound"
+            except shal.LoadError:
+                out["bind"] = "refused"
+            out["rig"] = hop.move(3)                   # a raw thread, no context
+        t = threading.Thread(target=elsewhere)
+        t.start()
+        t.join()
+        with pytest.raises(shal.ApprovalDenied):
+            real.get_device("rig").move(4)
+    assert out == {"real": "no-approver", "bind": "refused", "rig": "hopped 3"}
+    assert RECEIVED == [("hop-move", {"dx": 3})]
+
+
+@shal.register
+class Slow(shal.Driver):
+    """An op that parks mid-body until the test releases it."""
+    compatible = "test,approval-slow"
+    kind = None
+    entered = threading.Event()
+    release = threading.Event()
+
+    @shal.op("Hold.", side_effect="write")
+    def hold(self) -> str:
+        Slow.entered.set()
+        assert Slow.release.wait(5)
+        return "held"
+
+
+def test_a_load_with_an_approver_in_another_thread_blames_no_innocent_op(
+        tmp_path, audit_records):
+    """Attack 3: while thread A is inside an op, thread B loads a Hal with
+    `approver=AutoApprove()`, runs a gated op on it, and tries (and fails) to fill a
+    cell. Nothing touches A's policy snapshot: A's op returns cleanly, and there is
+    no `policy-changed` record blaming anyone."""
+    RECEIVED.clear()
+    Slow.entered.clear()
+    Slow.release.clear()
+    ps = _write(tmp_path, "slow.yaml", "shal_version: 1\nroot:\n  s: {id: s, "
+                "driver: 'test,approval-slow', address: 1}\n")
+    pr = _write(tmp_path, "rig.yaml")
+    result = {}
+    with shal.load(ps) as slow:
+        def a():
+            try:
+                result["a"] = slow.get_device("s").hold()
+            except Exception as e:  # noqa: BLE001 — the assertion reports it
+                result["a"] = e
+        ta = threading.Thread(target=a)
+        ta.start()
+        assert Slow.entered.wait(5)
+
+        def b():
+            with shal.load(pr, approver=shal.AutoApprove()) as h:
+                result["b"] = h.get_device("rig").move(1)
+                try:
+                    h.get_device("rig")._shal_bind_hal(
+                        h, frozenset(), (shal.AutoApprove(), "hal:evil"))
+                except shal.LoadError as e:
+                    result["b-bind"] = e
+        tb = threading.Thread(target=b)
+        tb.start()
+        tb.join(5)
+        Slow.release.set()
+        ta.join(5)
+    assert result["a"] == "held"
+    assert result["b"] == "moved 1" and isinstance(result["b-bind"], shal.LoadError)
+    assert _policy_changed(audit_records) == []
+
+
+def test_two_threads_racing_for_one_cell_one_wins(hal):
+    """The cell's fill is atomic: of two threads binding one fresh node at once,
+    exactly one succeeds and the other is a LoadError — never both."""
+    import sys
+    old = sys.getswitchinterval()
+    sys.setswitchinterval(1e-6)
+    try:
+        for _ in range(200):
+            rig = Rig()
+            rig.bind(shal.Node("lone", address=9))
+            barrier = threading.Barrier(2)
+            wins, losses = [], []
+
+            def race(tag, rig=rig, barrier=barrier, wins=wins, losses=losses):
+                barrier.wait()
+                try:
+                    rig._shal_bind_hal(hal, None, (shal.AutoApprove(), tag))
+                    wins.append(tag)
+                except shal.LoadError:
+                    losses.append(tag)
+            ts = [threading.Thread(target=race, args=(t,)) for t in ("x", "y")]
+            for t in ts:
+                t.start()
+            for t in ts:
+                t.join()
+            assert len(wins) == 1 and len(losses) == 1
+    finally:
+        sys.setswitchinterval(old)
+
+
+def test_autoapprove_does_not_leak_to_a_second_hal(tmp_path, empty_pipe_stdin):
+    """Attack 4: AutoApprove on the rig's Hal reaches no other Hal — not one loaded
+    from the same file at the same time, and not one loaded after it closed."""
+    RECEIVED.clear()
+    p = _write(tmp_path, "rig.yaml")
+    with _host(None):
+        with shal.load(p, approver=shal.AutoApprove()) as rig, shal.load(p) as twin:
+            with pytest.raises(shal.ApprovalDenied):
+                twin.get_device("rig").move(1)
+            assert rig.get_device("rig").move(2) == "moved 2"
+        with shal.load(p) as after, pytest.raises(shal.ApprovalDenied):
+            after.get_device("rig").move(3)
+    assert RECEIVED == [("move", {"dx": 2})]
+
+
+def test_a_nested_call_from_the_autoapprove_hal_into_another_hal_is_denied(
+        tmp_path, empty_pipe_stdin):
+    """Attack 4, nested: an op on the AutoApprove Hal calls a gated op on another
+    Hal. The inner op asks ITS Hal's approver (the host's: none, headless) — the
+    outer Hal's approver does not flow down the call."""
+    RECEIVED.clear()
+    with _host(None), shal.load(_write(tmp_path, "hop.yaml", _HOP_YAML),
+                                approver=shal.AutoApprove()) as rig, \
+         _load_plain(tmp_path, "real.yaml") as real:
+        hop = rig.get_device("hop")
+        hop.neighbour = real.get_device("rig")
+        with pytest.raises(shal.ApprovalDenied) as ei:
+            hop.poke()
+    assert ei.value.reason == "no-approver"
+    assert RECEIVED == []
+
+
+# -- the MCP Bridge refuses a Hal that carries its own approver ---------------------
+
+@pytest.mark.parametrize("free_writes", [False, True])
+def test_the_bridge_refuses_a_hal_with_a_bound_approver(tmp_path, free_writes):
+    """#217 test 3: under an MCP host the Bridge's ticket approver is the only
+    approver. A Hal loaded with `approver=` would decide before the ticket, so the
+    Bridge refuses it, with the reason in the message."""
+    from shal.mcp import Bridge
+    p = _write(tmp_path, "rig.yaml")
+    with shal.load(p, approver=shal.AutoApprove()) as h:
+        with pytest.raises(shal.LoadError, match="carries its own approver") as ei:
+            Bridge(h, free_writes=free_writes)
+    msg = str(ei.value)
+    assert f"hal:{p}" in msg and "ticket" in msg
+    with _load_plain(tmp_path) as plain:
+        Bridge(plain, free_writes=free_writes)                 # a plain Hal is served
+
+
+def test_shal_mcp_refuses_a_hal_with_a_bound_approver(tmp_path, monkeypatch):
+    """#217 test 3, through `shal mcp` itself: were its load ever handed an
+    approver, the server refuses before serving, and closes the Hal."""
+    from shal.mcp import server
+    p = _write(tmp_path, "rig.yaml")
+    loaded = []
+    real_load = shal.load
+
+    def load_with_approver(source):
+        h = real_load(source, approver=shal.AutoApprove())
+        loaded.append(h)
+        return h
+    monkeypatch.setattr(shal, "load", load_with_approver)
+    with pytest.raises(shal.LoadError, match="carries its own approver"):
+        server.main([str(p), "--probe"])
+    assert loaded and loaded[0]._closed
+
+
+# -- any error during the fill closes the tree once and re-raises it unchanged ------
+
+class _FillBoom(Exception):
+    """Not a LoadError: driver code that raises while its Hal fills the cells."""
+
+
+@shal.register
+class FillRaiser(shal.Driver):
+    """Sits on a sim bus; its bind-time hook raises a non-LoadError at the fill."""
+    compatible = "test,approval-fill-raiser"
+    kind = shal.ByteTransport
+    exc = None
+
+    def bind(self, node):
+        super().bind(node)
+
+        def boom(*_args, **_kw):
+            raise FillRaiser.exc
+        self._shal_bind_hal = boom
+
+    @shal.op("Read.", side_effect="none")
+    def read(self) -> int:
+        return 1
+
+
+def test_a_non_load_error_during_the_fill_closes_the_tree_once_and_re_raises(
+        tmp_path, monkeypatch):
+    """Round 2: ANY exception while Hal.__init__ fills the cells — not only a
+    LoadError — closes the half-built tree (its bus included), exactly once
+    (the failed Hal's __del__ closes nothing again), and the caller gets the SAME
+    exception object, unchanged."""
+    import gc
+
+    from shal.buses.sim import SimI2cBus
+    FillRaiser.exc = _FillBoom("driver code raised during the fill")
+    closes = []
+    real_close = SimI2cBus.close
+
+    def counting_close(self):
+        closes.append(self.host.path)
+        return real_close(self)
+    monkeypatch.setattr(SimI2cBus, "close", counting_close)
+    p = _write(tmp_path, "boom.yaml", "shal_version: 1\nroot:\n"
+               "  bus:\n    driver: shal,sim-i2c\n    address: sim0\n"
+               "    children:\n"
+               "      dev: {id: dev, driver: 'test,approval-fill-raiser', "
+               "address: 0x48}\n")
+    with pytest.raises(_FillBoom) as ei:
+        shal.load(p, approver=shal.AutoApprove())
+    assert ei.value is FillRaiser.exc                     # the original object
+    assert closes == ["/bus"]                              # the bus was closed
+    del ei
+    gc.collect()
+    assert closes == ["/bus"]                              # and never again

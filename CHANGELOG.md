@@ -109,6 +109,24 @@ All notable changes to this project are documented here. The format follows
   records provenance; no plugin produces it. `read()` accepts it like the other
   two, filters included. Any fourth value is still a `RecordError`, and the
   message lists all three.
+- **`shal.load(path, approver=a)`: a per-Hal approver, fixed at load** (#217, CTO
+  re-ruling 2026-09-27, pytest-shal spec §4; the natural extension of ADR-001
+  addendum 5b; D27). Operator code, given at load and never after: there is no
+  method to set it later. It fills the same bind-time cell as the Hal's declared
+  gated set, inside `Hal.__init__`, before any `node.hal` is published, and the
+  cell is final. Each gated op on that Hal asks it BEFORE the host's approver;
+  every other Hal keeps the host's, so a sim rig's `AutoApprove` never approves a
+  Hal loaded from a real file (what pytest-shal's `--shal-approve allow` needs).
+  It is not a ContextVar, so it holds in every thread and never travels in a
+  copied context. If a driver (in `bind()`, or from a thread it started) filled a
+  node's cell first, the load fails: `LoadError`, the tree closed, and one audit
+  record (`policy-changed`, `prefilled`). `shal mcp` refuses a Hal that carries
+  one (`LoadError`, reason in the message): under an MCP host the ticket is the
+  only approver. A topology cannot declare one (D5). Every approval record now
+  carries `approver_source` (`hal:<path>`, `host` or `default`), and so does the
+  load's `policy` event. The addendum 5c residual is unchanged: driver code that
+  reaches into the framework's own objects (a closure cell) can defeat it; the
+  boundary against that is a process boundary.
 
 ### Fixed
 - **A device refusal now leaves an outcome audit record** (#198). When the body of
