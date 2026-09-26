@@ -21,7 +21,8 @@ All notable changes to this project are documented here. The format follows
   `query` is `none`; `insert` is `write`, undone by `delete_row`; `delete_row` is
   `write` too, because it returns the removed row (rowid included) and `insert`
   of that row puts it back exactly. Both `write` ops prove it on every call, inside
-  their transaction: exactly one row changed (`total_changes` delta 1) and the row
+  their transaction: the target is a real rowid table (not a view, not WITHOUT
+  ROWID), exactly one row changed (`total_changes` delta 1) and the row
   is one `insert` accepts; a trigger writing another table, an `ON DELETE CASCADE`,
   a `REPLACE` conflict or a BLOB value rolls back and is refused; `execute_ddl` (one CREATE or ALTER TABLE ...
   ADD/RENAME, never DROP) is `config`; `drop_table` is `actuator`. Values are

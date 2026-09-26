@@ -143,6 +143,33 @@ def test_a_cascade_is_refused_when_foreign_keys_are_on(family):
     assert _tables(db, "parent", "child") == start
 
 
+def test_a_without_rowid_table_is_refused(db):
+    # the undo is by rowid, and this table has none
+    with shal.approver(shal.AutoApprove()):
+        db.execute_ddl("CREATE TABLE k (id TEXT PRIMARY KEY, v TEXT) WITHOUT ROWID")
+    db._db().execute("INSERT INTO k VALUES ('a', 'x')")  # written past the driver
+    start = db._db().execute("SELECT * FROM k").fetchall()
+    with pytest.raises(ValueError, match="no rowid"):
+        db.insert("k", '{"id": "b", "v": "y"}')
+    with pytest.raises(ValueError, match="no rowid"):
+        db.delete_row("k", 1)
+    assert db._db().execute("SELECT * FROM k").fetchall() == start
+
+
+def test_a_view_is_refused_even_with_an_instead_of_trigger(db):
+    # the trigger writes the base table, and lastrowid would name some other row
+    with shal.approver(shal.AutoApprove()):
+        db.execute_ddl("CREATE VIEW v AS SELECT name, qty FROM items")
+        db.execute_ddl("CREATE TRIGGER vi INSTEAD OF INSERT ON v "
+                       "BEGIN INSERT INTO items VALUES (NEW.name, NEW.qty); END")
+    start = _tables(db, "items")
+    with pytest.raises(ValueError, match="it is a view"):
+        db.insert("v", '{"name": "nut", "qty": 7}')
+    with pytest.raises(ValueError, match="it is a view"):
+        db.delete_row("v", 1)
+    assert _tables(db, "items") == start
+
+
 def test_a_replace_conflict_that_removes_a_row_is_refused(db):
     # REPLACE deletes the old row without counting it in total_changes;
     # the row count catches it

@@ -20,7 +20,8 @@ software"):
 - `drop_table`  -> `actuator` DROP: cannot be undone by any op here. Gated.
 
 A `write` runs without asking, so `insert` and `delete_row` PROVE, inside their
-own transaction, that one op can undo them: exactly one row changed
+own transaction, that one op can undo them: the target is a real rowid table
+(not a view, not WITHOUT ROWID), exactly one row changed
 (`total_changes` went up by exactly 1), and every value in it is one `insert`
 accepts. Anything else rolls back and is refused with the reason: a trigger that
 writes another table, an `ON DELETE CASCADE`, a `REPLACE` conflict that removed
@@ -75,6 +76,26 @@ def _row_arg(text: str, what: str) -> dict[str, Any]:
         if isinstance(value, bool) or not isinstance(value, _SCALARS):
             raise ValueError(f"{what}[{col!r}] must be text, a number or null")
     return row
+
+
+def _rowid_table(conn: sqlite3.Connection, table: str, refused: str) -> None:
+    """Refuse unless `table` is a real table with a rowid: the undo is by rowid,
+    so a view (its INSTEAD OF trigger writes elsewhere) or a WITHOUT ROWID table
+    has no undo here."""
+    kind = conn.execute(
+        "SELECT type FROM sqlite_master WHERE name = ? COLLATE NOCASE UNION ALL "
+        "SELECT type FROM sqlite_temp_master WHERE name = ? COLLATE NOCASE",
+        (table, table)).fetchone()
+    if kind is None:
+        raise sqlite3.OperationalError(f"no such table: {table}")
+    if kind[0] != "table":
+        raise ValueError(f"{refused} — it is a {kind[0]}, not a table, so this "
+                         f"driver cannot undo a change to it")
+    try:
+        conn.execute(f"SELECT rowid FROM {_name(table)} LIMIT 0")
+    except sqlite3.OperationalError as e:
+        raise ValueError(f"{refused} — it has no rowid (WITHOUT ROWID?), so this "
+                         f"driver cannot undo a change to it") from e
 
 
 def _one_row_changed(conn: sqlite3.Connection, before: int, refused: str) -> None:
@@ -172,12 +193,18 @@ class SqliteDatabase(Driver):
         count = f"SELECT count(*) FROM {_name(table)}"
 
         def work(conn):
+            _rowid_table(conn, table, f"{table}: not inserted")
             before, rows = conn.total_changes, conn.execute(count).fetchone()[0]
             rowid = conn.execute(sql, tuple(values.values())).lastrowid
             _one_row_changed(conn, before, f"{table}: not inserted")
             if conn.execute(count).fetchone()[0] != rows + 1:  # REPLACE hides a delete
                 raise ValueError(f"{table}: not inserted — a REPLACE conflict removed "
                                  f"another row, so delete_row could not undo it")
+            # the rowid we return must name the row we wrote, or delete_row misses
+            if conn.execute(f"SELECT 1 FROM {_name(table)} WHERE rowid = ?",
+                            (rowid,)).fetchone() is None:
+                raise ValueError(f"{table}: not inserted — rowid {rowid} does not name "
+                                 f"the new row, so delete_row could not undo it")
             return rowid
         return self._change(work)
 
@@ -188,6 +215,7 @@ class SqliteDatabase(Driver):
         name = _name(table)
 
         def work(conn):
+            _rowid_table(conn, table, f"{table} rowid {rowid}: not deleted")
             cur = conn.execute(f'SELECT rowid AS "rowid", * FROM {name} WHERE rowid = ?',
                                (rowid,))
             found = cur.fetchone()
