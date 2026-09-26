@@ -103,7 +103,8 @@ The core idea is small:
 
 A sensor on I²C and an HTTP service are the same kind of node. Your code — and
 your agent — calls **capabilities** (`read_celsius()`, `set_voltage()`), never
-transports. `[core]` ships with SHAL; `[pkg]` is a driver you install or write.
+transports. `[core]` ships with SHAL — the buses. `[you]` is a device driver or
+a vendor bus: you write it, or install one someone else wrote.
 
 ```yaml
 # lab.yaml — hardware and software in ONE graph
@@ -117,19 +118,19 @@ root:
         driver: shal,i2c-cli
         address: /dev/i2c-1
         children:
-          ambient: { id: ambient_temp, driver: ti,tmp102, address: 0x48 }   # [core]
+          ambient: { id: ambient_temp, driver: ti,tmp102, address: 0x48 }   # [you]
 
-  instruments:                   # raw-socket SCPI bus                        [pkg]
+  instruments:                   # raw-socket SCPI bus                        [you]
     driver: acme,scpi
     address: 10.0.0.50:5025
     children:
-      supply: { id: dut_power, driver: keysight,e36312, address: ch1 }       # [pkg]
+      supply: { id: dut_power, driver: keysight,e36312, address: ch1 }       # [you]
 
   services:                      # HTTPS to internal services                [core]
     driver: shal,http
     address: https://mes.lab.internal
     children:
-      results: { id: results_db, driver: acme,mes-results, address: api/v2 } # [pkg]
+      results: { id: results_db, driver: acme,mes-results, address: api/v2 } # [you]
 ```
 
 Every node is reached the same way — `hal.get_device("dut_power").set_voltage(3.3)`
@@ -310,7 +311,7 @@ shal mcp   my-setup.yaml   # or serve it to an AI host (writes gated)
 ## Write a driver in 30 seconds
 
 Need a device SHAL doesn't have yet? A driver is one small class. This is the
-*entire* bundled temperature-sensor driver:
+*entire* reference temperature-sensor driver that the authoring kit teaches from:
 
 ```python
 from shal import Driver, TemperatureSensor, registry, idempotent, op, ByteTransport, Read, Write
@@ -435,7 +436,6 @@ hardware — swap in a real transport later, and your code doesn't change.
 ## Documentation
 
 - [**Driver SDK** — the complete authoring contract](https://github.com/determlab/shal/blob/main/src/shal/SDK.md) (write a driver from docs alone)
-- [Driver / bus catalog](https://github.com/determlab/shal/blob/main/docs/CATALOG.md)
 - [Architecture & locked decisions](https://github.com/determlab/shal/blob/main/docs/design/DESIGN%20V2.md)
 - [Phase 1 implementation decisions](https://github.com/determlab/shal/blob/main/docs/design/archive/DECISIONS%20-%20V2.1.md)
 - [Phase 2 async + watchdog spec](https://github.com/determlab/shal/blob/main/docs/design/DESIGN%20-%20PHASE%202%20ASYNC.md)
