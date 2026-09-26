@@ -14,6 +14,18 @@ All notable changes to this project are documented here. The format follows
 ## [Unreleased]
 
 ### Added
+- **`shal call` — run one op from the command line; the gate refuses on the first
+  screen** (#160, R11 in `adk.md` §3.6) — `shal call <topology> <node> <op>
+  [value…] [--json]`. An op labelled `none` or `write` runs and prints its result
+  (`--json`: `{ok, tool, device, op, side_effect, result}`, the `call_tool` shape).
+  An op labelled `config` or `actuator` is refused from its label *before* it is
+  called — nothing is sent, the bus is not even activated — with exit **2** and a
+  message that names the label and both ways to approve (`shal mcp <topology>`, or
+  `with shal.approver(...)` in Python). There is no `--approve` flag (#56). Values
+  map to the op's parameters in order or as `name=value`, converted by the op's
+  schema. Exit 1 = the op ran and failed; exit **3** = could not run (usage error,
+  unknown device/op, bad value, bad topology) — not argparse's 2, so a refusal is
+  never mistaken for a mistake.
 - **`shal,sim-sensor` — a device that ships, so a bare install has something to
   read** (#156, R10 in `adk.md` §3.6) — a `TemperatureSensor` under `shal,sim-i2c`,
   its model and class next to the bus in `buses/sim.py`. Its reading drifts, so two
