@@ -20,6 +20,8 @@ reviewed: 2026-08-31
 > changelog, contributor docs and `docs/agents/*` are written here and by no
 > other role.
 
+For an agent that *uses* shal rather than works on it: [`AGENTS.md`](../../AGENTS.md) at the repo root.
+
 ## Overview
 SHAL (System/Software Hardware Abstraction Layer) is a Python library for
 describing a hardware/software setup in YAML and controlling it from Python —
@@ -82,7 +84,8 @@ if it runs.
   `sonos` (a root driver wrapping `soco`; `address: sim` builds its `sim.py` stand-in),
   `order_service` (a software node under `shal,http`; its `@msg_sim_model` twin is in its
   own `sim.py`, never core `sim_msg.py`), each `driver.py` + `sim.py` + `test_<name>.py` +
-  `topology.yaml`. **Package data, not
+  `topology.yaml`; and `sqlite` (`sqlite,database`, #157), a root driver over stdlib
+  `sqlite3` whose twin is its address (`":memory:"`), so it has no `sim.py`. **Package data, not
   registered drivers** (D1, D7; #149): no entry point, not imported by `import shal`,
   absent from `catalog()`. `shal docs --list` / `shal docs --example <name>` print them.
   The core suite imports them in `tests/conftest.py`; each reference's own test runs in

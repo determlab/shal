@@ -21,6 +21,26 @@ All notable changes to this project are documented here. The format follows
   side_effect= — "none" for a read, "write" for a benign, reversible change,
   "config" or "actuator" for a gated one.` Every ADK reference, example driver and
   demo already declares its labels, so none of them gains a warning.
+- **The ADK reference set gains `sqlite,database`: four side-effect labels on one
+  software node, zero dependencies** (#157, `adk.md` §3.7) —
+  `src/shal/adk/reference/sqlite/` (`driver.py`, `test_sqlite.py`,
+  `topology.yaml`), a root driver (`kind = None`) over the stdlib `sqlite3`.
+  `query` is `none`; `insert` is `write`, undone by `delete_row`; `delete_row` is
+  `write` too, because it returns the removed row (rowid included) and `insert`
+  of that row puts it back exactly. Both `write` ops prove it on every call, inside
+  their transaction: the target is a real rowid table (not a view, not WITHOUT
+  ROWID), exactly one row changed (`total_changes` delta 1) and the row
+  is one `insert` accepts; a trigger writing another table, an `ON DELETE CASCADE`,
+  a `REPLACE` conflict or a BLOB value rolls back and is refused; `execute_ddl` (one CREATE or ALTER TABLE ...
+  ADD/RENAME, never DROP) is `config`; `drop_table` is `actuator`. Values are
+  always `?` parameters; a table or column name must be a plain identifier and is
+  checked before any SQL. `address: ":memory:"` is the twin, so there is **no
+  `sim.py`** and no file is written. Its own test proves the undo both ways, that
+  `execute_ddl` and `drop_table` stop at the gate with the database unchanged, and
+  that nothing lands in the working or temp directory. Not registered, not
+  imported by `import shal`, absent from `catalog()`. `shal docs --list` names it;
+  `shal docs --example` now prints the run line from the files a reference has
+  (`--drivers driver.py` alone for `sqlite`).
 - **The ADK reference set gains two: `sonos` and `order_service`** (#152, R7 in
   `adk.md` §3.6 / §3.7) — five references now, each the same four files, unregistered.
   `sonos` (`sonos,speaker`) is the root driver that wraps a library: `kind = None`,
