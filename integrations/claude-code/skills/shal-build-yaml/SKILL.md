@@ -37,8 +37,10 @@ root:
    drifts, with one gated `config` op `set_target`; it binds only under
    `shal,sim-i2c`). **No `vendor,part` device driver ships registered** (D1,
    #149). The ADK reference set — `ti,tmp102`, `microchip,mcp23017`,
-   `rigol,dp832`, `sonos,speaker`, `acme,order-service` — ships as guide material: `shal docs --list` names them,
-   `shal docs --example <name>` prints one (driver, sim twin, test, topology).
+   `rigol,dp832`, `sonos,speaker`, `acme,order-service`, `sqlite,database` — ships as
+   guide material: `shal docs --list` names them, `shal docs --example <name>` prints
+   one (driver, sim twin, test, topology; `sqlite` is a root node whose twin is
+   `address: ":memory:"`, no `sim.py`).
    `ti,ina219`, `ti,ads1115`, `microchip,mcp9808`, `keysight,34461a` and the
    `nxp,pca9548` mux chip are repo examples under `examples/drivers/`. Run any
    of them by naming its files: `--drivers driver.py --drivers sim.py`. The

@@ -18,9 +18,13 @@ Start from the closest **ADK reference**: `shal docs --list` names them
 `rigol_dp832` — SCPI, setpoint `write` vs energise `actuator`, declared limits;
 `sonos` — a root driver wrapping a library, `address: sim` selects its `sim.py`
 stand-in; `order_service` — a software node under `shal,http`, a `GET` through the
-request envelope, a `write` its own op undoes, twin by `@msg_sim_model`),
+request envelope, a `write` its own op undoes, twin by `@msg_sim_model`;
+`sqlite` — a root driver over a client library, all four labels on one software
+node, values as `?` parameters and names checked before any SQL),
 and `shal docs --example <name>` prints its four files: `driver.py`, `sim.py`
-(the twin, next to the driver), `test_<name>.py`, `topology.yaml`. They ship in
+(the twin, next to the driver), `test_<name>.py`, `topology.yaml`. When the
+library has its own twin address there is no `sim.py`: `sqlite` uses
+`address: ":memory:"` and runs with `--drivers driver.py` alone. They ship in
 the wheel as guide material and are **not registered** — no `vendor,part` driver
 ships registered (D1, #149) — so your copy registers only when imported
 (`--drivers driver.py --drivers sim.py`, or `@register` in-process).

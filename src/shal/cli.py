@@ -375,8 +375,9 @@ def _references() -> dict[str, object]:
 
 
 def _reference_files(ref) -> list:
-    """The four files of one reference, in reading order: driver, sim twin, test,
-    topology."""
+    """The files of one reference, in reading order: driver, sim twin, test,
+    topology. A reference whose twin is its address (sqlite, ``":memory:"``) has
+    no sim.py, so it is three."""
     order = {"driver.py": 0, "sim.py": 1, "topology.yaml": 3}
     picked = [f for f in ref.iterdir() if f.is_file()
               and (f.name in order or (f.name.startswith("test_") and f.name.endswith(".py")))]
@@ -393,13 +394,16 @@ def _reference_summary(ref) -> str:
 def _cmd_docs_list() -> int:
     refs = _references()
     print("ADK reference drivers — guide material to copy, not registered drivers.")
-    print("Each is four files: driver.py, sim.py (its twin), test_<name>.py, topology.yaml.")
+    print("Each is driver.py, sim.py (its twin), test_<name>.py, topology.yaml — no sim.py")
+    twins = [n for n, r in refs.items() if not (r / "sim.py").is_file()]
+    print(f"when the address is the twin ({', '.join(twins) or 'none'}).")
     print()
     for name, ref in refs.items():
         print(f"  {name:<14} {_reference_summary(ref)}")
     print()
     print("Print one:  shal docs --example <name>")
     print("Run one:    shal probe topology.yaml --drivers driver.py --drivers sim.py")
+    print("            (no sim.py: leave out --drivers sim.py)")
     return 0
 
 
@@ -412,9 +416,12 @@ def _cmd_docs_example(name: str) -> int:
         return 2
     print(f"# ADK reference '{name}' — {_reference_summary(ref)}")
     print(f"# Folder: {ref}")
-    print("# Not registered by `import shal`. Copy the four files, or run them as they are:")
-    print("#   shal probe topology.yaml --drivers driver.py --drivers sim.py")
-    for f in _reference_files(ref):
+    files = _reference_files(ref)
+    drivers = " ".join(f"--drivers {f.name}" for f in files if f.name in ("driver.py", "sim.py"))
+    print(f"# Not registered by `import shal`. Copy the {len(files)} files, "
+          f"or run them as they are:")
+    print(f"#   shal probe topology.yaml {drivers}")
+    for f in files:
         print()
         print(f"# ==== {f.name} " + "=" * max(4, 60 - len(f.name)))
         print(f.read_text(encoding="utf-8").rstrip())

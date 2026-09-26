@@ -1,6 +1,9 @@
-"""The ADK reference set (#149, #152, ADK §3.6 / R7): drivers shipped inside the
+"""The ADK reference set (#149, #152, #157, ADK §3.6 / R7): drivers shipped inside the
 Authoring Kit as guide material — not registered, not imported by `import shal`,
 absent from `catalog()` — each a driver, its sim twin, a test and a topology.
+`sqlite` (#157, §3.7) is a root driver whose twin is its address (":memory:"),
+so it has no sim.py. Other references land in parallel (#152): every check here
+names the references it knows and never counts the folder.
 """
 import json
 import subprocess
@@ -16,11 +19,15 @@ from shal.adk.reference.mcp23017.driver import Mcp23017
 from shal.adk.reference.order_service.driver import OrderService
 from shal.adk.reference.rigol_dp832.driver import RigolDp832
 from shal.adk.reference.sonos.driver import SonosSpeaker
+from shal.adk.reference.sqlite.driver import SqliteDatabase
 from shal.adk.reference.tmp102.driver import Tmp102
 from shal.conformance import check_driver
 
 REFS = {"tmp102": Tmp102, "mcp23017": Mcp23017, "rigol_dp832": RigolDp832,
-        "sonos": SonosSpeaker, "order_service": OrderService}
+        "sonos": SonosSpeaker, "order_service": OrderService,
+        "sqlite": SqliteDatabase}
+#: references whose twin is the node address, not a sim.py (sqlite: ":memory:")
+ADDRESS_TWIN = {"sqlite"}
 
 
 def _ref_dir(name: str) -> Path:
@@ -30,7 +37,8 @@ def _ref_dir(name: str) -> Path:
 @pytest.mark.parametrize("name", REFS)
 def test_each_reference_is_a_triple_plus_topology(name):
     have = {p.name for p in _ref_dir(name).iterdir() if p.is_file()}
-    assert {"driver.py", "sim.py", f"test_{name}.py", "topology.yaml"} <= have
+    assert {"driver.py", f"test_{name}.py", "topology.yaml"} <= have
+    assert ("sim.py" in have) is (name not in ADDRESS_TWIN)
 
 
 @pytest.mark.parametrize("name, cls", REFS.items())
@@ -70,7 +78,7 @@ def test_no_device_driver_entry_point():
 
 
 def test_docs_list_names_every_reference(capsys):
-    # names, not a count: more references join the set (#157 adds sqlite)
+    # names, not a count: more references join the set
     assert cli.main(["docs", "--list"]) == 0
     out = capsys.readouterr().out
     for name, cls in REFS.items():
@@ -78,7 +86,7 @@ def test_docs_list_names_every_reference(capsys):
     assert "shal docs --example" in out
 
 
-@pytest.mark.parametrize("name", REFS)
+@pytest.mark.parametrize("name", sorted(set(REFS) - ADDRESS_TWIN))
 def test_docs_example_prints_the_four_files(capsys, name):
     assert cli.main(["docs", "--example", name]) == 0
     out = capsys.readouterr().out
@@ -86,6 +94,17 @@ def test_docs_example_prints_the_four_files(capsys, name):
     assert heads == ["driver.py", "sim.py", f"test_{name}.py", "topology.yaml"]
     assert (_ref_dir(name) / "driver.py").read_text(encoding="utf-8").strip() in out
     assert "--drivers driver.py --drivers sim.py" in out
+
+
+def test_docs_example_sqlite_prints_three_files_and_no_sim(capsys):
+    # the twin is the address, so there is no sim.py to print or to name
+    assert cli.main(["docs", "--example", "sqlite"]) == 0
+    out = capsys.readouterr().out
+    heads = [ln.split()[2] for ln in out.splitlines() if ln.startswith("# ==== ")]
+    assert heads == ["driver.py", "test_sqlite.py", "topology.yaml"]
+    assert "shal probe topology.yaml --drivers driver.py\n" in out
+    assert "sim.py" not in out.split("# ==== ")[0]
+    assert 'address: ":memory:"' in out
 
 
 def test_docs_example_unknown_name_exits_2(capsys):
