@@ -1,7 +1,11 @@
-"""End-to-end: a PSU and a DMM driven over the shal,scpi-raw bus against a REAL
+"""End-to-end: two PSU channels driven over the shal,scpi-raw bus against a REAL
 fake SCPI instrument (a socket server speaking line SCPI), loaded from YAML.
 Exercises the MessageTransport stack, connection caching, the plaintext
 `insecure` gate, and write-then-query state — observed server-side, not mocked.
+
+The PSU is the ADK reference `rigol,dp832` (imported by conftest). The DMM that
+used to share this socket, `keysight,34461a`, moved to examples/drivers/ with its
+tests (#149).
 """
 import socketserver
 import textwrap
@@ -14,7 +18,7 @@ import shal
 
 class _Instrument(socketserver.StreamRequestHandler):
     """A minimal SCPI instrument: write commands mutate state, query commands
-    (trailing '?') return one value line. Serves both PSU and DMM command sets."""
+    (trailing '?') return one value line. Serves the PSU command set."""
 
     def handle(self):
         srv = type(self).server
@@ -30,12 +34,6 @@ class _Instrument(socketserver.StreamRequestHandler):
                     resp = f"{st['volt']:.6f}"
                 elif cmd.startswith(":MEAS:CURR? CH"):
                     resp = f"{st['curr']:.6f}"
-                elif cmd == "MEAS:VOLT:DC?":
-                    resp = "1.234560"
-                elif cmd == "MEAS:CURR:DC?":
-                    resp = "0.010000"
-                elif cmd == "MEAS:RES?":
-                    resp = "99.500000"
                 else:
                     resp = "0"
                 self.wfile.write((resp + "\n").encode())
@@ -73,7 +71,7 @@ def _setup(tmp_path, port) -> str:
             insecure: true
             children:
               psu: {{ id: psu, driver: "rigol,dp832", address: 1 }}
-              meter: {{ id: dmm, driver: "keysight,34461a", address: dmm }}
+              psu2: {{ id: psu2, driver: "rigol,dp832", address: 2 }}
     """), encoding="utf-8")
     return p
 
@@ -97,18 +95,10 @@ def test_psu_set_then_measure(hal):
     assert isinstance(psu, shal.PowerSupply)
 
 
-def test_dmm_measurements(hal):
-    h, _ = hal
-    dmm = h.get_device("dmm")
-    assert dmm.measure_voltage_dc() == pytest.approx(1.23456)
-    assert dmm.measure_resistance() == pytest.approx(99.5)
-    assert isinstance(dmm, shal.DigitalMultimeter)
-
-
 def test_one_socket_serves_both_devices(hal):
     h, srv = hal
     h.get_device("psu").read_voltage()
-    h.get_device("dmm").measure_voltage_dc()
+    h.get_device("psu2").read_voltage()
     assert srv.shal_connections == 1            # connection cached across devices
 
 
@@ -131,7 +121,3 @@ def test_instruments_in_catalog():
     psu = shal.catalog("rigol,dp832")
     assert psu["capability"] == "PowerSupply"
     assert psu["address_schema"]["examples"] == [1]
-    dmm = shal.catalog("keysight,34461a")
-    assert dmm["capability"] == "DigitalMultimeter"
-    assert {o["name"] for o in dmm["ops"]} == {
-        "measure_voltage_dc", "measure_current_dc", "measure_resistance"}

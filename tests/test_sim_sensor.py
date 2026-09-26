@@ -13,6 +13,7 @@ import re
 import subprocess
 import sys
 import textwrap
+from pathlib import Path
 
 import pytest
 
@@ -20,6 +21,11 @@ import shal
 from shal import cli
 from shal.buses import sim as sim_mod
 from shal.conformance import check_driver
+
+# the mux chip is a vendor part: it lives in examples/ with its sim model (#149)
+sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "examples/drivers/pca9548"))
+import pca9548_driver  # noqa: E402,F401  (registers nxp,pca9548)
+import pca9548_sim  # noqa: E402,F401     (registers its sim model)
 
 _SIM_YAML = textwrap.dedent("""\
     shal_version: 1
@@ -206,19 +212,6 @@ def test_catalog_lists_the_sim_sensor_as_a_driver():
     assert entry["requires_parent_kind"] == "ByteTransport"
 
 
-# The vendor ids that still ship, named one by one so no NEW vendor,part can slip
-# in. #149 removes the seven drivers; the mux question (with the CTO) removes
-# nxp,pca9548 or exempts it by ruling. When both land, this set is empty and the
-# test reads as the CTO wrote it: every id catalog() lists starts with `shal,`.
-KNOWN_VENDOR_IDS = frozenset({
-    # the seven #149 moves out (reference set / examples)
-    "keysight,34461a", "microchip,mcp23017", "microchip,mcp9808", "rigol,dp832",
-    "ti,ads1115", "ti,ina219", "ti,tmp102",
-    # the mux: listed as a driver (it is not a Transport); awaiting a ruling
-    "nxp,pca9548",
-})
-
-
 @functools.lru_cache(maxsize=1)
 def _catalog_ids() -> tuple[str, ...]:
     # what SHIPS: a fresh interpreter, so drivers other tests register in this
@@ -231,16 +224,9 @@ def _catalog_ids() -> tuple[str, ...]:
 
 
 def test_every_catalog_id_is_a_shal_compatible():
-    offenders = [c for c in _catalog_ids()
-                 if not c.startswith("shal,") and c not in KNOWN_VENDOR_IDS]
+    offenders = [c for c in _catalog_ids() if not c.startswith("shal,")]
     assert offenders == [], (
-        f"D1: only shal,* ships; new vendor,part ids in catalog(): {offenders}")
-
-
-def test_known_vendor_ids_are_not_stale():
-    # the set must shrink as drivers leave (#149 has to edit it), never outlive them
-    stale = KNOWN_VENDOR_IDS - set(_catalog_ids())
-    assert stale == set(), f"remove from KNOWN_VENDOR_IDS, no longer shipped: {stale}"
+        f"D1: only shal,* ships; vendor,part ids in catalog(): {offenders}")
 
 
 # ---- ApprovalDenied survives a pickle round-trip without doubling its hint ------------

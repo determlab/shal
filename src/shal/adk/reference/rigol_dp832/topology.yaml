@@ -1,0 +1,13 @@
+# The three DP832 channels on the sim SCPI bus. The address is the channel.
+# The driver is not registered by `import shal`, so name its two files (D5):
+#   shal tools topology.yaml --drivers driver.py --drivers sim.py
+shal_version: 1
+root:
+  bench:
+    id: bench
+    driver: shal,sim-scpi
+    address: sim0
+    children:
+      ch1: {id: ch1, driver: "rigol,dp832", address: 1}
+      ch2: {id: ch2, driver: "rigol,dp832", address: 2}
+      ch3: {id: ch3, driver: "rigol,dp832", address: 3}

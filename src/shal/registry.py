@@ -2,15 +2,16 @@
 
 Discovery via entry points (group ``shal.drivers``): drivers run because they were
 installed on purpose. The framework never imports a module named by a config string.
-Bundled drivers register explicitly below.
+The framework's own objects (the buses and the sim device, all ``shal,*``) register
+explicitly below; no ``vendor,part`` driver ships (D1, #149).
 
 Collision policy (closes the v1 silent last-write-wins overwrite): registering a
 *different* class under a `compatible` that another class already claims is kept as
 a candidate, not silently dropped. The clash surfaces at ``resolve`` — loudly,
 naming each providing distribution — unless the node disambiguates with ``from:``
 or a caller registered with ``override=True``. Re-registering the *same* class is
-an idempotent no-op (the bundled drivers register via both their ``@register``
-decorator and the entry-point load).
+an idempotent no-op (a module imported twice, or a class registered both by its
+``@register`` decorator and an entry-point load).
 """
 from __future__ import annotations
 
@@ -200,7 +201,9 @@ _bundled_loaded = False
 
 
 def _ensure_bundled() -> None:
-    """Bundled drivers ship with the package == installed on purpose."""
+    """The framework's own buses (and the sim device in ``buses.sim``) ship with
+    the package == installed on purpose. No device driver is bundled (D1, #149):
+    the ADK reference set is guide material and registers only when imported."""
     global _bundled_loaded
     if _bundled_loaded:
         return
@@ -209,7 +212,6 @@ def _ensure_bundled() -> None:
         http_bus,
         i2c_cli,
         local,
-        mux,
         scpi_raw,
         sim,
         sim_msg,
@@ -217,13 +219,4 @@ def _ensure_bundled() -> None:
         spi_cli,
         ssh,
         tcp,
-    )
-    from .drivers import (  # noqa: F401  (register their compatibles)
-        ads1115,
-        ina219,
-        keysight_34461a,
-        mcp9808,
-        mcp23017,
-        rigol_dp832,
-        tmp102,
     )

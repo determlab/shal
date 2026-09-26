@@ -48,6 +48,8 @@ from packaging.utils import canonicalize_name
 
 ROOT = Path(__file__).resolve().parents[2]
 SRC = ROOT / "src" / "shal"
+# ADK reference set: guide material never imported by `import shal` (#149)
+REFERENCE = SRC / "adk" / "reference"
 
 #: import name -> distribution name, only where they differ (canonicalized)
 #: from the import name itself. Add here, with a comment, the next time one
@@ -110,6 +112,8 @@ def _collect_required_imports() -> dict[str, list[str]]:
     import it at module scope."""
     by_import: dict[str, list[str]] = {}
     for path in sorted(SRC.rglob("*.py")):
+        if path.is_relative_to(REFERENCE):
+            continue
         for name in _module_scope_third_party_imports(path):
             by_import.setdefault(name, []).append(str(path.relative_to(ROOT)))
     return by_import

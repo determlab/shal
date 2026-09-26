@@ -6,10 +6,10 @@ read-modify-write on the relevant port register.
 """
 from __future__ import annotations
 
-from .. import registry
-from ..capabilities import GPIOExpander
-from ..driver import Driver, idempotent, op
-from ..transport import ByteTransport, Read, Write
+from shal import registry
+from shal.capabilities import GPIOExpander
+from shal.driver import Driver, idempotent, op
+from shal.transport import ByteTransport, Read, Write
 
 _IODIR = 0x00
 _GPIO = 0x12

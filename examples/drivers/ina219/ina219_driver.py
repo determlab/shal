@@ -6,10 +6,10 @@ current from register 0x04 (assumes a calibrated 100 uA/LSB, the common default)
 """
 from __future__ import annotations
 
-from .. import registry
-from ..capabilities import PowerMonitor
-from ..driver import Driver, idempotent, op
-from ..transport import ByteTransport, Read, Write
+from shal import registry
+from shal.capabilities import PowerMonitor
+from shal.driver import Driver, idempotent, op
+from shal.transport import ByteTransport, Read, Write
 
 _BUS_VOLTAGE = 0x02
 _CURRENT = 0x04

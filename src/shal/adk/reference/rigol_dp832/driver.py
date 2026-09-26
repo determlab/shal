@@ -3,12 +3,12 @@
 """
 from __future__ import annotations
 
-from .. import registry
-from ..capabilities import PowerSupply
-from ..driver import Driver, idempotent, op
-from ..errors import LoadError
-from ..node import Node
-from ..transport import MessageTransport
+from shal import registry
+from shal.capabilities import PowerSupply
+from shal.driver import Driver, idempotent, op
+from shal.errors import LoadError
+from shal.node import Node
+from shal.transport import MessageTransport
 
 
 @registry.register
