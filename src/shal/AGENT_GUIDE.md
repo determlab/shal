@@ -291,6 +291,11 @@ undone by this driver, so it is not a `write`.
 **Bus or root driver?** A protocol you would hand-roll goes under a bus. A client
 library is a root driver (`kind = None`, like the example above).
 
+**See it on one node:** `shal docs --example sqlite` — `query` is `none`, `insert`
+and `delete_row` are `write` (each undoes the other), `execute_ddl` is `config`,
+`drop_table` is `actuator`. A value goes in as a `?` parameter. A table or column
+name cannot be a parameter, so the driver checks it before any SQL.
+
 **What "proven" means.** These five pieces are the kit. They do not, by
 themselves, show that a cold agent — one that has never seen a device before —
 can use the kit to write a working driver on the first try. That claim needs a
