@@ -45,6 +45,7 @@ an op — is refused and audited.
 """
 from __future__ import annotations
 
+import io
 import sys
 from collections.abc import Callable
 from contextlib import contextmanager
@@ -113,9 +114,26 @@ class ConsoleApprover:
         self._prompt = prompt
 
     def has_person(self) -> bool:
-        """True when the input stream is a TTY, so a person can answer. Read-only."""
+        """True when the input stream is a TTY, so a person can answer. Read-only.
+
+        On Windows a TTY is not enough: the NUL device (``subprocess.DEVNULL``,
+        ``< NUL``) is a character device, so ``isatty()`` says True with no one
+        there (#210). There the stream's handle must also be a real console. A
+        stream with no OS file behind it (a test double) answers by ``isatty()``
+        alone. Any error while checking means no person: fail closed."""
         stream = self._stream or sys.stdin
-        return bool(getattr(stream, "isatty", lambda: False)())
+        try:
+            if not getattr(stream, "isatty", lambda: False)():
+                return False
+            if sys.platform != "win32":
+                return True
+            try:
+                fd = stream.fileno()
+            except io.UnsupportedOperation:
+                return True   # no OS file behind it: isatty() is its own answer
+            return _is_windows_console(fd)
+        except Exception:
+            return False
 
     def approve(self, request: ApprovalRequest) -> bool:
         if not self.has_person():
@@ -130,6 +148,23 @@ class ConsoleApprover:
         except EOFError:
             return False
         return answer.strip().lower() in ("y", "yes")
+
+
+def _is_windows_console(fd: int) -> bool:
+    """True only when ``fd`` is a real Windows console. ``GetConsoleMode`` fails on
+    NUL, a file or a pipe. Any error means False (fail closed). Windows only."""
+    try:
+        import ctypes
+        import msvcrt
+        from ctypes import wintypes
+        handle = msvcrt.get_osfhandle(fd)
+        get_mode = ctypes.WinDLL("kernel32", use_last_error=True).GetConsoleMode
+        get_mode.argtypes = (wintypes.HANDLE, ctypes.POINTER(wintypes.DWORD))
+        get_mode.restype = wintypes.BOOL
+        mode = wintypes.DWORD()
+        return bool(get_mode(handle, ctypes.byref(mode)))
+    except Exception:
+        return False
 
 
 # The active policy. The default is safe: prompt when interactive, deny otherwise.
