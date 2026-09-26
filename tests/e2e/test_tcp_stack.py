@@ -19,6 +19,7 @@ class TcpThermostat(shal.Driver):
     kind = shal.MessageTransport
 
     @shal.idempotent
+    @shal.op("Read the temperature now.", unit="celsius", side_effect="none")
     def read_celsius(self) -> float:
         return self.bus.exchange(self.addr, {"cmd": "temp"})["value"]
 

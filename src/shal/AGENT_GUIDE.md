@@ -87,10 +87,10 @@ class MyThing(Driver):                     # a capability is OPTIONAL — see be
      **empty / "no data yet" success** (raise instead; the device just isn't ready).
    - `"write"` → a **benign** write (instant, reversible — runs free).
    - `"actuator"` (physical motion) / `"config"` → **gated**: stops for human approval.
-   - *Forget to annotate? It defaults to gated (fail-closed), and `check_driver` warns.
-     On an `@idempotent` op it infers `"none"` and runs ungated, so `check_driver`
-     reports a problem and `shal check` exits 1: declare it.*
-4. **`@idempotent`** on a read lets the framework auto-retry it; never on a write.
+   - *Forget to annotate? The op is treated as `"actuator"` — gated and audited
+     (fail-closed), `@idempotent` or not — and `check_driver` warns: declare it.
+     `side_effect="none"` is the only way to declare a read.*
+4. `@idempotent` is about retry safety, not about the label — put it on any op that is safe to send twice (a read, an absolute setpoint), never on one that is not (a relative move, an order). The label still decides the gate and the audit.
 5. **Connect lazily — never in `bind()`.** `bind()` only reads config; open the connection
    on the first real op via a guarded `_ensure_connected()` (above). Why: `shal tools` /
    `shal mcp` list the tool surface **offline** (tool metadata is static), so if `bind()`
@@ -200,8 +200,8 @@ they work.
    `side_effect`, and why you must connect lazily.
 2. **`@op` in [`driver.py`](driver.py).** `@op` is the contract behind rule 2 and
    3. It records the `side_effect` you declare, and if you forget it, the op is
-   gated by default. The one exception is an `@idempotent` op: it infers `"none"`
-   and runs free, so `shal check` fails it until you declare the label.
+   gated and audited by default — `@idempotent` or not — and `shal check` warns
+   until you declare the label.
 3. **The typed protocols in [`capabilities.py`](capabilities.py).** A capability
    like `PowerSupply` or `TemperatureSensor` names a set of methods. Claim one,
    and your driver works like any other driver of that kind.
@@ -258,7 +258,9 @@ this report and exits 1:
   "problems": [
     "get_volume: missing @shal.op description"
   ],
-  "warnings": [],
+  "warnings": [
+    "get_volume: no side_effect declared; treated as actuator (gated, audited). Declare it — \"none\" for a read, \"write\" for a benign, reversible change, \"config\"/\"actuator\" for a gated one."
+  ],
   "checked": [
     "static: capability ops discovered",
     "static: catalog entry + schemas well-formed",
@@ -266,12 +268,14 @@ this report and exits 1:
   ]
 }
 ```
-`ok` is `false` because `problems` is not empty. An op problem starts with the name
-of the op. The fix is one line, added directly above `def get_volume`:
+`ok` is `false` because `problems` is not empty. An op problem or warning starts
+with the name of the op. The warning says what the missing label costs: until you
+declare it, `get_volume` is gated like an actuator. The fix is one line, added
+directly above `def get_volume`:
 ```python
     @op("Read the current volume (0-100).", side_effect="none")
 ```
-Run the same command again: it exits 0, and `problems` is `[]`. Exit 2 means the
+Run the same command again: it exits 0, and `problems` and `warnings` are `[]`. Exit 2 means the
 check could not run (for example, a wrong `module:Class`); the reason is on stderr.
 
 ### Side effects for software

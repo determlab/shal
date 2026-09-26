@@ -201,7 +201,8 @@ def load(source) -> Hal:
 
 def _effect(fn) -> dict:
     """side_effect + idempotency for an op: explicit @shal.op wins, else inferred
-    from @idempotent (a read is 'none' and safe to repeat)."""
+    fail-closed as 'actuator' (driver.inferred_side_effect). @idempotent is only
+    about retry, never the label (#194)."""
     meta = getattr(fn, "__shal_op__", None) or {}
     idem = bool(getattr(fn, "__shal_idempotent__", False))
     side = inferred_side_effect(fn)

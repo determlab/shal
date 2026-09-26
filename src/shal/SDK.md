@@ -311,14 +311,14 @@ def start_cleaning(self) -> None:
   SHAL exists to prevent.
 - `@idempotent` only on ops safe to run twice (reads; absolute setpoints
   re-asserted). Relative moves / counters / toggles: never.
-- **A write/actuator op you want audited must NOT be `@idempotent`.** The audit
-  trail records state-changing *commands*, and the audit fires only for
-  **non-idempotent** ops (so a retried read isn't logged as a command). So even
-  an absolute setpoint like `set_voltage` — although technically retry-safe —
-  is left **unmarked** when it has `side_effect="write"`, so it lands in the
-  audit log. The conformance kit enforces this (a write op that produces no
-  audit record fails). Rule of thumb: mark reads `@idempotent`; leave
-  writes/actuators unmarked.
+- **`@idempotent` is about retry, never the label** (#194). The `side_effect`
+  label alone decides the gate and the audit: every op that is not `"none"` is
+  audited, `@idempotent` or not, so an absolute setpoint like `set_voltage`
+  (`@idempotent`, `side_effect="write"`) is retried on a lost delivery AND lands
+  in the audit log. A gated op is approved once; the retry after a
+  `delivered="no"` drop does not ask again, and its one outcome record carries
+  `attempt: 2`. An op with no label is `"actuator"` even when it is
+  `@idempotent` — declare `side_effect="none"` for a read.
 - **Device-said-no ≠ transport failure.** If the transport succeeded but the
   device returned an error code, raise your own `shal.Error` subclass — the
   retry machinery must not see it.
@@ -368,11 +368,10 @@ assert report.ok, str(report)
 Verifies: `llm_ready` + complete `@op` metadata, catalog entry + all schemas
 well-formed, declared limits **actually reject** out-of-range calls pre-I/O,
 write ops **actually produce audit records**, capability protocols actually
-`isinstance`. Warnings flag numeric write params with no declared limit, and an
-`@op` with no `side_effect` (legal, inferred `"actuator"` and gated — but declare it).
-An `@idempotent` op with no `side_effect` is a **problem**, not a warning: it is
-inferred `"none"` and runs ungated, and an idempotent op is not always a read (an
-absolute setpoint is an idempotent write). Declare `"none"` or `"write"` (#183).
+`isinstance`. Warnings flag numeric write params with no declared limit, and any
+op with no `side_effect`, `@idempotent` or not (legal: it is treated as
+`"actuator"`, gated and audited — but declare it; #194). The warning reads
+`<op>: no side_effect declared; treated as actuator (gated, audited). Declare it — "none" for a read, "write" for a benign, reversible change, "config"/"actuator" for a gated one.`
 A generated driver is not done until this is green.
 
 **Your tests must additionally cover** (with the sim): one value-correctness

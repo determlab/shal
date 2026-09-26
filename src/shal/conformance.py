@@ -81,32 +81,21 @@ def _static_checks(cls: type, report: Report) -> None:
             if not meta.get("description"):
                 report.problems.append(f"{name}: missing @shal.op description")
 
-    # an @op with no side_effect is legal and fails closed (driver.py
-    # `inferred_side_effect`: a non-idempotent op infers "actuator", gated) — safe,
-    # but silent. Say so, and name the fix (issue #162).
+    # ONE rule for omissions (ADR-001 addendum 4, #194; replaces #162's text and
+    # #183's problem): an op with no side_effect is legal and fails closed —
+    # driver.py `inferred_side_effect` makes it "actuator" (gated, audited),
+    # @idempotent or not. Safe, but silent: say so once, as a warning, and name
+    # the fix. A device op with no @op at all is unlabelled too (its missing
+    # description is already a problem above); a bus helper needs @op to be named.
     for name, fn in ops.items():
         meta = getattr(fn, "__shal_op__", None)
-        if (meta is not None and meta.get("side_effect") is None
-                and inferred_side_effect(fn) == "actuator"):
+        if meta is None and issubclass(cls, Transport):
+            continue
+        if (meta or {}).get("side_effect") is None:
             report.warnings.append(
-                f'{name}: no side_effect declared; inferred "actuator" (gated). '
-                f'Declare side_effect= — "none" for a read, "write" for a benign, '
-                f'reversible change, "config" or "actuator" for a gated one.')
-
-    # the one omission that OPENS the gate is a problem, not a warning (issue #183):
-    # an @idempotent op with no side_effect infers "none" and runs ungated, but an
-    # idempotent op is not always a read. Keyed off the declared label (None, not
-    # the inferred one) and the @idempotent marker; the loop above skips this case,
-    # so the op is reported once.
-    for name, fn in ops.items():
-        meta = getattr(fn, "__shal_op__", None)
-        if (meta is not None and meta.get("side_effect") is None
-                and getattr(fn, "__shal_idempotent__", False)):
-            report.problems.append(
-                f'{name}: @idempotent with no side_effect is inferred "none" and '
-                f'runs ungated. An idempotent op is not always a read (an absolute '
-                f'setpoint is an idempotent write): declare side_effect explicitly '
-                f'— "none" for a read, "write" for a benign, reversible change.')
+                f'{name}: no side_effect declared; treated as actuator (gated, '
+                f'audited). Declare it — "none" for a read, "write" for a benign, '
+                f'reversible change, "config"/"actuator" for a gated one.')
 
     # catalog entry must build, and every schema in it must be valid JSON Schema
     try:
