@@ -408,7 +408,30 @@ def _resolve_env(value: Any) -> Any:
 
 
 def _bind_drivers(roots: list[Node]) -> None:
-    """Resolve compatibles, instantiate, validate kinds + address grammar, bind."""
+    """Resolve compatibles, instantiate, validate kinds + address grammar, bind.
+
+    If ANY step raises (#220), what was already bound — each bound Transport
+    driver and each child bus one provided — is closed, in reverse order, once,
+    and the ORIGINAL exception is re-raised unchanged. A close that raises during
+    that cleanup is logged and never replaces it. No Hal exists yet, so the Hal
+    fill's cleanup (#217) never runs on top of this one."""
+    opened: list[tuple[Node, Transport]] = []
+    try:
+        _bind_all(roots, opened)
+    except BaseException:
+        for node, t in reversed(opened):
+            try:
+                t.close()
+            except Exception as e:  # noqa: BLE001 — never mask the original
+                # the type only: a close message may carry an address (rule 7)
+                logger.warning("close after a failed bind raised %s at %s",
+                               type(e).__name__, node.path,
+                               extra={"event": "bind_cleanup_failed",
+                                      "path": node.path})
+        raise
+
+
+def _bind_all(roots: list[Node], opened: list[tuple[Node, Transport]]) -> None:
     for root in roots:
         for node in root.walk():
             compatible = node.spec.get("driver")
@@ -431,6 +454,8 @@ def _bind_drivers(roots: list[Node]) -> None:
                 bus.validate_address(node.address)  # grammar at load, decision 2
 
             drv.bind(node)
+            if isinstance(drv, Transport):
+                opened.append((node, drv))
             # redact_url: a ${ENV} address may carry userinfo creds (issue #117)
             logger.debug("bound %s at %s", compatible, node.path,
                          extra={"event": "bind", "path": node.path,
@@ -439,3 +464,4 @@ def _bind_drivers(roots: list[Node]) -> None:
                 child_bus = drv.provide_child_bus(child)
                 if child_bus is not None:
                     child.exposed_bus = child_bus
+                    opened.append((child, child_bus))

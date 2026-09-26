@@ -151,6 +151,13 @@ All notable changes to this project are documented here. The format follows
   no `calls` key, instead of `calls: []` ("collected, and there were none").
 
 ### Fixed
+- **A `bind()` that raises during a load now closes what was already bound**
+  (#220). `loader.load_tree` closes each Transport driver and child bus it had
+  bound, in reverse order, exactly once, then re-raises the original exception
+  object unchanged (a `LoadError` or any other). A close that raises during this
+  cleanup is logged (`event="bind_cleanup_failed"`, type and path only) and never
+  replaces the original. No Hal is built, so #217's fill cleanup does not close
+  them a second time.
 - **A device refusal now leaves an outcome audit record** (#198). When the body of
   an audited op (not `side_effect="none"`, on a device driver) raises a
   `shal.Error` — the device said no — `shal.audit` gets one outcome record,
