@@ -147,11 +147,14 @@ def _probe(bridge, which: str | None) -> int:
     if which:
         d = next((x for x in defs if x["name"] == which), None)
         if d is None:
-            raise SystemExit(f"shal-mcp: no tool '{which}'. Run `--probe` (no value) "
-                             f"to list what this topology exposes.")
+            # `shal probe` users see these too (#166): a neutral `shal:` prefix, and
+            # only commands both entry points have (they ship in one package).
+            raise SystemExit(f"shal: no tool '{which}'. Run `shal probe <topology>` "
+                             f"(no tool) to list what this topology exposes.")
         if not is_read(d):
-            raise SystemExit(f"shal-mcp: --probe runs reads only; '{which}' changes "
-                             f"hardware — run the MCP server (writes are gated).")
+            raise SystemExit(f"shal: `shal probe` runs reads only; '{which}' changes "
+                             f"hardware — use `shal call` (gated ops are refused "
+                             f"until approved).")
         out = bridge.call(which, {})
         print(json.dumps(out.get("result", out) if isinstance(out, dict) else out))
         return 0

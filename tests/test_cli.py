@@ -1,5 +1,6 @@
 """shal CLI front door (issue #54): probe / tools dispatch over a local driver."""
 import asyncio
+import subprocess
 import sys
 
 import pytest
@@ -50,21 +51,43 @@ def test_probe_prints_a_real_read(setup, capsys):
     assert "dev__level: 11" in out
 
 
-def test_probe_footer_names_real_commands(tmp_path, capsys):
-    # The shipped sim topology from the README Quick Start (#166): the footer must
-    # name `shal probe` and `shal call`, never a `--probe` flag this command lacks.
-    yml = tmp_path / "sim.yaml"
-    yml.write_text("shal_version: 1\nroot:\n  bus:\n    driver: shal,sim-i2c\n"
-                   "    address: sim0\n    children:\n      temp0:\n"
-                   "        id: ambient_temp\n        driver: shal,sim-sensor\n"
-                   "        address: 0x48\n", encoding="utf-8")
-    rc = cli.main(["probe", str(yml)])
-    out = capsys.readouterr().out
-    assert rc == 0
-    assert out.splitlines()[-1] == (
+_SIM_YAML = ("shal_version: 1\nroot:\n  bus:\n    driver: shal,sim-i2c\n"
+             "    address: sim0\n    children:\n      temp0:\n"
+             "        id: ambient_temp\n        driver: shal,sim-sensor\n"
+             "        address: 0x48\n")
+
+
+def _probe_proc(tmp_path, *tool: str) -> subprocess.CompletedProcess:
+    """`shal probe` on the README Quick Start sim topology, in a fresh process."""
+    (tmp_path / "sim.yaml").write_text(_SIM_YAML, encoding="utf-8")
+    return subprocess.run([sys.executable, "-m", "shal.cli", "probe", "sim.yaml", *tool],
+                          cwd=tmp_path, capture_output=True, text=True, encoding="utf-8",
+                          timeout=60)
+
+
+# #166: no message may point a `shal` user at a flag `shal` does not have.
+def test_probe_footer_names_real_commands(tmp_path):
+    r = _probe_proc(tmp_path)
+    assert r.returncode == 0, r.stderr
+    assert r.stdout.splitlines()[-1] == (
         "# writes — not run by `shal probe`; use `shal call` "
         "(gated ops are refused until approved): ambient_temp__set_target")
-    assert "--probe" not in out
+    assert "--probe" not in r.stdout + r.stderr
+
+
+def test_probe_unknown_tool_names_shal_probe(tmp_path):
+    r = _probe_proc(tmp_path, "nope")
+    assert r.returncode == 1 and r.stdout == ""
+    assert r.stderr.strip() == ("shal: no tool 'nope'. Run `shal probe <topology>` "
+                                "(no tool) to list what this topology exposes.")
+
+
+def test_probe_write_tool_names_shal_call(tmp_path):
+    r = _probe_proc(tmp_path, "ambient_temp__set_target")
+    assert r.returncode == 1 and r.stdout == ""
+    assert r.stderr.strip() == (
+        "shal: `shal probe` runs reads only; 'ambient_temp__set_target' changes "
+        "hardware — use `shal call` (gated ops are refused until approved).")
 
 
 def test_probe_named_read(setup, capsys):
