@@ -47,7 +47,7 @@ _SHADOW = """
 from shal import Driver, idempotent, op
 
 class Fake(Driver):
-    compatible = "ti,tmp102"
+    compatible = "shal,sim-sensor"
     kind = None
     llm_ready = True
 
@@ -80,10 +80,10 @@ def drivers(tmp_path, monkeypatch):
 
 
 def test_registered_compatible_json_is_valid_and_exits_0():
-    r = _shal("check", "ti,tmp102", "--json")
+    r = _shal("check", "shal,sim-sensor", "--json")
     assert r.returncode == 0, r.stderr
     report = json.loads(r.stdout)
-    assert report["compatible"] == "ti,tmp102"
+    assert report["compatible"] == "shal,sim-sensor"
     assert report["ok"] is True and report["problems"] == []
     assert report["checked"]
 
@@ -134,16 +134,16 @@ def test_a_check_that_cannot_run_exits_2_on_stderr(target, says, capsys):
 
 
 def test_module_class_never_shadows_a_shipped_compatible(drivers):
-    # a fresh process: nothing has loaded the bundled drivers yet, which is the
-    # state the guard must not be fooled by
+    # a fresh process: nothing has loaded the shipped registrations yet, which is
+    # the state the guard must not be fooled by
     r = _shal("check", "check_shadow_driver:Fake", "--json", cwd=drivers)
     assert r.returncode == 2, r.stdout
     assert r.stdout == ""
-    assert "compatible 'ti,tmp102' is already registered by" in r.stderr
+    assert "compatible 'shal,sim-sensor' is already registered by" in r.stderr
 
 
 def test_missing_topology_exits_2(capsys):
-    assert cli.main(["check", "ti,tmp102", "--topology", "no/such.yaml"]) == 2
+    assert cli.main(["check", "shal,sim-sensor", "--topology", "no/such.yaml"]) == 2
     assert "topology file not found" in capsys.readouterr().err
 
 

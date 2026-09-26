@@ -2,32 +2,29 @@
 
 CH1/CH2 are 0-30 V, CH3 is 0-5 V. A value above the channel's rating is a
 LimitError raised by the framework BEFORE the op body, so the bus records no
-write at all."""
-import textwrap
+write at all.
+
+Run from anywhere: this file puts its own folder on sys.path, so `driver` and
+`sim` are the two files next to it."""
+import os
+import sys
 
 import pytest
 
-import shal
-from shal.buses.sim_scpi import SimScpiBus
-from shal.conformance import check_driver
-from shal.drivers.rigol_dp832 import RigolDp832
+sys.path.insert(0, os.path.dirname(__file__))
 
-RACK_YAML = """
-    shal_version: 1
-    root:
-      bench:
-        id: bench
-        driver: shal,sim-scpi
-        address: sim0
-        children:
-          ch1: {id: ch1, driver: "rigol,dp832", address: 1}
-          ch2: {id: ch2, driver: "rigol,dp832", address: 2}
-          ch3: {id: ch3, driver: "rigol,dp832", address: 3}
-"""
+import sim  # noqa: E402,F401     (registers the sim model)
+from driver import RigolDp832  # noqa: E402  (registers rigol,dp832)
+
+import shal  # noqa: E402
+from shal.buses.sim_scpi import SimScpiBus  # noqa: E402
+from shal.conformance import check_driver  # noqa: E402
+
+_TOPO = os.path.join(os.path.dirname(__file__), "topology.yaml")
 
 
 @pytest.fixture
-def rack(tmp_path, monkeypatch):
+def rack(monkeypatch):
     """The loaded rack plus a list of every exchange() the sim bus receives."""
     calls: list = []
     real = SimScpiBus.exchange
@@ -37,9 +34,7 @@ def rack(tmp_path, monkeypatch):
         return real(self, addr, payload)
 
     monkeypatch.setattr(SimScpiBus, "exchange", spy)
-    p = tmp_path / "s.yaml"
-    p.write_text(textwrap.dedent(RACK_YAML), encoding="utf-8")
-    with shal.load(p) as hal:
+    with shal.load(_TOPO) as hal:
         yield hal, calls
 
 
@@ -76,6 +71,6 @@ def test_tool_schema_advertises_the_per_channel_rating(rack):
 
 
 def test_check_driver_reports_no_problems_and_no_warnings():
-    report = check_driver(RigolDp832)
+    report = check_driver(RigolDp832, _TOPO)
     assert report.problems == []
     assert report.warnings == []

@@ -1,0 +1,10 @@
+# One ti,ads1115 on the sim I2C bus. Not a registered driver: name its files (D5):
+#   shal probe topology.yaml --drivers ads1115_driver.py --drivers ads1115_sim.py
+shal_version: 1
+root:
+  bench:
+    id: bench
+    driver: shal,sim-i2c
+    address: sim0
+    children:
+      dev: {id: dev, driver: "ti,ads1115", address: 0x48}

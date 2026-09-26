@@ -10,7 +10,7 @@ adapter — not the front door.
     shal call lab.yaml dev read_celsius --json   # run one op; a gated op is refused (exit 2)
     shal mcp   lab.yaml                  # serve to an MCP host (the adapter)
     shal probe lab.yaml --drivers ./drivers/   # load local/unpackaged drivers
-    shal check ti,tmp102 --json          # driver conformance as a JSON report
+    shal check shal,sim-sensor --json    # driver conformance as a JSON report
     shal check driver:MyThing --topology sim.yaml   # a local class + live sim probes
 
 The legacy ``shal-mcp`` command still works (it is ``shal mcp``).
@@ -142,7 +142,7 @@ def _load_check_target(target: str) -> type:
     compatible = getattr(cls, "compatible", "")
     if compatible:
         # load what resolve()/catalog() would see first, or the guard misses a
-        # bundled/installed claimant (ti,tmp102) and the check silently shadows it
+        # shipped/installed claimant (shal,sim-sensor) and the check silently shadows it
         registry._load_entry_points()
         registry._ensure_bundled()
         claimed = registry._entries.get(compatible) or []
@@ -362,11 +362,75 @@ def _strip_front_matter(text: str) -> str:
     return text[eol + 1:].lstrip("\r\n") if eol != -1 else ""
 
 
+def _references() -> dict[str, object]:
+    """The ADK reference set (#149): name -> its folder in the installed package.
+    Found on disk, never imported — a reference is guide material, not a driver
+    that `import shal` registers (D1)."""
+    from importlib.resources import files
+    root = files("shal") / "adk" / "reference"
+    if not root.is_dir():
+        return {}
+    return {d.name: d for d in sorted(root.iterdir(), key=lambda d: d.name)
+            if d.is_dir() and (d / "driver.py").is_file()}
+
+
+def _reference_files(ref) -> list:
+    """The four files of one reference, in reading order: driver, sim twin, test,
+    topology."""
+    order = {"driver.py": 0, "sim.py": 1, "topology.yaml": 3}
+    picked = [f for f in ref.iterdir() if f.is_file()
+              and (f.name in order or (f.name.startswith("test_") and f.name.endswith(".py")))]
+    return sorted(picked, key=lambda f: (order.get(f.name, 2), f.name))
+
+
+def _reference_summary(ref) -> str:
+    """The first line of the driver's module docstring, read as text (no import)."""
+    import ast
+    doc = ast.get_docstring(ast.parse((ref / "driver.py").read_text(encoding="utf-8")))
+    return (doc or "").strip().splitlines()[0] if doc else ""
+
+
+def _cmd_docs_list() -> int:
+    refs = _references()
+    print("ADK reference drivers — guide material to copy, not registered drivers.")
+    print("Each is four files: driver.py, sim.py (its twin), test_<name>.py, topology.yaml.")
+    print()
+    for name, ref in refs.items():
+        print(f"  {name:<14} {_reference_summary(ref)}")
+    print()
+    print("Print one:  shal docs --example <name>")
+    print("Run one:    shal probe topology.yaml --drivers driver.py --drivers sim.py")
+    return 0
+
+
+def _cmd_docs_example(name: str) -> int:
+    refs = _references()
+    ref = refs.get(name)
+    if ref is None:
+        print(f"shal docs: no reference named '{name}' "
+              f"(references: {', '.join(refs) or 'none'})", file=sys.stderr)
+        return 2
+    print(f"# ADK reference '{name}' — {_reference_summary(ref)}")
+    print(f"# Folder: {ref}")
+    print("# Not registered by `import shal`. Copy the four files, or run them as they are:")
+    print("#   shal probe topology.yaml --drivers driver.py --drivers sim.py")
+    for f in _reference_files(ref):
+        print()
+        print(f"# ==== {f.name} " + "=" * max(4, 60 - len(f.name)))
+        print(f.read_text(encoding="utf-8").rstrip())
+    return 0
+
+
 def _cmd_docs(args) -> int:
     """Print an in-package authoring doc so a pip-only agent has it offline: the
     provider-neutral 'add a device' guide by default, or the complete Driver & Bus SDK
-    contract with --sdk. Both ship in the wheel as package data (#55, #97)."""
+    contract with --sdk. Both ship in the wheel as package data (#55, #97).
+    ``--list`` names the ADK reference set and ``--example <name>`` prints one (#149)."""
     from importlib.resources import files
+    if getattr(args, "list", False):
+        return _cmd_docs_list()
+    if getattr(args, "example", None):
+        return _cmd_docs_example(args.example)
     doc = "SDK.md" if getattr(args, "sdk", False) else "AGENT_GUIDE.md"
     print(_strip_front_matter((files("shal") / doc).read_text(encoding="utf-8")))
     return 0
@@ -411,8 +475,13 @@ def main(argv: list[str] | None = None) -> int:
     m.set_defaults(func=_cmd_mcp)
 
     d = sub.add_parser("docs", help="print the in-package 'add a device' agent guide")
-    d.add_argument("--sdk", action="store_true",
-                   help="print the full Driver & Bus SDK — the complete authoring contract")
+    dg = d.add_mutually_exclusive_group()
+    dg.add_argument("--sdk", action="store_true",
+                    help="print the full Driver & Bus SDK — the complete authoring contract")
+    dg.add_argument("--list", action="store_true",
+                    help="list the ADK reference drivers (examples to copy)")
+    dg.add_argument("--example", metavar="NAME",
+                    help="print one ADK reference: driver, sim twin, test, topology")
     d.set_defaults(func=_cmd_docs)
 
     c = sub.add_parser(
@@ -429,7 +498,7 @@ def main(argv: list[str] | None = None) -> int:
                "exit: 0 no problems, 1 problems (warnings never fail), "
                "2 the check could not run")
     c.add_argument("target", metavar="<compatible|module:Class>",
-                   help="a registered compatible (ti,tmp102) or module:Class")
+                   help="a registered compatible (shal,sim-sensor) or module:Class")
     c.add_argument("--topology", metavar="t.yaml", default=None,
                    help="a sim topology that binds this driver — runs the live probes")
     c.add_argument("--json", action="store_true",

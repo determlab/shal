@@ -13,6 +13,15 @@ Pick the device's `compatible` id and target domain library (`drivers/sensors`,
 `drivers/instruments`, `drivers/data`, …) from
 [docs/CATALOG.md](../../../../docs/CATALOG.md) — claim it there before you start.
 
+Start from the closest **ADK reference**: `shal docs --list` names them
+(`tmp102` — a plain read; `mcp23017` — `none`/`config`/`actuator` on one device;
+`rigol_dp832` — SCPI, setpoint `write` vs energise `actuator`, declared limits),
+and `shal docs --example <name>` prints its four files: `driver.py`, `sim.py`
+(the twin, next to the driver), `test_<name>.py`, `topology.yaml`. They ship in
+the wheel as guide material and are **not registered** — no `vendor,part` driver
+ships registered (D1, #149) — so your copy registers only when imported
+(`--drivers driver.py --drivers sim.py`, or `@register` in-process).
+
 ## Skeleton
 
 `llm_ready = True` + `@op` are **required for device drivers** — the agent surface

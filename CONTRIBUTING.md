@@ -48,8 +48,10 @@ Requires Python ≥ 3.10 for core. CI runs the suite on Linux and Windows across
 ## Adding a driver or bus
 
 Don't edit the core to add hardware support — publish a package that exposes your
-driver via the `shal.drivers` entry point (the bundled drivers are wired the same
-way in `pyproject.toml`). The `integrations/claude-code/skills/` folder has step-by-step guides:
+driver via the `shal.drivers` entry point (the framework's own `shal,*` buses are
+wired the same way in `pyproject.toml`; no `vendor,part` driver ships, D1). To start
+one, copy the closest ADK reference: `shal docs --list`, then
+`shal docs --example <name>`. The `integrations/claude-code/skills/` folder has step-by-step guides:
 `shal-build-driver`, `shal-build-bus`, `shal-build-yaml`.
 
 ## Pull requests

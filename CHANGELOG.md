@@ -14,6 +14,16 @@ All notable changes to this project are documented here. The format follows
 ## [Unreleased]
 
 ### Added
+- **The ADK reference set, and `shal docs --list` / `--example`** (#149, R7 in
+  `adk.md` §3.6) — `ti,tmp102`, `microchip,mcp23017` and `rigol,dp832` ship inside
+  the Authoring Kit at `src/shal/adk/reference/<name>/`, each four files: `driver.py`,
+  `sim.py` (its twin, moved out of the bus module), `test_<name>.py`,
+  `topology.yaml`. They are guide material, **not registered drivers**: no entry
+  point, not imported by `import shal`, absent from `shal.catalog()`. `shal docs
+  --list` names them; `shal docs --example <name>` prints the four files and the
+  folder they live in. Run one by naming its files (D5):
+  `shal probe topology.yaml --drivers driver.py --drivers sim.py`. `shal check` on
+  each reports zero problems and zero warnings, live probes included.
 - **`shal call` — run one op from the command line; the gate refuses on the first
   screen** (#160, R11 in `adk.md` §3.6) — `shal call <topology> <node> <op>
   [value…] [--json]`. An op labelled `none` or `write` runs and prints its result
@@ -150,6 +160,21 @@ All notable changes to this project are documented here. The format follows
   cloud-device example with both `config:` and `address`.
 
 ### Changed
+- **BREAKING: no device driver ships registered** (#149; D1 re-affirmed on #110,
+  D7 amended) — the seven bundled drivers and the `nxp,pca9548` mux chip leave the
+  package's registry and its `shal.drivers` entry points. `ti,tmp102`,
+  `microchip,mcp23017` and `rigol,dp832` become the ADK reference set (above);
+  `microchip,mcp9808`, `ti,ads1115`, `ti,ina219` and `keysight,34461a` move to
+  `examples/drivers/<name>/` with their sim models and tests (the examples CI job
+  runs `pytest examples/drivers`). `nxp,pca9548` moves to `examples/drivers/pca9548/`
+  with its sim model; its tests stay in `tests/test_buses.py` and
+  `tests/test_sim_sensor.py`, which import it from there. Code moved, not rewritten:
+  only import paths changed. The mux **mechanism** — `MuxState`, `MuxChannel` —
+  stays in `shal.buses.mux`; only the chip left. The `shal.drivers` package is
+  gone. A bare install's `shal.catalog()` now lists only `shal,*` ids, and the D1
+  test asserts exactly that — the `KNOWN_VENDOR_IDS` allowlist #156 left is
+  deleted. A topology that names one of these ids now needs `--drivers` (or an
+  import) to resolve; `shal,sim-sensor` is the device a bare install reads.
 - **`microchip,mcp23017` `set_direction` is labelled `config`, not `write`** (#151,
   R8b in `adk.md` §3.6) — turning a pin into an output arms it, so the call now
   stops at the approval gate like any `config` op. `set_direction` and `write_pin`

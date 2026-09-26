@@ -32,15 +32,20 @@ root:
    the tree is wrong.
 3. **Pick drivers by `compatible`**. Bundled buses: `shal,local`, `shal,ssh-host`,
    `shal,i2c-cli`, `shal,spi-cli`, `shal,tcp`, `shal,http`, `shal,scpi-raw`,
-   `shal,sim-i2c`, `shal,sim-scpi`, `shal,sim-msg`, `nxp,pca9548` (mux). The sim
+   `shal,sim-i2c`, `shal,sim-scpi`, `shal,sim-msg`. The sim
    family's own device: `shal,sim-sensor` (a `TemperatureSensor` whose reading
    drifts, with one gated `config` op `set_target`; it binds only under
-   `shal,sim-i2c`). Bundled device drivers: `ti,tmp102`, `ti,ina219`,
-   `ti,ads1115`, `microchip,mcp9808`,
-   `microchip,mcp23017`, `rigol,dp832`, `keysight,34461a`. The **authoritative,
-   always-current** list is `shal.catalog()` (`{"buses": [...], "drivers": [...]}`).
-   A driver must be installed (entry point group `shal.drivers`) or explicitly
-   registered — an unknown compatible fails the load.
+   `shal,sim-i2c`). **No `vendor,part` device driver ships registered** (D1,
+   #149). The ADK reference set — `ti,tmp102`, `microchip,mcp23017`,
+   `rigol,dp832` — ships as guide material: `shal docs --list` names them,
+   `shal docs --example <name>` prints one (driver, sim twin, test, topology).
+   `ti,ina219`, `ti,ads1115`, `microchip,mcp9808`, `keysight,34461a` and the
+   `nxp,pca9548` mux chip are repo examples under `examples/drivers/`. Run any
+   of them by naming its files: `--drivers driver.py --drivers sim.py`. The
+   **authoritative, always-current** list is `shal.catalog()`
+   (`{"buses": [...], "drivers": [...]}`). A driver must be installed (entry
+   point group `shal.drivers`) or explicitly registered (`--drivers`, or an
+   import that runs `@shal.register`) — an unknown compatible fails the load.
 4. **Address per bus family**: I2C `0x03`–`0x77` (int), i2c-cli `/dev/i2c-<n>`,
    spi-cli `/dev/spidevX.Y`, ssh `user@host`, tcp `host:port`, http(s) a URL.
    The PARENT validates the child's address at load.

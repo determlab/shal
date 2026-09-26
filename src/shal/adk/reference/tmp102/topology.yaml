@@ -1,0 +1,14 @@
+# One TMP102 on the sim I2C bus. The driver is not registered by `import shal`,
+# so name its two files when you run it (D5):
+#   shal probe topology.yaml --drivers driver.py --drivers sim.py
+shal_version: 1
+root:
+  bench:
+    id: bench
+    driver: shal,sim-i2c
+    address: sim0
+    children:
+      tmp102:
+        id: tmp102
+        driver: ti,tmp102
+        address: 0x48
