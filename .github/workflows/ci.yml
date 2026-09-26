@@ -158,6 +158,43 @@ jobs:
       - name: README Quick Start, as printed (pip line installs this commit's wheel)
         run: python dev/quickstart/run_readme.py --venv "${{ runner.temp }}/quickstart-venv" --dist dist
 
+  references:
+    # The ADK reference set is guide material a cold agent copies (#153, ADK
+    # §3.6 / R7): a reference that quietly gains a warning teaches the wrong
+    # pattern to every agent that copies it. So every change runs
+    # `shal check driver:<Class> --topology topology.yaml --json` in each
+    # reference folder, the way an operator would, and fails on any problem OR
+    # warning (stricter than `shal check`'s own exit code, which counts only
+    # problems). The set is found by listing the folder (every subfolder with
+    # a driver.py), never a hard-coded list — see dev/adk/check_references.py.
+    #
+    # It checks what ships: the folders under site-packages/shal/adk/reference
+    # in a clean venv holding the wheel built from this commit, not src/.
+    # Both OSes, as the quickstart job: each is one wheel build and six short
+    # checks, and a Windows path or line-ending break in a shipped reference
+    # would otherwise reach a Windows user first.
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Build the wheel from this commit
+        run: |
+          pip install build
+          python -m build --wheel
+      - name: Clean venv with only the wheel installed
+        shell: bash
+        run: |
+          python -m venv "${{ runner.temp }}/references-venv"
+          "${{ runner.temp }}/references-venv/${{ runner.os == 'Windows' && 'Scripts' || 'bin' }}/python" -m pip install dist/*.whl
+      - name: shal check on every installed reference (fails on any problem or warning)
+        run: python dev/adk/check_references.py --venv "${{ runner.temp }}/references-venv"
+
   latest-deps:
     # Upstream canary (#106). The `test` job installs `.[dev]`, which honours the
     # declared ceilings (`mcp>=1.0,<2` since #107) — so it can never see the next
