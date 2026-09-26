@@ -50,6 +50,23 @@ def test_probe_prints_a_real_read(setup, capsys):
     assert "dev__level: 11" in out
 
 
+def test_probe_footer_names_real_commands(tmp_path, capsys):
+    # The shipped sim topology from the README Quick Start (#166): the footer must
+    # name `shal probe` and `shal call`, never a `--probe` flag this command lacks.
+    yml = tmp_path / "sim.yaml"
+    yml.write_text("shal_version: 1\nroot:\n  bus:\n    driver: shal,sim-i2c\n"
+                   "    address: sim0\n    children:\n      temp0:\n"
+                   "        id: ambient_temp\n        driver: shal,sim-sensor\n"
+                   "        address: 0x48\n", encoding="utf-8")
+    rc = cli.main(["probe", str(yml)])
+    out = capsys.readouterr().out
+    assert rc == 0
+    assert out.splitlines()[-1] == (
+        "# writes — not run by `shal probe`; use `shal call` "
+        "(gated ops are refused until approved): ambient_temp__set_target")
+    assert "--probe" not in out
+
+
 def test_probe_named_read(setup, capsys):
     yml, drv = setup
     rc = cli.main(["probe", yml, "dev__level", "--drivers", drv])

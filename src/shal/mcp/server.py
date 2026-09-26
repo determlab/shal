@@ -167,7 +167,10 @@ def _probe(bridge, which: str | None) -> int:
         except Exception as e:  # one bad device shouldn't sink the whole snapshot
             print(f"{d['name']}: <error: {type(e).__name__}: {e}>")
     if writes:
-        print("# writes — not run by --probe (start the MCP server to use them): "
+        # One line for `shal probe` and the legacy `shal-mcp` probe flag alike (#166):
+        # `shal probe` is the front door, and `shal call` ships in the same package.
+        print("# writes — not run by `shal probe`; use `shal call` "
+              "(gated ops are refused until approved): "
               + ", ".join(d["name"] for d in writes))
     return 0
 

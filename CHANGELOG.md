@@ -137,6 +137,12 @@ All notable changes to this project are documented here. The format follows
   that — it's a static metadata check and needs no venv of its own.
 
 ### Fixed
+- **`shal probe` no longer points at a `--probe` flag it does not have** (#166) —
+  the footer that lists the writes now reads ``# writes — not run by `shal probe`;
+  use `shal call` (gated ops are refused until approved): <tools>``. The legacy
+  `shal-mcp --probe` prints the same line: `shal probe` is the front door and
+  `shal call` ships in the same package. The `shal-mcp --probe` flag itself is
+  unchanged.
 - **`rigol,dp832` `set_voltage` declares its limits from the DP832 ratings**
   (#150, R8a in `adk.md` §3.6) — `params=` bounds `volts` to 0-30 V (CH1/CH2),
   and `op_limits()` narrows CH3 to 0-5 V (Rigol DP800 Series datasheet). A value

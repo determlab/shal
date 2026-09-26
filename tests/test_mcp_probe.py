@@ -46,7 +46,11 @@ def test_probe_snapshot_prints_a_real_read(bridge, capsys):
     out = capsys.readouterr().out
     assert rc == 0
     assert "dev__temp: 21" in out                    # a real read landed
-    assert "not run by --probe" in out and "dev__move" in out  # write listed, never run
+    # The footer names commands that exist (#166): `shal probe`, then `shal call`.
+    assert out.splitlines()[-1] == (
+        "# writes — not run by `shal probe`; use `shal call` "
+        "(gated ops are refused until approved): dev__move")
+    assert "--probe" not in out
     assert "moved" not in out                        # the actuator was NOT executed
 
 
