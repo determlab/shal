@@ -222,14 +222,28 @@ That is the product in one command. **The read ran. The write did not.**
 and it says so instead of doing it quietly. Run the command again and the
 reading moves: it is a simulated room that drifts, not a fixed number.
 
-Ask which is which:
+Now try the write yourself:
 
 ```bash
-shal tools sim.yaml
+shal call sim.yaml ambient_temp set_target 30
 ```
 
-Every operation is labelled at its source — `[read ]` runs freely, `[gated]`
-stops for a human. Your driver declares the label; nothing infers it.
+```
+shal call: refused: ambient_temp.set_target is labelled 'config'. A 'config' op needs a person's approval, and shal call cannot give it. Nothing was sent to the device.
+  To run it with approval, either:
+    - serve the topology to an MCP host:  shal mcp sim.yaml
+      (the host shows the call to a person, who approves it), or
+    - in Python:  with shal.approver(<your Approver>): hal.get_device('ambient_temp').set_target(...)
+  There is no --approve flag: the agent that runs a command cannot approve its own call.
+```
+
+It exits 2 and **nothing reached the device.** A read of the same device runs
+normally — `shal call sim.yaml ambient_temp read_celsius` prints a number.
+
+That last line is the design: **the thing making the call is never the thing
+that approves it.** Your driver declares each operation's label; nothing infers
+it, and no flag overrides it. `shal tools sim.yaml` lists every operation with
+its label if you want to see them all.
 
 ### From your own code
 
