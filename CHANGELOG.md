@@ -27,6 +27,13 @@ All notable changes to this project are documented here. The format follows
   CI job (Linux + Windows) runs every sample from a clean venv holding the built
   wheel and fails on a non-zero exit, unless the sample's `expect.json` names
   the exit code and output it must end with (`dev/samples/run_samples.py`).
+- **Sample `limits`** (#207): measure a simulated room and check a limit (PASS),
+  check a reading against a limit it cannot meet (FAIL), then ask to change the
+  room's target, a write that goes through the approval gate. It never sets an
+  approver: in a terminal the default console approver asks (`y` sets the target
+  and says so; `N` refuses, exit 2); with no terminal it refuses at once, prints
+  the reason on one line and exits 2 ("no approver is set and stdin is not a
+  terminal"), and no write reaches the sim. `shal docs --sample limits --to DIR`.
 - **Which side effects require approval is now a policy input, and the policy is
   the operator's** (#114, RFC-001 Q2, ADR-001 addendum 5, D27) —
   `shal.set_gated_effects(...)` / `shal.gated_effects(...)` (a `with` scope) /
