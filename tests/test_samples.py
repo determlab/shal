@@ -73,6 +73,22 @@ def test_samples_json_is_the_same_list(capsys):
     assert hello["write_with"] == "shal docs --sample hello --to <DIR>"
 
 
+def test_no_sample_is_a_placeholder(capsys):
+    """#208: hello is a real sample now; nothing a person sees calls it a placeholder."""
+    assert cli.main(["docs", "--samples"]) == 0
+    assert "placeholder" not in capsys.readouterr().out.lower()
+    assert cli.main(["docs", "--samples", "--json"]) == 0
+    assert "placeholder" not in json.dumps(_json(capsys)).lower()
+    assert cli.main(["docs", "--sample", "hello"]) == 0
+    assert "placeholder" not in capsys.readouterr().out.lower()
+
+
+def test_hello_expects_exit_0_and_its_reading():
+    expect = load_expect(SAMPLES_DIR / "hello")
+    assert expect["exit"] == 0
+    assert "ambient_temp: " in expect["stdout_has"] and "Traceback" in expect["stderr_lacks"]
+
+
 def test_a_new_folder_is_a_sample_without_editing_code(tmp_path, monkeypatch, capsys):
     root = tmp_path / "samples"
     for name in ("zeta", "alpha"):

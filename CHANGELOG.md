@@ -23,7 +23,7 @@ All notable changes to this project are documented here. The format follows
   empty folder and prints the one command that runs it, alone on stdout. A
   non-empty DIR is refused with the reason, nothing written, exit 1. Samples
   ship as package data under `shal/samples/<name>/` (a `run.py`, found by
-  listing the folder); this change adds one placeholder, `hello`. A new `samples`
+  listing the folder); this change adds one, `hello`. A new `samples`
   CI job (Linux + Windows) runs every sample from a clean venv holding the built
   wheel and fails on a non-zero exit, unless the sample's `expect.json` names
   the exit code and output it must end with (`dev/samples/run_samples.py`).
