@@ -113,9 +113,10 @@ class Hal:
         except ApprovalDenied as e:
             # human-in-the-loop refusal: pre-I/O, nothing sent (no `delivered`
             # key) — distinct from a limit rejection so an agent can tell why
-            # it was stopped and route to a human (issue #14)
+            # it was stopped and route to a human (issue #14). `reason` is
+            # "no-approver" when no one could be asked, else None (#186)
             return {"ok": False, "error": str(e), "rejected": "approval",
-                    "op": e.op, "device": node.id or node.path}
+                    "op": e.op, "device": node.id or node.path, "reason": e.reason}
         except HopError as e:
             return {"ok": False, "error": str(e), "delivered": e.delivered}
         except Error as e:

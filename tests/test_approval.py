@@ -288,3 +288,93 @@ def test_default_approver_is_console_when_context_unset():
         assert isinstance(shal.get_approver(), shal.ConsoleApprover)
     finally:
         shal.approval._current.reset(token)
+
+
+# ---- a no-approver denial says how to approve, with reason "no-approver" (#186) ----
+
+# copied byte-for-byte from shal#186's body; the shipped constant must equal it
+_ISSUE_186_LINE = ("no approver is set and stdin is not a terminal. In Python: "
+                   "shal.approver(...) — AutoApprove() for a sim, or an approver "
+                   "that asks a person; under an agent host: shal mcp.")
+
+
+def test_no_approver_message_is_the_issue_line_verbatim():
+    from shal.errors import HOW_TO_APPROVE_LINE, NO_APPROVER_MESSAGE
+    assert NO_APPROVER_MESSAGE.encode("utf-8") == _ISSUE_186_LINE.encode("utf-8")
+    assert NO_APPROVER_MESSAGE.endswith(HOW_TO_APPROVE_LINE)
+
+
+class _Stdin(io.StringIO):
+    def __init__(self, tty):
+        super().__init__()
+        self._tty = tty
+
+    def isatty(self):
+        return self._tty
+
+
+def test_no_approver_headless_denial_carries_the_line_and_reason(hal, monkeypatch):
+    from shal.errors import NO_APPROVER_MESSAGE
+    monkeypatch.setattr("sys.stdin", _Stdin(tty=False))
+    token = shal.approval._current.set(None)  # no approver set: the shipped default
+    try:
+        with pytest.raises(shal.ApprovalDenied) as ei:
+            hal.get_device("rig").move(1)
+    finally:
+        shal.approval._current.reset(token)
+    assert ei.value.reason == "no-approver"
+    assert str(ei.value).endswith(NO_APPROVER_MESSAGE)
+    assert str(ei.value).count("shal mcp") == 1       # one hint, not two
+    assert RECEIVED == []
+
+
+def test_no_approver_with_a_tty_still_prompts(hal, monkeypatch):
+    asked = []
+    monkeypatch.setattr("sys.stdin", _Stdin(tty=True))
+    # the shipped default's prompt (`input`, bound at construction) is the one asked
+    monkeypatch.setattr(shal.approval._DEFAULT, "_prompt",
+                        lambda banner: asked.append(banner) or "n")
+    token = shal.approval._current.set(None)
+    try:
+        with pytest.raises(shal.ApprovalDenied) as ei:
+            hal.get_device("rig").move(1)
+    finally:
+        shal.approval._current.reset(token)
+    assert len(asked) == 1 and "Allow this actuation?" in asked[0]
+    assert ei.value.reason is None                    # a person said no
+    assert RECEIVED == []
+
+
+def test_other_denials_have_no_reason(hal):
+    with shal.approver(shal.DenyAll()):
+        with pytest.raises(shal.ApprovalDenied) as ei:
+            hal.get_device("rig").move(1)
+    assert ei.value.reason is None
+    assert "to approve:" in str(ei.value)             # the general #156 hint stays
+
+
+def test_no_approver_denial_pickle_round_trip_keeps_reason_and_one_hint():
+    import pickle
+
+    from shal.errors import NO_APPROVER_MESSAGE
+    err = shal.ApprovalDenied("/rig  move denied", op="move", reason="no-approver")
+    back = pickle.loads(pickle.dumps(err))
+    assert back.reason == "no-approver"
+    assert str(back) == str(err)
+    assert str(back).count(NO_APPROVER_MESSAGE) == 1 and "to approve:" not in str(back)
+
+
+def test_call_tool_refusal_carries_reason(hal, monkeypatch):
+    """#186: the call_tool dict (what --json / MCP consumers see) carries `reason`."""
+    monkeypatch.setattr("sys.stdin", _Stdin(tty=False))
+    token = shal.approval._current.set(None)  # no approver set, headless
+    try:
+        out = hal.call_tool("rig__move", {"dx": 1})
+    finally:
+        shal.approval._current.reset(token)
+    assert out["ok"] is False and out["rejected"] == "approval"
+    assert out["reason"] == "no-approver"
+    with shal.approver(shal.DenyAll()):
+        out = hal.call_tool("rig__move", {"dx": 1})
+    assert out["rejected"] == "approval" and out["reason"] is None
+    assert RECEIVED == []
