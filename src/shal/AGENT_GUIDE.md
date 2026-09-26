@@ -208,6 +208,54 @@ they work.
    against a simulated device, with no real hardware. This is what makes
    `check_driver`'s live checks possible without a lab.
 
+### The order: declare, check, implement
+
+Write the driver in this order, in one file:
+
+1. **Declare.** Write the class with every `@op(description, side_effect, params=)`
+   and `raise NotImplementedError` as each body.
+2. **Check.** Run `check_driver(cls)` with no topology. The static checks pass, or
+   they name the op that is missing a bound:
+   ```python
+   from shal.conformance import check_driver
+   print(check_driver(MyThing))       # no topology: static checks only
+   ```
+   A real run, where `set_volume(self, level: int)` has no `params=`:
+   ```text
+   conformance community,my-thing: OK
+     warning  set_volume: numeric write param 'level' has no declared limit — if the device has a safe operating range, declare it in @shal.op(params=...)
+     checked  static: capability ops discovered
+     checked  static: catalog entry + schemas well-formed
+     checked  static: limit declarations reviewed
+   ```
+   A missing bound is a `warning`, so the report still says `OK`. Fix it anyway:
+   `params={"level": {"minimum": 0, "maximum": 100}}` makes the warning go away.
+   A `PROBLEM` line means the check failed.
+3. **Implement.** Fill the bodies, then write the sim and the tests, and run the
+   live checks (`check_driver(cls, topology)`).
+
+The decorators are the contract. There is nothing else to write first.
+
+### Side effects for software
+
+A database, a service or a CI system uses the same four labels. The label says
+what the gate must stop:
+
+- **`none`** — a read (`GET`, `SELECT`, a status). Live or raise.
+- **`write`** — only if this driver can undo it with one of its own ops, and it
+  touches only this node's own data. Example: insert a row that your `delete_row`
+  op can remove. Runs free.
+- **`config`** — changes what the system will do next. Example: set a repository
+  variable. Gated.
+- **`actuator`** — makes something happen now, outside the node, or cannot be
+  undone. Example: trigger a CI run, or `DROP` a table. Gated.
+
+**Not sure → gated.** An `UPDATE` that does not keep the old values cannot be
+undone by this driver, so it is not a `write`.
+
+**Bus or root driver?** A protocol you would hand-roll goes under a bus. A client
+library is a root driver (`kind = None`, like the example above).
+
 **What "proven" means.** These five pieces are the kit. They do not, by
 themselves, show that a cold agent — one that has never seen a device before —
 can use the kit to write a working driver on the first try. That claim needs a
