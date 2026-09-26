@@ -1,0 +1,17 @@
+# The order service on the sim message bus: the twin in sim.py answers it, so
+# this needs no running service. For the real one, make the bus `shal,http` with
+# its https:// base URL, and put the credential on the bus node, never in the
+# driver:  config: {headers: {Authorization: "Bearer ${ORDERS_TOKEN}"}}
+# The driver is not registered by `import shal`, so name its two files (D5):
+#   shal tools topology.yaml --drivers driver.py --drivers sim.py
+shal_version: 1
+root:
+  shop:
+    id: shop
+    driver: shal,sim-msg
+    address: sim0
+    children:
+      orders:
+        id: orders
+        driver: acme,order-service
+        address: orders

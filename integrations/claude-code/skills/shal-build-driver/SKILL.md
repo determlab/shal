@@ -16,6 +16,9 @@ Pick the device's `compatible` id and target domain library (`drivers/sensors`,
 Start from the closest **ADK reference**: `shal docs --list` names them
 (`tmp102` — a plain read; `mcp23017` — `none`/`config`/`actuator` on one device;
 `rigol_dp832` — SCPI, setpoint `write` vs energise `actuator`, declared limits;
+`sonos` — a root driver wrapping a library, `address: sim` selects its `sim.py`
+stand-in; `order_service` — a software node under `shal,http`, a `GET` through the
+request envelope, a `write` its own op undoes, twin by `@msg_sim_model`;
 `sqlite` — a root driver over a client library, all four labels on one software
 node, values as `?` parameters and names checked before any SQL),
 and `shal docs --example <name>` prints its four files: `driver.py`, `sim.py`

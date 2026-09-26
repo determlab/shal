@@ -34,6 +34,20 @@ All notable changes to this project are documented here. The format follows
   imported by `import shal`, absent from `catalog()`. `shal docs --list` names it;
   `shal docs --example` now prints the run line from the files a reference has
   (`--drivers driver.py` alone for `sqlite`).
+- **The ADK reference set gains two: `sonos` and `order_service`** (#152, R7 in
+  `adk.md` §3.6 / §3.7) — five references now, each the same four files, unregistered.
+  `sonos` (`sonos,speaker`) is the root driver that wraps a library: `kind = None`,
+  `soco` imported lazily and only for a real speaker, and `address: sim` builds the
+  stand-in in its `sim.py` — its test needs no speaker and no `soco`. It came from
+  `examples/demos/sonos/`, whose `sonos_driver.py` now only imports the reference, so
+  there is one copy. `order_service` (`acme,order-service`) is a software node under
+  `shal,http`: `get_order` is a `GET` through the request envelope (`none`),
+  `place_order` a `write` (bounded `qty`) that `cancel_order` undoes, and
+  `cancel_order` — which this driver cannot undo — is gated (`actuator`). Its twin is
+  a `@msg_sim_model` in its own `sim.py`, registered only when that file is imported,
+  so core `sim_msg.py` still registers nothing and `import shal` stays clean. `shal
+  check` on both: zero problems, zero warnings. The mesh demo keeps its own
+  `acme,*` drivers (a different protocol, served by its real processes).
 - **The agent guide shows one real failing `shal check` report, and its fix** (#154,
   R9 in `adk.md` §3.6) — the ADK section of `AGENT_GUIDE.md` gains "A failing check,
   and its fix": `shal check my_driver:MyThing --json` on a driver whose `get_volume`
@@ -178,6 +192,16 @@ All notable changes to this project are documented here. The format follows
   that — it's a static metadata check and needs no venv of its own.
 
 ### Fixed
+- **`shal probe` no longer points at a `--probe` flag it does not have** (#166) —
+  the footer that lists the writes now reads ``# writes — not run by `shal probe`;
+  use `shal call` (gated ops are refused until approved): <tools>``. The legacy
+  `shal-mcp --probe` prints the same line: `shal probe` is the front door and
+  `shal call` ships in the same package. The two errors of `shal probe <tool>` had
+  the same fault and a `shal-mcp:` prefix; they now read ``shal: no tool '<tool>'.
+  Run `shal probe <topology>` (no tool) to list what this topology exposes.`` and
+  ``shal: `shal probe` runs reads only; '<tool>' changes hardware — use `shal call`
+  (gated ops are refused until approved).`` (exit 1, as before). The
+  `shal-mcp --probe` flag itself is unchanged.
 - **`rigol,dp832` `set_voltage` declares its limits from the DP832 ratings**
   (#150, R8a in `adk.md` §3.6) — `params=` bounds `volts` to 0-30 V (CH1/CH2),
   and `op_limits()` narrows CH3 to 0-5 V (Rigol DP800 Series datasheet). A value
