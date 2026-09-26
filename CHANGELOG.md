@@ -151,6 +151,13 @@ All notable changes to this project are documented here. The format follows
   no `calls` key, instead of `calls: []` ("collected, and there were none").
 
 ### Fixed
+- **A `bind()` that raises during a load now closes what was already bound**
+  (#220). `loader.load_tree` closes each Transport driver and child bus it had
+  bound, in reverse order, exactly once, then re-raises the original exception
+  object unchanged (a `LoadError` or any other). A close that raises during this
+  cleanup is logged (`event="bind_cleanup_failed"`, type and path only) and never
+  replaces the original. No Hal is built, so #217's fill cleanup does not close
+  them a second time.
 - **On Windows, a NUL stdin is no person** (#210). `NUL` (`subprocess.DEVNULL`,
   `< NUL`) is a character device, so `isatty()` says True. `ConsoleApprover`
   thought a person was there, prompted, read EOF and denied with the generic
