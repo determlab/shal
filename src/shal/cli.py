@@ -25,6 +25,7 @@ import argparse
 import asyncio
 import json
 import os
+import re
 import sys
 
 
@@ -55,7 +56,130 @@ def _add_drivers_arg(p: argparse.ArgumentParser) -> None:
                         "or a directory of them (repeatable).")
 
 
+# `--json` on probe / tools / docs --list (shal#185). One JSON document on stdout,
+# the same exit code as without --json, and every message still on stderr (as
+# `shal call --json` does). An error is `{"ok": false, "error": <the message>}`.
+def _json_out(payload: dict) -> None:
+    print(json.dumps(payload, indent=2, default=str))
+
+
+def _json_error(msg: str, code: int = 1) -> int:
+    print(msg, file=sys.stderr)
+    _json_out({"ok": False, "error": msg})
+    return code
+
+
+def _json_load(args, cmd: str):
+    """Load the topology for a `--json` command: the Hal, or the exit code after the
+    error was reported. The shared loaders exit with a message (exit 1); any other
+    load failure is exit 1 too, as its traceback is without --json."""
+    from .mcp.server import _import_drivers, _resolve_hal
+    try:
+        _import_drivers(args.drivers)
+        return _resolve_hal(args.topology)
+    except SystemExit as e:
+        if not isinstance(e.code, str):
+            raise
+        return _json_error(e.code)
+    except Exception as e:  # noqa: BLE001 - a bad topology is a JSON error, exit 1
+        return _json_error(f"shal {cmd}: cannot load {args.topology}: "
+                           f"{type(e).__name__}: {e}")
+
+
+# run_with is built from an ALLOW-list, never a deny-list: a token pastes into bash,
+# PowerShell and cmd only if every character is one we know is literal there.
+# Plain (bare) tokens: ASCII letters, digits and _ - . / : \ + — none of the three
+# shells gives any of these a meaning in a bare word (bash drops a \ inside a word
+# but never runs anything because of it).
+_PLAIN_TOKEN = re.compile(r"[A-Za-z0-9_\-./:\\+]+\Z")
+# Quoted tokens add only a space and # = @ ~ , each literal inside "..." in all
+# three: bash expands only $ ` \ ! there, PowerShell $ ` and the curly quotes it
+# reads as ", cmd % ! and " itself. Nothing non-ASCII, no control character.
+_QUOTABLE_TOKEN = re.compile(r"[A-Za-z0-9_\-./:\\+ #=@~]+\Z")
+_PARAM_NAME = re.compile(r"[A-Za-z_][A-Za-z0-9_]*\Z")
+
+
+def _shell_token(token: str) -> str | None:
+    """``token`` as it can be pasted into bash, PowerShell and cmd alike: bare when
+    it is plain, else in double quotes (the quoting all three share). None when
+    neither is safe: a character outside the allow-lists, or a trailing \\ (bare,
+    bash reads it as escaping the next space; quoted, it escapes the closing ")."""
+    if token.endswith("\\") or token == "--%":  # --% stops PowerShell's parser
+        return None
+    if _PLAIN_TOKEN.match(token):
+        return token
+    if _QUOTABLE_TOKEN.match(token):
+        return f'"{token}"'
+    return None
+
+
+def _call_command(args, fact: dict, schema: dict) -> str | None:
+    """The `shal call` line that runs one op: its device and op from the catalog,
+    and a ``name=<name>`` placeholder per required value (by name, so the order of
+    the op's parameters does not matter). None when a path in it cannot be quoted
+    for every shell (see `_shell_token`)."""
+    tokens = [args.topology, fact["device"], fact["op"]]
+    for d in args.drivers:
+        tokens += ["--drivers", d]
+    quoted = [_shell_token(t) for t in tokens]
+    names = schema.get("required", [])
+    if None in quoted or not all(_PARAM_NAME.match(p) for p in names):
+        return None
+    required = [f"{p}=<{p}>" for p in names]
+    return " ".join(["shal call", *quoted[:3], *required, *quoted[3:]])
+
+
+def _probe_json(args) -> int:
+    """`shal probe --json`: the reads it ran and the writes it did not run."""
+    from .mcp import Bridge
+    from .mcp.server import _probe_pick, _probe_split
+    hal = _json_load(args, "probe")
+    if isinstance(hal, int):
+        return hal
+    try:
+        bridge = Bridge(hal)
+        defs = bridge.tool_defs()
+        facts = {t["name"]: t for t in hal.tool_catalog()}
+        try:
+            picked = [_probe_pick(defs, args.tool)] if args.tool else None
+        except SystemExit as e:
+            return _json_error(str(e.code))
+        reads, writes = _probe_split(defs)
+        read_out = []
+        for d in picked or reads:
+            f = facts[d["name"]]
+            entry = {"tool": d["name"], "device": f["device"], "op": f["op"]}
+            try:
+                out = bridge.call(d["name"], {})
+            except Exception as e:  # noqa: BLE001 - as the text snapshot: one bad read
+                if picked:  # a named read that raises exits 1 without --json too
+                    return _json_error(f"shal probe: {d['name']} failed: "
+                                       f"{type(e).__name__}: {e}")
+                entry.update(ok=False, error=f"{type(e).__name__}: {e}")
+            else:
+                if out.get("ok"):
+                    entry.update(ok=True, value=out.get("result"))
+                else:
+                    entry.update(ok=False, error=out.get("error", out.get("message")))
+            entry["unit"] = f.get("unit")
+            read_out.append(entry)
+        write_out = [{"tool": d["name"], "device": facts[d["name"]]["device"],
+                      "op": facts[d["name"]]["op"],
+                      "side_effect": facts[d["name"]]["side_effect"],
+                      "gated": bool(d["annotations"].get("destructiveHint")),
+                      "run_with": _call_command(args, facts[d["name"]],
+                                                d["input_schema"])}
+                     for d in writes]
+    finally:
+        hal.close()
+    _json_out({"ok": True, "topology": args.topology, "reads": read_out,
+               "writes_not_run": write_out})
+    return 0
+
+
 def _cmd_probe(args) -> int:
+    if args.json:
+        return _probe_json(args)
     from .mcp import Bridge
     from .mcp.server import _import_drivers, _probe, _resolve_hal
     _import_drivers(args.drivers)
@@ -66,7 +190,34 @@ def _cmd_probe(args) -> int:
         hal.close()
 
 
+def _tools_json(args) -> int:
+    """`shal tools --json`: every device op, in full (#185)."""
+    hal = _json_load(args, "tools")
+    if isinstance(hal, int):
+        return hal
+    try:
+        schemas = {d["name"]: d for d in hal.tool_schemas()}
+        tools = []
+        for f in hal.tool_catalog():
+            d = schemas[f["name"]]
+            ann = f["annotations"]
+            kind = ("read" if ann.get("readOnlyHint")
+                    else "gated" if ann.get("destructiveHint") else "write")
+            tools.append({"tool": f["name"], "device": f["device"], "op": f["op"],
+                          "kind": kind, "side_effect": f["side_effect"],
+                          "gated": bool(ann.get("destructiveHint")),
+                          "idempotent": f["idempotent"], "unit": f.get("unit"),
+                          "description": d["description"],
+                          "input_schema": d["input_schema"]})
+    finally:
+        hal.close()
+    _json_out({"ok": True, "topology": args.topology, "tools": tools})
+    return 0
+
+
 def _cmd_tools(args) -> int:
+    if args.json:
+        return _tools_json(args)
     from .mcp import Bridge
     from .mcp.server import _import_drivers, _resolve_hal
     _import_drivers(args.drivers)
@@ -393,7 +544,38 @@ def _reference_summary(ref) -> str:
     return (doc or "").strip().splitlines()[0] if doc else ""
 
 
-def _cmd_docs_list() -> int:
+def _reference_compatible(ref) -> str | None:
+    """The driver class's ``compatible`` string, read as text (no import)."""
+    import ast
+    tree = ast.parse((ref / "driver.py").read_text(encoding="utf-8"))
+    for cls in (n for n in tree.body if isinstance(n, ast.ClassDef)):
+        for st in cls.body:
+            if (isinstance(st, ast.Assign) and isinstance(st.value, ast.Constant)
+                    and isinstance(st.value.value, str)
+                    and any(isinstance(t, ast.Name) and t.id == "compatible"
+                            for t in st.targets)):
+                return st.value.value
+    return None
+
+
+def _docs_list_json() -> int:
+    """`shal docs --list --json`: the ADK reference set (#185)."""
+    refs = []
+    for name, ref in _references().items():
+        files = [f.name for f in _reference_files(ref)]
+        drivers = " ".join(f"--drivers {f}" for f in files if f in ("driver.py", "sim.py"))
+        refs.append({"name": name, "compatible": _reference_compatible(ref),
+                     "summary": _reference_summary(ref), "folder": str(ref),
+                     "files": files, "has_sim": "sim.py" in files,
+                     "run_with": f"shal probe topology.yaml {drivers}",
+                     "print_with": f"shal docs --example {name}"})
+    _json_out({"ok": True, "references": refs})
+    return 0
+
+
+def _cmd_docs_list(as_json: bool = False) -> int:
+    if as_json:
+        return _docs_list_json()
     refs = _references()
     print("ADK reference drivers — guide material to copy, not registered drivers.")
     print("Each is driver.py, sim.py (its twin), test_<name>.py, topology.yaml — no sim.py")
@@ -436,8 +618,11 @@ def _cmd_docs(args) -> int:
     contract with --sdk. Both ship in the wheel as package data (#55, #97).
     ``--list`` names the ADK reference set and ``--example <name>`` prints one (#149)."""
     from importlib.resources import files
+    if getattr(args, "json", False) and not getattr(args, "list", False):
+        print("shal docs: --json works only with --list", file=sys.stderr)
+        return 2
     if getattr(args, "list", False):
-        return _cmd_docs_list()
+        return _cmd_docs_list(getattr(args, "json", False))
     if getattr(args, "example", None):
         return _cmd_docs_example(args.example)
     doc = "SDK.md" if getattr(args, "sdk", False) else "AGENT_GUIDE.md"
@@ -462,15 +647,63 @@ def main(argv: list[str] | None = None) -> int:
                "Full SDK: run `shal docs --sdk`")
     sub = ap.add_subparsers(dest="cmd", required=True, metavar="<command>")
 
-    p = sub.add_parser("probe", help="one-shot read: print device state and exit (no MCP host)")
+    p = sub.add_parser(
+        "probe", help="one-shot read: print device state and exit (no MCP host)",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        description="Run every read that needs no arguments (or one named read) and "
+                    "print the values. Writes are named, never run.",
+        epilog="--json prints one JSON document on stdout:\n"
+               '  {"ok": true, "topology": "sim.yaml",\n'
+               '   "reads": [{"tool": "ambient_temp__read_celsius", "device": "ambient_temp",\n'
+               '              "op": "read_celsius", "ok": true, "value": 24.6,\n'
+               '              "unit": "celsius"}],\n'
+               '   "writes_not_run": [{"tool": "ambient_temp__set_target",\n'
+               '              "device": "ambient_temp", "op": "set_target",\n'
+               '              "side_effect": "config", "gated": true,\n'
+               '              "run_with":\n'
+               '                "shal call sim.yaml ambient_temp set_target celsius=<celsius>"}]}\n'
+               '  A read that failed has "ok": false and "error" instead of "value"; the\n'
+               '  top-level "ok" is still true (the probe ran, exit 0). With a named\n'
+               '  tool, "reads" holds that one read. A gated write is refused by\n'
+               '  `shal call` (exit 2) until a person approves it.\n'
+               '  run_with: replace each name=<name> with a value. It pastes into bash,\n'
+               '  PowerShell and cmd. A path of ASCII letters, digits and _ - . / : \\ +\n'
+               '  is bare; one that also has a space or # = @ ~ is in double quotes.\n'
+               '  Any other character (non-ASCII too), or a path ending in \\, makes\n'
+               '  run_with null: build that call yourself. bash reads a \\ as an\n'
+               '  escape, so use / in paths there.\n'
+               "\n"
+               "exit: 0 ran; 1 no such tool, the tool is a write, or the topology\n"
+               "  does not load. The message is on stderr; with --json, stdout also\n"
+               '  holds {"ok": false, "error": <the same message>}. 2 is a usage error.')
     p.add_argument("topology", help="path to the topology YAML")
     p.add_argument("tool", nargs="?", help="a specific read tool to run (default: all reads)")
     _add_drivers_arg(p)
+    p.add_argument("--json", action="store_true",
+                   help="print the reads and the writes not run as JSON on stdout")
     p.set_defaults(func=_cmd_probe)
 
-    t = sub.add_parser("tools", help="list the device tools (read / gated)")
+    t = sub.add_parser(
+        "tools", help="list the device tools (read / gated)",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        description="List every tool on the topology with its kind: read, write, "
+                    "or gated (needs a person's approval).",
+        epilog="--json prints one JSON document on stdout:\n"
+               '  {"ok": true, "topology": "sim.yaml",\n'
+               '   "tools": [{"tool": "ambient_temp__set_target", "device": "ambient_temp",\n'
+               '              "op": "set_target", "kind": "gated", "side_effect": "config",\n'
+               '              "gated": true, "idempotent": false, "unit": "celsius",\n'
+               '              "description": "<the full description>",\n'
+               '              "input_schema": {<JSON Schema of the arguments>}}]}\n'
+               "  Device ops only: the shal_approve / shal_deny tools that `shal mcp`\n"
+               "  adds for a host are not in the list. The description is not cut.\n"
+               "\n"
+               "exit: 0 listed; 1 the topology does not load. The message is on\n"
+               '  stderr; with --json, stdout also holds {"ok": false, "error": ...}.')
     t.add_argument("topology", help="path to the topology YAML")
     _add_drivers_arg(t)
+    t.add_argument("--json", action="store_true",
+                   help="print every device op as JSON on stdout")
     t.set_defaults(func=_cmd_tools)
 
     m = sub.add_parser("mcp", help="serve the topology to an MCP host (the adapter)")
@@ -483,7 +716,22 @@ def main(argv: list[str] | None = None) -> int:
                         "auto = free writes (opt-out, recorded in the audit log)")
     m.set_defaults(func=_cmd_mcp)
 
-    d = sub.add_parser("docs", help="print the in-package 'add a device' agent guide")
+    d = sub.add_parser(
+        "docs", help="print the in-package 'add a device' agent guide",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog="--list --json prints one JSON document on stdout:\n"
+               '  {"ok": true,\n'
+               '   "references": [{"name": "tmp102", "compatible": "ti,tmp102",\n'
+               '                   "summary": "<first line of the driver docstring>",\n'
+               '                   "folder": "<its folder in the installed package>",\n'
+               '                   "files": ["driver.py", "sim.py", "test_tmp102.py",\n'
+               '                             "topology.yaml"],\n'
+               '                   "has_sim": true,\n'
+               '                   "run_with": "shal probe topology.yaml --drivers driver.py '
+               '--drivers sim.py",\n'
+               '                   "print_with": "shal docs --example tmp102"}]}\n'
+               "  A reference whose address is its twin (sqlite) has no sim.py.\n"
+               "  --json works only with --list (exit 2 otherwise).")
     dg = d.add_mutually_exclusive_group()
     dg.add_argument("--sdk", action="store_true",
                     help="print the full Driver & Bus SDK — the complete authoring contract")
@@ -491,6 +739,8 @@ def main(argv: list[str] | None = None) -> int:
                     help="list the ADK reference drivers (examples to copy)")
     dg.add_argument("--example", metavar="NAME",
                     help="print one ADK reference: driver, sim twin, test, topology")
+    d.add_argument("--json", action="store_true",
+                   help="with --list: print the references as JSON on stdout")
     d.set_defaults(func=_cmd_docs)
 
     c = sub.add_parser(

@@ -14,6 +14,23 @@ All notable changes to this project are documented here. The format follows
 ## [Unreleased]
 
 ### Added
+- **`--json` on `shal probe`, `shal tools` and `shal docs --list`** (#185) — each
+  prints one JSON document on stdout, its shape shown in the command's `--help`.
+  `probe`: `{ok, topology, reads: [{tool, device, op, ok, value|error, unit}],
+  writes_not_run: [{tool, device, op, side_effect, gated, run_with}]}` — `run_with`
+  is the `shal call` line for that write, with a `name=<name>` placeholder per
+  required value. It is built from an allow-list so it pastes into bash, PowerShell
+  and cmd with nothing extra run: a path of ASCII letters, digits and `_ - . / : \ +`
+  is bare, one that also has a space or `# = @ ~` is in double quotes, and any other
+  character (non-ASCII included) or a path ending in `\` makes `run_with` `null`.
+  `tools`: every device op with `tool, device,
+  op, kind, side_effect, gated, idempotent, unit`, the full `description` and the
+  `input_schema` (the MCP-only `shal_approve`/`shal_deny` are not listed). `docs
+  --list`: each reference's `name, compatible, summary, folder, files, has_sim,
+  run_with, print_with`. An error keeps its exit code (1) and its stderr message, and
+  stdout holds `{"ok": false, "error": <the message>}`; a topology that does not
+  load is that JSON error, not a traceback. Without `--json` the output is
+  unchanged, byte for byte.
 - **A no-approver denial says how to approve, with `reason: "no-approver"`** (#186) —
   when the default console approver denies because stdin is not a terminal, the
   `ApprovalDenied` text ends with `no approver is set and stdin is not a terminal.
