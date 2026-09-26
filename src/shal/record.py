@@ -7,8 +7,8 @@ them invents a shape of its own (`record.md` §3, §6 R1).
 
 Invariants this file enforces — they are the contract, and the tests check them:
 
-1.  **Every field of `record.md` §2 is required except `firmware` and `abort`.**
-    A bench run is `unit="bench"`, never blank.
+1.  **Every field of `record.md` §2 is required except `firmware`, `abort` and
+    `calls`.** A bench run is `unit="bench"`, never blank.
 2.  **`verdict` is derived, never set by hand** — `aborted` if the run was stopped
     early, else `error` if a step raised, else `fail` if a step failed, else
     `pass`. It is a read-only property, so it cannot be constructed wrong; a
@@ -19,6 +19,9 @@ Invariants this file enforces — they are the contract, and the tests check the
 4.  **`calls` is the AOS list as it exists, unchanged** — pass-through mappings,
     not a shape this module defines. It is checked only for being plain,
     finite, JSON/YAML-safe data, because that is what the round-trip needs.
+    **`calls=None` means "not collected"** — the key is omitted from the YAML
+    and from the db's JSON, and reads back as `None`. `calls=()` means
+    "collected, and there were none" and is written `calls: []` (#218).
 5.  **Two stores, one truth: the YAML wins.** SQLite `records.db` is the index;
     `records/<id>.yaml` beside it is the audit copy. `read()` returns what the
     YAML says whenever a YAML file exists (`record.md` §4).
@@ -166,14 +169,15 @@ class Record:
     started: str
     ended: str
     steps: tuple[Step, ...] = ()
-    calls: tuple[dict[str, Any], ...] = ()
+    calls: tuple[dict[str, Any], ...] | None = ()
     firmware: str | None = None
     abort: Abort | None = None
     record_version: int = RECORD_VERSION
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "steps", tuple(self.steps))
-        object.__setattr__(self, "calls", tuple(dict(c) for c in self.calls))
+        if self.calls is not None:
+            object.__setattr__(self, "calls", tuple(dict(c) for c in self.calls))
 
     @property
     def verdict(self) -> Verdict:
@@ -213,7 +217,8 @@ class Record:
         out["ended"] = self.ended
         out["verdict"] = self.verdict
         out["steps"] = [_step_to_mapping(s) for s in self.steps]
-        out["calls"] = [dict(c) for c in self.calls]
+        if self.calls is not None:  # None = not collected: omitted, not `[]`
+            out["calls"] = [dict(c) for c in self.calls]
         if self.abort is not None:
             out["abort"] = {
                 "by": self.abort.by,
@@ -257,7 +262,7 @@ class Record:
             started=_req(m, "started", str, source),
             ended=_req(m, "ended", str, source),
             steps=tuple(_step_from_mapping(s, source) for s in _seq(m, "steps", source)),
-            calls=tuple(
+            calls=None if m.get("calls") is None else tuple(
                 _as_mapping(c, "calls[]", source) for c in _seq(m, "calls", source)
             ),
             abort=abort,
