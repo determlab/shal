@@ -433,16 +433,17 @@ def _cmd_call(args) -> int:
     """Run one op from the command line (shal#160, ADK R11). A ``none``/``write`` op
     runs; a ``config``/``actuator`` op is refused from its declared label BEFORE it
     is invoked — nothing is sent. The label is read with the wrapper's own
-    ``inferred_side_effect`` and ``get_gated_effects()`` (one source of truth, D4),
-    and the op that does run runs under ``DenyAll``, so the op-layer gate still
-    backs this up: anything that reached it would be denied, never prompted or
-    passed. It reads the loaded Hal's gated set (issue #114, ADR-001 addendum
-    5b: the topology's ``policy:`` ∪ the host's widenings), not the shipped
-    default, so this refusal and the runtime gate cannot disagree. There is no
-    flag: the caller cannot choose its own gate."""
+    ``inferred_side_effect`` and the node's ENFORCED gated set (one source of
+    truth, D4), and the op that does run runs under ``DenyAll``, so the op-layer
+    gate still backs this up: anything that reached it would be denied, never
+    prompted or passed. The gated set is the one the wrapper captured at bind
+    (issue #114, ADR-001 addendum 5b: the topology's ``policy:`` ∪ the host's
+    widenings), not the shipped default, so this refusal and the runtime gate
+    cannot disagree. There is no flag: the caller cannot choose its own gate."""
     from .approval import DenyAll, approver
     from .driver import inferred_side_effect
     from .errors import HOW_TO_APPROVE_LINE
+    from .hal import _node_gated
     from .mcp.server import _import_drivers, _resolve_hal
 
     def emit(payload: dict) -> None:
@@ -467,7 +468,7 @@ def _cmd_call(args) -> int:
         name, node, fn = _find_call_tool(hal, args.node, args.op)
         device = node.id or node.path
         side_effect = inferred_side_effect(fn)
-        if side_effect in hal.get_gated_effects():  # from the label: never invoked
+        if side_effect in _node_gated(node):  # from the label: never invoked
             msg = (f"refused: {device}.{args.op} is labelled '{side_effect}'. A "
                    f"'{side_effect}' op needs a person's approval, and shal call "
                    f"cannot give it. Nothing was sent to the device.\n"

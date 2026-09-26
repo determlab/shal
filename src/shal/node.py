@@ -28,28 +28,9 @@ class Node:
         self.ref_target: Node | None = None  # $ref: name pointer, never routed through
         self.exposed_bus: Transport | None = None  # set when parent provides a
         # per-child bus (mux channels); otherwise parent's driver is the bus
-        self.hal: Hal | None = None  # the Hal that loaded it (set by shal.load):
-        # its topology `policy:` gates this node's ops (ADR-001 addendum 5b).
-        # SET-ONCE — see __setattr__.
-
-    def __setattr__(self, name: str, value: Any) -> None:
-        # `hal` is bound ONCE, by shal.load (Hal.__init__). Any later assignment —
-        # a driver swapping in a Hal with a looser policy — raises (ADR-001
-        # addendum 5/5b). Python is not a sandbox: object.__setattr__ bypasses
-        # this, which the op wrapper's post-call identity check still catches
-        # inside a call; the guard makes the honest-looking path loud.
-        if name == "hal" and self.__dict__.get("hal") is not None:
-            from .driver import _refuse_write_once
-            _refuse_write_once("Node.hal", self.path)  # audits, raises AttributeError
-        object.__setattr__(self, name, value)
-
-    def __delattr__(self, name: str) -> None:
-        # deleting `hal` would make the next assignment look like the first one
-        # (set-once is checked on the current value) — refused the same way
-        if name == "hal":
-            from .driver import _refuse_write_once
-            _refuse_write_once("Node.hal", self.path)  # audits, raises AttributeError
-        object.__delattr__(self, name)
+        self.hal: Hal | None = None  # the Hal that loaded it (set by shal.load) —
+        # a plain back-reference for people and `conformance`; the gate never reads
+        # it (the op wrapper captured its policy at bind, ADR-001 addendum 5b)
 
     @property
     def description(self) -> str | None:

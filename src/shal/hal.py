@@ -26,34 +26,20 @@ class Hal:
         self._ids = ids
         self._closed = False
         # this topology's own `policy: {gated: [...]}` (ADR-001 addendum 5b): it
-        # belongs to THIS Hal, never to the process. None = the default. Passed in
-        # by shal.load and WRITE-ONCE (see __setattr__); each node gets a set-once
-        # back-reference so the op wrapper finds it.
-        object.__setattr__(self, "_declared_gated", declared_gated)
+        # belongs to THIS Hal, never to the process. None = the default. What each
+        # op ENFORCES is the copy handed below to its driver's bind-time cell,
+        # filled exactly once (a second Hal over the same node is a LoadError);
+        # `_declared_gated` and `node.hal` are plain references for people,
+        # reporting and `conformance` — nothing about the gate depends on them.
+        self._declared_gated = declared_gated
         self._source_label = "<dict>"
         for root in roots:
             for node in root.walk():
+                bind_hal = getattr(node.driver, "_shal_bind_hal", None)
+                if bind_hal is not None:
+                    bind_hal(self, declared_gated)  # LoadError if already filled
                 node.hal = self
         self._tool_idx: dict[str, tuple[Node, str]] | None = None
-
-    def __setattr__(self, name: str, value) -> None:
-        # the topology's declared gated set is written ONCE, at construction by
-        # shal.load; any later assignment — a driver op, a thread it started, or
-        # host code — raises (ADR-001 addendum 5/5b). Python is not a sandbox:
-        # object.__setattr__ bypasses this; the op wrapper's snapshot still
-        # catches a change made inside a call.
-        if name == "_declared_gated":
-            _driver._refuse_write_once("Hal._declared_gated",
-                                       self.__dict__.get("_source_label", "<hal>"))
-        object.__setattr__(self, name, value)
-
-    def __delattr__(self, name: str) -> None:
-        # deleting the declared set would drop the Hal back to the default (a
-        # widening topology loosened) — refused the same way as reassigning it
-        if name == "_declared_gated":
-            _driver._refuse_write_once("Hal._declared_gated",
-                                       self.__dict__.get("_source_label", "<hal>"))
-        object.__delattr__(self, name)
 
     # -- lookup (topology immutable after load -> lock-free) -----------------
     def get_device(self, key: str | None = None, *,
@@ -118,14 +104,13 @@ class Hal:
     def tool_catalog(self) -> list[dict]:
         """Richer per-tool facts for policy/gating: side_effect + idempotency.
         Pair with tool_schemas() — the harness gates writes/actuators, not reads."""
-        gated = self.get_gated_effects()  # this Hal's set: advertised == enforced
         out = []
         for name, (node, opname) in self._tool_index().items():
             fn = type(node.driver).capability_ops()[opname]
             eff = _effect(fn)
             out.append({"name": name, "device": node.id or node.path,
                         "op": opname, **eff,
-                        "annotations": _annotations(eff, gated)})
+                        "annotations": _annotations(eff, _node_gated(node))})
         return out
 
     def call_tool(self, name: str, arguments: dict | None = None) -> dict:
@@ -193,8 +178,8 @@ class Hal:
     def get_gated_effects(self) -> frozenset[str]:
         """The gated set for THIS Hal's devices (ADR-001 addendum 5b): its
         topology's declared ``policy: {gated: [...]}`` (the default if none) ∪ the
-        host's widenings (:func:`shal.set_gated_effects`). What the gate enforces
-        and what this Hal's tool surface advertises."""
+        host's widenings (:func:`shal.set_gated_effects`) — the same rule each op
+        enforces from the policy it captured at bind."""
         return _effective_gated(self)
 
     def close(self) -> None:
@@ -303,6 +288,15 @@ def _effect(fn) -> dict:
     return {"side_effect": side, "idempotent": idem, "unit": meta.get("unit")}
 
 
+def _node_gated(node: Node) -> frozenset[str]:
+    """The gated set a node's ops ENFORCE — read from the same bind-time capture
+    the op wrapper uses, so every advertiser (the MCP ``destructiveHint``, the tool
+    description, ``shal call``) says exactly what the gate does (advertised ==
+    enforced, per Hal; ADR-001 addendum 5b)."""
+    gated = getattr(node.driver, "_shal_gated", None)
+    return gated() if gated is not None else _effective_gated(getattr(node, "hal", None))
+
+
 def _annotations(eff: dict, gated: frozenset[str]) -> dict:
     """Map SHAL's side_effect/idempotency onto MCP tool-annotation hint names so
     agent harnesses recognize them (issue #1). ``gated`` is the effective set of
@@ -332,8 +326,7 @@ def _describe(node: Node, opname: str, fn) -> str:
         parts.append("Idempotent read — safe to call repeatedly.")
     elif eff["idempotent"]:
         gated = (" It needs a person's approval."
-                 if eff["side_effect"] in _effective_gated(getattr(node, "hal", None))
-                 else "")
+                 if eff["side_effect"] in _node_gated(node) else "")
         parts.append(f"Side effect ({eff['side_effect']}): safe to re-send; a lost "
                      f"delivery is retried once.{gated}")
     else:

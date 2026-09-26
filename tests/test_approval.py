@@ -923,8 +923,6 @@ def sneaky(tmp_path):
 
 
 @pytest.mark.parametrize("opname,changed", [("touch_gate", ["gated"]),
-                                            ("narrow_gate", ["gated"]),
-                                            ("swap_hal_bypass", ["gated"]),
                                             ("rebind_default", ["gated"]),
                                             ("touch_approver", ["approver"])])
 def test_an_op_that_changes_the_policy_raises_is_restored_and_audited(
@@ -937,7 +935,6 @@ def test_an_op_that_changes_the_policy_raises_is_restored_and_audited(
     assert shal.get_gated_effects() == _DEFAULT                           # restored
     assert shal.driver._DEFAULT_GATED is default_before
     assert sneaky.get_gated_effects() == _DEFAULT                         # its Hal too
-    assert sneaky.get_device("sneak").node.hal is sneaky                  # its Hal back
     with shal.approver(shal.DenyAll()), pytest.raises(shal.ApprovalDenied):
         sneaky.get_device("rig").move(1)          # and the next actuator is still gated
     assert RECEIVED == []
@@ -1041,88 +1038,140 @@ def test_a_driver_that_changes_the_policy_while_binding_is_refused(
     assert rec.changed == ["approver"]
 
 
-# ---- write-once: Node.hal and Hal._declared_gated (round 4) ------------------------
-# Moving the declared set onto a shared Hal opened two driver-side paths: swap the
-# node's Hal for a looser one, or loosen the Hal from a thread between calls,
-# outside every snapshot window. Both attributes are now set once, by shal.load.
+# ---- the policy is captured at bind, in the op wrapper's closure (CTO review) ------
+# The write-once guards on Node/Hal were not a fence: a plain `__dict__` write goes
+# around `__setattr__`, and module names can be rebound between calls. The op
+# wrapper now captures the two ContextVar objects, the two defaults and a one-slot
+# Hal cell at bind, and reads the policy ONLY from them. So every path below is
+# INEFFECTIVE: the next actuator still stops. `node.hal` / `hal._declared_gated`
+# are plain references for people and reporting. Residual: reflection into
+# `call.__closure__`.
 
-@pytest.mark.parametrize("opname,attr", [("swap_hal", "Node.hal"),
-                                         ("loosen_hal", "Hal._declared_gated")])
-def test_an_op_that_reassigns_its_hal_or_its_policy_is_refused(
-        sneaky, audit_records, opname, attr):
-    """(a) A plain reassignment inside an op raises at the assignment and is
-    audited; the actuator that follows still stops for approval."""
-    with shal.approver(shal.DenyAll()):
-        with pytest.raises(AttributeError, match=f"{attr} is set once by shal.load"):
-            getattr(sneaky.get_device("sneak"), opname)()
-        with pytest.raises(shal.ApprovalDenied):
-            sneaky.get_device("rig").move(1)
-    assert RECEIVED == []
-    assert sneaky.get_device("sneak").node.hal is sneaky
-    assert sneaky.get_gated_effects() == _DEFAULT
-    refused = [r for r in audit_records
-               if getattr(r, "outcome", None) == "policy-changed"]
-    assert [r.attribute for r in refused] == [attr]
+def _hint(h, tool):
+    return next(t["annotations"]["destructiveHint"] for t in h.tool_catalog()
+                if t["name"] == tool)
 
 
-def test_a_thread_that_loosens_the_hal_between_calls_is_refused(sneaky, audit_records):
-    """(b) An op starts a thread that later assigns `_declared_gated` — outside
-    every call's snapshot window. The assignment itself raises (in the thread), is
-    audited, and the next actuator call is still gated."""
-    sneak = sneaky.get_device("sneak")
-    with shal.approver(shal.DenyAll()):
-        assert sneak.loosen_later() == "scheduled"
-        sneak.thread.join()
-        assert isinstance(sneak.thread_error, AttributeError)
-        with pytest.raises(shal.ApprovalDenied):
-            sneaky.get_device("rig").move(1)
-    assert RECEIVED == []
-    assert sneaky.get_gated_effects() == _DEFAULT
-    assert [r.attribute for r in audit_records
-            if getattr(r, "outcome", None) == "policy-changed"] == ["Hal._declared_gated"]
-
-
-def test_host_code_cannot_reassign_either_after_load(tmp_path, audit_records):
-    """(c) Write-once holds for everyone except shal.load — host code included."""
-    with _load_with_policy(tmp_path, ["config"]) as h, _load_plain(tmp_path) as other:
-        node = h.get_node("rig")
-        with pytest.raises(AttributeError, match="Node.hal is set once"):
-            node.hal = other
-        with pytest.raises(AttributeError, match="Node.hal is set once"):
-            node.hal = None
-        with pytest.raises(AttributeError, match="Hal._declared_gated is set once"):
-            h._declared_gated = frozenset()
-        with pytest.raises(AttributeError, match="Hal._declared_gated is set once"):
-            other._declared_gated = frozenset({"config"})
-        assert node.hal is h and h.get_gated_effects() == frozenset({"config"})
-        assert other.get_gated_effects() == _DEFAULT
-    assert len([r for r in audit_records
-                if getattr(r, "outcome", None) == "policy-changed"]) == 4
-
-
-def test_deleting_node_hal_between_calls_is_refused(hal, audit_records):
-    """`del node.hal` would make the next assignment look like the first one."""
-    node = hal.get_node("rig")
-    with pytest.raises(AttributeError, match="Node.hal is set once"):
-        del node.hal
-    assert node.hal is hal
-    assert [r.attribute for r in audit_records
-            if getattr(r, "outcome", None) == "policy-changed"] == ["Node.hal"]
+@pytest.mark.parametrize("opname", ["narrow_gate", "swap_hal_bypass", "swap_hal",
+                                    "loosen_hal"])
+def test_an_op_that_loosens_its_hal_or_node_hal_changes_nothing_enforced(
+        sneaky, opname):
+    """Inside an op: swapping `node.hal` or loosening the Hal's declared set — by
+    plain assignment or around it — no longer reaches the gate at all."""
+    getattr(sneaky.get_device("sneak"), opname)()
     with shal.approver(shal.DenyAll()), pytest.raises(shal.ApprovalDenied):
-        hal.get_device("rig").move(1)
+        sneaky.get_device("rig").move(1)
+    assert _hint(sneaky, "rig__move") is True
     assert RECEIVED == []
 
 
-def test_deleting_the_declared_set_between_calls_is_refused(tmp_path, audit_records):
-    """`del hal._declared_gated` would drop a widening topology back to the default."""
+def test_the_dict_writes_between_calls_do_not_loosen_the_gate(tmp_path):
+    """CTO test 1: `node.__dict__["hal"] = fake` and
+    `hal.__dict__["_declared_gated"] = frozenset()` between calls — the next
+    actuator (and, on a widening topology, the next write) still stops, and the
+    tool surface still says so (advertised == enforced)."""
     RECEIVED.clear()
-    with _load_with_policy(tmp_path, _WIDE) as h:
-        with pytest.raises(AttributeError, match="Hal._declared_gated is set once"):
-            del h._declared_gated
-        assert h.get_gated_effects() == frozenset(_WIDE)
-        assert [r.attribute for r in audit_records
-                if getattr(r, "outcome", None) == "policy-changed"] == [
-                    "Hal._declared_gated"]
-        with shal.approver(shal.DenyAll()), pytest.raises(shal.ApprovalDenied):
-            h.get_device("rig").set_reg(1)        # the topology's `write` gate holds
+    fake = types.SimpleNamespace(_declared_gated=frozenset())
+    with _load_plain(tmp_path) as plain, \
+         _load_with_policy(tmp_path, _WIDE, "w.yaml") as wide, \
+         shal.approver(shal.DenyAll()):
+        plain.get_node("rig").__dict__["hal"] = fake
+        with pytest.raises(shal.ApprovalDenied):
+            plain.get_device("rig").move(1)
+        assert _hint(plain, "rig__move") is True
+        wide.__dict__["_declared_gated"] = frozenset()
+        with pytest.raises(shal.ApprovalDenied):
+            wide.get_device("rig").set_reg(1)
+        assert _hint(wide, "rig__set_reg") is True
+    assert RECEIVED == []
+
+
+def test_rebinding_the_defaults_from_a_thread_between_calls_still_stops(
+        hal, monkeypatch, audit_records):
+    """CTO test 2: a driver-started thread rebinds `_DEFAULT_GATED` to nothing and
+    `approval._DEFAULT` to AutoApprove while no op runs. With no approver seated
+    (the default applies), the next actuator is still denied — the wrapper
+    reads the defaults it captured at bind — and the next call points the names
+    back and audits it."""
+    original_gated, original_appr = shal.driver._DEFAULT_GATED, shal.approval._DEFAULT
+    monkeypatch.setattr(shal.driver, "_DEFAULT_GATED", original_gated)   # undo guard
+    monkeypatch.setattr(shal.approval, "_DEFAULT", original_appr)
+    monkeypatch.setattr("sys.stdin", _Stdin(tty=False))
+
+    def rebind():
+        shal.driver._DEFAULT_GATED = frozenset()
+        shal.approval._DEFAULT = shal.AutoApprove()
+    t = threading.Thread(target=rebind)
+    t.start()
+    t.join()
+    token = shal.approval._current.set(None)   # no approver: the default decides
+    try:
+        with pytest.raises(shal.ApprovalDenied) as ei:
+            hal.get_device("rig").move(1)
+    finally:
+        shal.approval._current.reset(token)
+    assert ei.value.reason == "no-approver"            # the CAPTURED ConsoleApprover
+    assert RECEIVED == []
+    assert shal.driver._DEFAULT_GATED is original_gated     # names pointed back
+    assert shal.approval._DEFAULT is original_appr
+    healed = [r for r in audit_records if getattr(r, "between_calls", False)]
+    assert healed and sorted(healed[0].changed) == ["approver", "gated"]
+
+
+def test_rebinding_the_contextvars_between_calls_still_stops(hal, monkeypatch):
+    """CTO test 3: rebinding `approval._current` (and the gated-set ContextVar) to
+    impostors whose defaults are AutoApprove / nothing — the wrapper reads the
+    ContextVar OBJECTS it captured, where the host seated DenyAll."""
+    import contextvars as cv
+    monkeypatch.setattr(shal.approval, "_current", shal.approval._current)   # undo
+    monkeypatch.setattr(shal.driver, "_current_gated", shal.driver._current_gated)
+    auto = shal.AutoApprove()          # the impostor's default: approve everything
+    with shal.approver(shal.DenyAll()):
+        def rebind():
+            shal.approval._current = cv.ContextVar("fake", default=auto)
+            shal.driver._current_gated = cv.ContextVar("fake_g", default=frozenset())
+        t = threading.Thread(target=rebind)
+        t.start()
+        t.join()
+        with pytest.raises(shal.ApprovalDenied):
+            hal.get_device("rig").move(1)
+    assert RECEIVED == []
+
+
+def test_a_second_hal_over_a_bound_node_is_a_load_error(hal):
+    """CTO test 4: `Hal.__init__` on a node whose cell is already filled."""
+    with pytest.raises(shal.LoadError, match="already bound to a Hal"):
+        shal.Hal(hal._roots, hal._ids)
+    assert hal.get_node("rig").hal is hal
+
+
+def test_a_thread_that_loosens_the_hal_between_calls_changes_nothing(sneaky):
+    """An op starts a thread that later assigns `_declared_gated` — outside every
+    call's snapshot window. It no longer matters: the next actuator still stops."""
+    sneak = sneaky.get_device("sneak")
+    assert sneak.loosen_later() == "scheduled"
+    sneak.thread.join()
+    with shal.approver(shal.DenyAll()), pytest.raises(shal.ApprovalDenied):
+        sneaky.get_device("rig").move(1)
+    assert RECEIVED == []
+
+
+def test_host_or_driver_edits_after_load_change_nothing_enforced(tmp_path):
+    """Assigning or deleting `node.hal` / `hal._declared_gated` after load — host
+    code included — does not reach the gate or the tool surface."""
+    RECEIVED.clear()
+    with _load_with_policy(tmp_path, _WIDE) as h, _load_plain(tmp_path) as other, \
+         shal.approver(shal.DenyAll()):
+        node = h.get_node("rig")
+        node.hal = other
+        h._declared_gated = frozenset()
+        with pytest.raises(shal.ApprovalDenied):
+            h.get_device("rig").set_reg(1)            # the topology's `write` gate
+        assert _hint(h, "rig__set_reg") is True
+        del node.hal
+        del h._declared_gated
+        with pytest.raises(shal.ApprovalDenied):
+            h.get_device("rig").set_reg(2)
+        with pytest.raises(shal.ApprovalDenied):
+            other.get_device("rig").move(3)
     assert RECEIVED == []

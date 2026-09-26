@@ -29,15 +29,19 @@ All notable changes to this project are documented here. The format follows
     top-level `policy: {gated: [...]}` key may loosen (or tighten) the default for
     that Hal's own devices — it lives on the Hal, never in process state (an
     included file or `use:` template may not carry it). The effective set for an
-    op is (its Hal's declared set, or the default) ∪ (the host's widenings), read
-    through a new `Node.hal` back-reference; new `Hal.get_gated_effects()` returns
-    it. Two Hals in one process gate independently, `close()` has nothing to
-    reset, and no topology can undo a host widening. **Both are write-once:**
-    `Node.hal` and the Hal's declared set are set by `shal.load` and never after —
-    any later assignment (an op, a thread it started, host code) raises
-    `AttributeError` and is audited (`outcome: "policy-changed"`), and the op
-    wrapper also checks that `node.hal` is still the same Hal after each call.
-    Deleting either is refused the same way. Deliberate reflection between calls can still change policy; Python is not a sandbox (ADR-001 addendum 5). The guarantees are that a driver cannot change policy by importing or by running an op, and that every change the wrapper sees is audited.
+    op is (its Hal's declared set, or the default) ∪ (the host's widenings); new
+    `Hal.get_gated_effects()` returns it. Two Hals in one process gate
+    independently, `close()` has nothing to reset, and no topology can undo a
+    host widening. **The op wrapper captures the policy at bind, in its
+    closure**: the two ContextVar objects, the two defaults, and a one-slot cell
+    that `Hal.__init__` fills once with the Hal and its declared set (a second
+    Hal over the same node is a `LoadError`). It reads the policy only from
+    those — never through `node.hal` (a new plain back-reference), a Hal
+    attribute, an instance `__dict__` or a module global — so rebinding a name or
+    writing an attribute between calls changes nothing it enforces; a module
+    name found rebound is pointed back at the next call and audited
+    (`between_calls`). The tool surface and `shal call` advertise from the same
+    capture. The residual is exactly one thing and it is honest: reflection into `call.__closure__`.
   - **A driver can never change the policy** (gated set or approver). A
     `--drivers` module that changes it at import is refused with
     `LoadError("<module> changed the approval policy at import")`; driver code

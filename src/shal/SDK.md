@@ -324,9 +324,10 @@ def start_cleaning(self) -> None:
   host's widenings); `hal.get_gated_effects()` returns it. Two Hals in one process
   gate independently, `close()` has nothing to reset, and no topology can undo a
   host widening. `shal.catalog()` describes a class, not a Hal, so it shows the
-  host-level set. `node.hal` and the Hal's declared set are write-once (set by
-  `shal.load`); assigning or deleting either later raises `AttributeError`.
-  Deliberate reflection between calls can still change policy; Python is not a sandbox (ADR-001 addendum 5). The guarantees are that a driver cannot change policy by importing or by running an op, and that every change the wrapper sees is audited.
+  host-level set. Each op enforces the policy its wrapper captured at bind, in its
+  closure (the ContextVars, the defaults, and its Hal's declared set) — never
+  through `node.hal`, a Hal attribute or a module global, so editing those after
+  load changes nothing enforced. The residual is exactly one thing and it is honest: reflection into `call.__closure__`.
 
   A bare string is a `TypeError`; an unknown name or `"none"` (a read is never
   gated, D6) is a `ValueError`. **A driver never touches the policy**: a
