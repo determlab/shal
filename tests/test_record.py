@@ -333,6 +333,33 @@ def test_reading_an_empty_store_is_empty_not_an_error(tmp_path):
 
 
 # --------------------------------------------------------------------------- #
+# runner: a closed set of three — pytest | bricks | script (#214, D22)
+# --------------------------------------------------------------------------- #
+
+def test_a_script_record_is_written_read_back_and_filtered(tmp_path):
+    """`script` is operator code that is neither runner; `read()` takes it like the others."""
+    mine = _with(record="rec-script", runner="script", station="bench-hemi",
+                 started="2026-09-09T01:00:00Z")
+    other = _with(record="rec-pytest", station="line2-st4",
+                  started="2026-09-09T00:00:00Z")
+    write(mine, tmp_path)
+    write(other, tmp_path)
+    assert _read_yaml(tmp_path, "rec-script") == mine == _read_db(tmp_path, "rec-script")
+    assert read(tmp_path) == [other, mine]
+    assert read(tmp_path, station="bench-hemi") == [mine]
+    assert read(tmp_path, station="bench-hemi", verdict="fail") == [mine]
+    assert read(tmp_path, sequence="psu-bringup") == [other, mine]
+
+
+def test_a_fourth_runner_is_refused_and_the_message_names_all_three():
+    doc = FULL.to_mapping()
+    doc["runner"] = "custom"
+    with pytest.raises(RecordError, match="'runner' must be one of") as exc:
+        Record.from_mapping(doc)
+    assert "bricks, pytest, script" in str(exc.value)
+
+
+# --------------------------------------------------------------------------- #
 # helpers
 # --------------------------------------------------------------------------- #
 
