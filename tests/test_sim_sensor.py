@@ -2,12 +2,16 @@
 
 It ships so a bare `pip install pyshal` has a device to read: a temperature that
 drifts (two reads differ; the live value is the model's state) and one gated
-`config` op, `set_target`. The last test enforces D1's line on the catalog:
+`config` op, `set_target`. The catalog tests enforce D1's line on the catalog:
 the framework's own objects are `shal,*`, and no `vendor,part` ships.
 """
+import functools
 import io
+import json
 import random
 import re
+import subprocess
+import sys
 import textwrap
 
 import pytest
@@ -202,13 +206,48 @@ def test_catalog_lists_the_sim_sensor_as_a_driver():
     assert entry["requires_parent_kind"] == "ByteTransport"
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="D1 (#156, adk.md §3.6): vendor drivers are still bundled until #149 "
-           "unbundles them; nxp,pca9548 (the mux, listed as a driver) is not in "
-           "#149's scope and needs its own ruling. strict: this turns into a "
-           "failure the day it passes, so the marker must then be removed.")
-def test_every_catalog_driver_is_a_shal_compatible():
-    drivers = [d["compatible"] for d in shal.catalog()["drivers"]]
-    offenders = [c for c in drivers if not c.startswith("shal,")]
-    assert offenders == []
+# The vendor ids that still ship, named one by one so no NEW vendor,part can slip
+# in. #149 removes the seven drivers; the mux question (with the CTO) removes
+# nxp,pca9548 or exempts it by ruling. When both land, this set is empty and the
+# test reads as the CTO wrote it: every id catalog() lists starts with `shal,`.
+KNOWN_VENDOR_IDS = frozenset({
+    # the seven #149 moves out (reference set / examples)
+    "keysight,34461a", "microchip,mcp23017", "microchip,mcp9808", "rigol,dp832",
+    "ti,ads1115", "ti,ina219", "ti,tmp102",
+    # the mux: listed as a driver (it is not a Transport); awaiting a ruling
+    "nxp,pca9548",
+})
+
+
+@functools.lru_cache(maxsize=1)
+def _catalog_ids() -> tuple[str, ...]:
+    # what SHIPS: a fresh interpreter, so drivers other tests register in this
+    # process do not count. D1's line covers every framework object, buses too.
+    code = ("import json, shal; c = shal.catalog(); "
+            "print(json.dumps([e['compatible'] for e in c['drivers'] + c['buses']]))")
+    out = subprocess.run([sys.executable, "-c", code], capture_output=True,
+                         text=True, check=True).stdout
+    return tuple(json.loads(out))
+
+
+def test_every_catalog_id_is_a_shal_compatible():
+    offenders = [c for c in _catalog_ids()
+                 if not c.startswith("shal,") and c not in KNOWN_VENDOR_IDS]
+    assert offenders == [], (
+        f"D1: only shal,* ships; new vendor,part ids in catalog(): {offenders}")
+
+
+def test_known_vendor_ids_are_not_stale():
+    # the set must shrink as drivers leave (#149 has to edit it), never outlive them
+    stale = KNOWN_VENDOR_IDS - set(_catalog_ids())
+    assert stale == set(), f"remove from KNOWN_VENDOR_IDS, no longer shipped: {stale}"
+
+
+# ---- ApprovalDenied survives a pickle round-trip without doubling its hint ------------
+
+def test_approval_denied_pickle_round_trip_keeps_one_hint():
+    import pickle
+    err = shal.ApprovalDenied("/bus/temp0  set_target denied", op="set_target")
+    back = pickle.loads(pickle.dumps(err))
+    assert str(back) == str(err)
+    assert str(back).count("to approve:") == 1

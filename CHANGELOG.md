@@ -21,9 +21,10 @@ All notable changes to this project are documented here. The format follows
   `set_target`, which stops at the gate. It wraps no part: it binds only under a
   `shal,sim-i2c` bus and fails the load anywhere else. `ApprovalDenied` now says
   how to approve (`with shal.approver(...)` in Python, or an MCP host via
-  `shal mcp`). A test asserts every driver `shal.catalog()` lists is `shal,*`
-  (D1); it is marked `xfail(strict=True)` until the vendor drivers leave (#149)
-  and `nxp,pca9548` has a ruling.
+  `shal mcp`). A test asserts every id `shal.catalog()` lists is `shal,*` (D1),
+  except an explicit `KNOWN_VENDOR_IDS` set: the seven drivers #149 removes and
+  `nxp,pca9548` (awaiting a ruling). A second test fails if an id in that set no
+  longer ships, so the set must shrink with #149.
 - **`shal.record` — one test-result shape for the bench and the floor** (#141,
   D22, `record.md`) — a new module `src/shal/record.py` holding the record shape
   **once**, so `pytest-shal`, Bricks and AOS stop writing three different things.

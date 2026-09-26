@@ -73,7 +73,10 @@ class ApprovalDenied(Error):
 
     def __init__(self, msg: str, *, path: str = "?", op: str = "?",
                  side_effect: str = "actuator", params: dict | None = None) -> None:
-        super().__init__(f"{msg}; {self._HOW_TO_APPROVE}")
+        # idempotent: unpickling calls __init__ again with the full message in args
+        if not msg.endswith(self._HOW_TO_APPROVE):
+            msg = f"{msg}; {self._HOW_TO_APPROVE}"
+        super().__init__(msg)
         self.path = path
         self.op = op
         self.side_effect = side_effect
