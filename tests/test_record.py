@@ -252,14 +252,68 @@ def test_abort_round_trips(tmp_path):
     assert read(tmp_path, verdict="aborted") == [rec]
 
 
-def test_a_newer_record_version_is_refused_not_half_read(tmp_path):
+# --------------------------------------------------------------------------- #
+# #223: `record_version` is 2; a v2 reader reads v1; a newer record says so
+# --------------------------------------------------------------------------- #
+
+_NEWER = "this record is version 3, newer than this SHAL reads (up to 2) — upgrade pyshal"
+
+
+def _write_doc(store, doc) -> None:
+    path = yaml_path(store, doc["record"])
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(yaml.safe_dump(doc, sort_keys=False), encoding="utf-8", newline="\n")
+
+
+def test_a_new_record_is_written_as_version_2(tmp_path):
+    assert RECORD_VERSION == 2
     write(FULL, tmp_path)
-    doc = yaml.safe_load(yaml_path(tmp_path, FULL.record).read_text(encoding="utf-8"))
-    doc["record_version"] = RECORD_VERSION + 1
-    yaml_path(tmp_path, FULL.record).write_text(yaml.safe_dump(doc, sort_keys=False),
-                                                encoding="utf-8", newline="\n")
-    with pytest.raises(RecordError, match="newer than this reader"):
+    assert yaml_path(tmp_path, FULL.record).read_text(encoding="utf-8").startswith(
+        "record_version: 2\n")
+    assert json.loads(_db_json(tmp_path, FULL.record))["record_version"] == 2
+
+
+def test_a_v1_record_still_reads_unchanged(tmp_path):
+    doc = _with(calls=[]).to_mapping()
+    doc["record_version"] = 1
+    assert doc["calls"] == []                   # v1 always wrote `calls`
+    _write_doc(tmp_path, doc)
+
+    [got] = read(tmp_path)
+    assert got == _with(calls=[], record_version=1)
+    assert got.calls == ()                      # `calls: []` → "collected, none"
+    assert got.to_mapping() == doc              # reads back exactly as written
+
+
+@pytest.mark.parametrize("drop", [None, "unit", "steps", "verdict"])
+def test_a_newer_record_is_refused_in_one_sentence_naming_no_key(drop):
+    doc = FULL.to_mapping()
+    doc["record_version"] = 3
+    if drop:
+        del doc[drop]                           # a v3 record may well lack a v2 key
+    with pytest.raises(RecordError) as err:
+        Record.from_mapping(doc, source="r.yaml")
+    assert str(err.value) == f"r.yaml: {_NEWER}"
+    assert "key" not in str(err.value)
+
+
+def test_read_refuses_the_whole_store_when_one_record_is_newer(tmp_path):
+    # #223 does not say whether read() skips a newer record. It refuses the
+    # whole read, as before: a silent skip would under-report the station.
+    write(MINIMAL, tmp_path)
+    doc = FULL.to_mapping()
+    doc["record_version"] = 3
+    _write_doc(tmp_path, doc)
+    with pytest.raises(RecordError, match=re.escape(_NEWER)):
         read(tmp_path)
+
+
+@pytest.mark.parametrize("version", [0, -1])
+def test_a_record_version_below_1_is_refused(version):
+    doc = FULL.to_mapping()
+    doc["record_version"] = version
+    with pytest.raises(RecordError, match="record_version must be 1 or more"):
+        Record.from_mapping(doc)
 
 
 @pytest.mark.parametrize("drop", ["unit", "station", "sequence", "setup",

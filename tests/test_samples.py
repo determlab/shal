@@ -16,6 +16,7 @@ from importlib.resources import files
 from pathlib import Path
 
 import pytest
+import yaml
 
 import shal
 from shal import cli
@@ -441,4 +442,10 @@ def test_jig_writes_n_records_and_counts_n_as_the_runner_runs_it(tmp_path, capsy
         recs = record.read(elsewhere / "jig-records")    # the shipped reader accepts them
         assert len(recs) == 5 and {x.runner for x in recs} == {"script"}
         assert {x.unit for x in recs} == {"U001", "U002", "U003", "U004", "U005"}
+        # the loop collects no calls: calls=None, so no `calls` key is written (#222)
+        assert all(x.calls is None for x in recs)
+        for x in recs:
+            written = yaml.safe_load(record.yaml_path(elsewhere / "jig-records", x.record)
+                                     .read_text(encoding="utf-8"))
+            assert "calls" not in written
         assert r.stdout.splitlines()[-1] == f"records in jig-records/records.db: {len(recs)}"
