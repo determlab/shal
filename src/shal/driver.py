@@ -22,6 +22,7 @@ from contextvars import ContextVar, Token
 from typing import TYPE_CHECKING, Any
 
 from . import log as _log
+from .errors import Error as _ShalError
 from .errors import HopError
 from .errors import LoadError as _LoadError
 
@@ -380,6 +381,7 @@ class Driver:
             attempt = 1  # 2 once the idempotent reconnect-and-retry fires
             dropped: dict = {}  # {"hop": <hop that dropped>} once the retry fires
             before = op_token = None
+            in_body = False  # True once the driver body runs (after limits + approval)
             try:
                 # the policy is the operator's (ADR-001 addendum 5): an ENCLOSING op
                 # that changed it before calling this one is caught here, pre-I/O
@@ -404,6 +406,7 @@ class Driver:
                 # limits passed -> ask before moving (pre-I/O, unbypassable)
                 if gatable and side_effect in get_gated_effects():
                     _approve_or_raise(self, op, side_effect, sig, args, kwargs)
+                in_body = True
                 try:
                     result = fn(self, *args, **kwargs)
                 except HopError as e:
@@ -448,6 +451,23 @@ class Driver:
                                 extra={"event": "audit", "id": self.node.id or "",
                                        "path": self.node.path, "op": op,
                                        "outcome": "error", "delivered": e.delivered,
+                                       "duration_ms": duration, "attempt": attempt,
+                                       **dropped, "txn": _log.current_txn.get()})
+                raise
+            except _ShalError as e:
+                # the device said no (#198): a shal.Error from the driver BODY —
+                # never the pre-I/O LimitError/ApprovalDenied above (already
+                # audited), never a HopError (caught first: it is a subclass). ONE
+                # outcome record, then the SAME error re-raises untouched. The
+                # message carries the error text as the caller sees it: error
+                # messages are secret-free by rule (context.md non-negotiables).
+                if audited and in_body:
+                    duration = round((time.perf_counter() - t0) * 1000, 1)
+                    _audit.info("%s %s device-error: %s",
+                                self.node.id or self.node.path, op, e,
+                                extra={"event": "audit", "id": self.node.id or "",
+                                       "path": self.node.path, "op": op,
+                                       "outcome": "device-error",
                                        "duration_ms": duration, "attempt": attempt,
                                        **dropped, "txn": _log.current_txn.get()})
                 raise
