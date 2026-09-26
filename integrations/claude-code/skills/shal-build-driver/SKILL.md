@@ -15,9 +15,13 @@ Pick the device's `compatible` id and target domain library (`drivers/sensors`,
 
 Start from the closest **ADK reference**: `shal docs --list` names them
 (`tmp102` — a plain read; `mcp23017` — `none`/`config`/`actuator` on one device;
-`rigol_dp832` — SCPI, setpoint `write` vs energise `actuator`, declared limits),
+`rigol_dp832` — SCPI, setpoint `write` vs energise `actuator`, declared limits;
+`sqlite` — a root driver over a client library, all four labels on one software
+node, values as `?` parameters and names checked before any SQL),
 and `shal docs --example <name>` prints its four files: `driver.py`, `sim.py`
-(the twin, next to the driver), `test_<name>.py`, `topology.yaml`. They ship in
+(the twin, next to the driver), `test_<name>.py`, `topology.yaml`. When the
+library has its own twin address there is no `sim.py`: `sqlite` uses
+`address: ":memory:"` and runs with `--drivers driver.py` alone. They ship in
 the wheel as guide material and are **not registered** — no `vendor,part` driver
 ships registered (D1, #149) — so your copy registers only when imported
 (`--drivers driver.py --drivers sim.py`, or `@register` in-process).

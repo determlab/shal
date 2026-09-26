@@ -79,7 +79,9 @@ if it runs.
 - `src/shal/buses/` — `sim`, `local`, `ssh`, `i2c_cli`, `spi_cli`, `tcp`, `http_bus`, `mux`
   (`mux` is the mechanism only — `MuxState`/`MuxChannel`; the PCA9548 chip is an example)
 - `src/shal/adk/reference/` — the ADK reference set: `tmp102`, `mcp23017`, `rigol_dp832`,
-  each `driver.py` + `sim.py` + `test_<name>.py` + `topology.yaml`. **Package data, not
+  each `driver.py` + `sim.py` + `test_<name>.py` + `topology.yaml`; and `sqlite`
+  (`sqlite,database`, #157), a root driver over stdlib `sqlite3` whose twin is its
+  address (`":memory:"`), so it has no `sim.py`. **Package data, not
   registered drivers** (D1, D7; #149): no entry point, not imported by `import shal`,
   absent from `catalog()`. `shal docs --list` / `shal docs --example <name>` print them.
   The core suite imports them in `tests/conftest.py`; each reference's own test runs in

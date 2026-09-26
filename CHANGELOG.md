@@ -14,6 +14,22 @@ All notable changes to this project are documented here. The format follows
 ## [Unreleased]
 
 ### Added
+- **The ADK reference set gains `sqlite,database`: four side-effect labels on one
+  software node, zero dependencies** (#157, `adk.md` §3.7) —
+  `src/shal/adk/reference/sqlite/` (`driver.py`, `test_sqlite.py`,
+  `topology.yaml`), a root driver (`kind = None`) over the stdlib `sqlite3`.
+  `query` is `none`; `insert` is `write`, undone by `delete_row`; `delete_row` is
+  `write` too, because it returns the removed row (rowid included) and `insert`
+  of that row puts it back exactly; `execute_ddl` (one CREATE or ALTER TABLE ...
+  ADD/RENAME, never DROP) is `config`; `drop_table` is `actuator`. Values are
+  always `?` parameters; a table or column name must be a plain identifier and is
+  checked before any SQL. `address: ":memory:"` is the twin, so there is **no
+  `sim.py`** and no file is written. Its own test proves the undo both ways, that
+  `execute_ddl` and `drop_table` stop at the gate with the database unchanged, and
+  that nothing lands in the working or temp directory. Not registered, not
+  imported by `import shal`, absent from `catalog()`. `shal docs --list` names it;
+  `shal docs --example` now prints the run line from the files a reference has
+  (`--drivers driver.py` alone for `sqlite`).
 - **The agent guide shows one real failing `shal check` report, and its fix** (#154,
   R9 in `adk.md` §3.6) — the ADK section of `AGENT_GUIDE.md` gains "A failing check,
   and its fix": `shal check my_driver:MyThing --json` on a driver whose `get_volume`

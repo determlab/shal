@@ -571,7 +571,7 @@ src/shal/
 | PostgreSQL | `postgres,db` | RelationalDB | P0 | most-loved RDBMS |
 | MySQL | `mysql,db` | RelationalDB | P0 | ubiquitous |
 | MariaDB | `mariadb,db` | RelationalDB | P1 | MySQL fork |
-| SQLite | `sqlite,db` | RelationalDB | P1 | embedded |
+| SQLite | `sqlite,database` | — | P1 | ✅ ADK reference (`shal docs --example sqlite`); root driver over stdlib `sqlite3`, all four side-effect labels |
 | Redis | `redis,db` | KeyValueStore | P0 | cache/store |
 | MongoDB | `mongodb,db` | DocumentStore | P0 | document DB |
 | InfluxDB | `influxdb,db` | TimeSeriesDB | P0 | metrics/IoT time series |

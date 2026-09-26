@@ -1,0 +1,11 @@
+# One SQLite database as a root node: no bus, the driver wraps the stdlib sqlite3.
+# Address ":memory:" is the twin (a private in-memory database, no file written);
+# put a file path there for a real one. No sim.py: the address is the twin.
+# The driver is not registered by `import shal`, so name its file (D5):
+#   shal tools topology.yaml --drivers driver.py
+shal_version: 1
+root:
+  db:
+    id: db
+    driver: sqlite,database
+    address: ":memory:"
