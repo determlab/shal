@@ -31,7 +31,7 @@ class GoodThing(Driver):
 # (_NoMeta): llm_ready NOT set and an op with no @op metadata — a problem
 # check_driver reports today. (`@op("...")` without side_effect is NOT one: it is
 # legal and infers "actuator", fail-closed — driver.py `inferred_side_effect`; it is
-# a warning (#162), see _UNLABELLED.)
+# a warning (#162, #194), see _UNLABELLED.)
 _BAD = """
 from shal import Driver
 
@@ -72,8 +72,9 @@ class UnlabelledThing(Driver):
         return "started"
 """
 
-# One @idempotent op; `{label}` is empty (no side_effect: inferred "none", runs
-# ungated — a problem, #183) or a declared `, side_effect="..."`.
+# One @idempotent op; `{label}` is empty (no side_effect: "actuator", gated and
+# audited like any unlabelled op — the same warning, #194) or a declared
+# `, side_effect="..."`.
 _IDEMPOTENT = """
 from shal import Driver, idempotent, op
 
@@ -88,11 +89,12 @@ class SetpointThing(Driver):
         return "set"
 """
 
-IDEMPOTENT_PROBLEM = (
-    'set_level: @idempotent with no side_effect is inferred "none" and runs '
-    'ungated. An idempotent op is not always a read (an absolute setpoint is an '
-    'idempotent write): declare side_effect explicitly — "none" for a read, '
-    '"write" for a benign, reversible change.')
+
+def _omission_warning(op: str) -> str:
+    """The ONE text for any op with no side_effect, @idempotent or not (#194)."""
+    return (f'{op}: no side_effect declared; treated as actuator (gated, audited). '
+            f'Declare it — "none" for a read, "write" for a benign, reversible '
+            f'change, "config"/"actuator" for a gated one.')
 
 _YAML = ("shal_version: 1\n"
          "root:\n"
@@ -146,20 +148,18 @@ def test_an_unlabelled_op_is_a_json_warning_and_exits_0(drivers):
     assert r.returncode == 0, r.stdout + r.stderr   # warnings never fail
     report = json.loads(r.stdout)
     assert report["ok"] is True and report["problems"] == []
-    assert report["warnings"] == [
-        'start: no side_effect declared; inferred "actuator" (gated). Declare '
-        'side_effect= — "none" for a read, "write" for a benign, reversible change, '
-        '"config" or "actuator" for a gated one.']
+    assert report["warnings"] == [_omission_warning("start")]
 
 
-def test_an_idempotent_op_without_side_effect_is_a_problem_and_exits_1(drivers):
+def test_an_idempotent_op_without_side_effect_gets_the_same_warning(drivers):
+    # #194 folds #183's problem into the one omission warning: the runtime now
+    # gates the op, so nothing is left ungated for the check to fail
     r = _shal("check", "check_idem_bare_driver:SetpointThing", "--json",
               cwd=drivers)
-    assert r.returncode == 1, r.stdout + r.stderr   # it runs ungated: a hard stop
+    assert r.returncode == 0, r.stdout + r.stderr   # warnings never fail
     report = json.loads(r.stdout)
-    assert report["ok"] is False
-    assert report["problems"] == [IDEMPOTENT_PROBLEM]
-    assert report["warnings"] == []   # not ALSO #162's warning
+    assert report["ok"] is True and report["problems"] == []
+    assert report["warnings"] == [_omission_warning("set_level")]
     assert "Traceback" not in r.stderr
 
 

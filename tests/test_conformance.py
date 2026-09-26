@@ -210,12 +210,16 @@ def test_freshness_probe_on_the_real_i2c_stack():
     assert any("freshness" in c for c in report.checked)
 
 
-# ---- issue #162: an @op with no side_effect is warned (legal, gated, but silent) ----
+# ---- issue #162/#194: an op with no side_effect is warned (legal, gated, but silent) ----
 
-UNLABELLED_WARNING = (
-    'start: no side_effect declared; inferred "actuator" (gated). Declare '
-    'side_effect= — "none" for a read, "write" for a benign, reversible change, '
-    '"config" or "actuator" for a gated one.')
+def _omission_warning(op: str) -> str:
+    """The ONE text for any op with no side_effect, @idempotent or not (#194)."""
+    return (f'{op}: no side_effect declared; treated as actuator (gated, audited). '
+            f'Declare it — "none" for a read, "write" for a benign, reversible '
+            f'change, "config"/"actuator" for a gated one.')
+
+
+UNLABELLED_WARNING = _omission_warning("start")
 
 
 @shal.register
@@ -268,14 +272,9 @@ def test_a_driver_that_declares_every_label_gets_no_such_warning():
             compatible, report.warnings)
 
 
-# ---- issue #183: an @idempotent op with no side_effect runs ungated -- a problem ----
-
-IDEMPOTENT_PROBLEM = (
-    'set_level: @idempotent with no side_effect is inferred "none" and runs '
-    'ungated. An idempotent op is not always a read (an absolute setpoint is an '
-    'idempotent write): declare side_effect explicitly — "none" for a read, '
-    '"write" for a benign, reversible change.')
-
+# ---- issue #194: an @idempotent op with no side_effect gets the SAME warning ----
+# (#183's separate problem is gone: the runtime now gates the op, so no omission
+# is left that runs ungated)
 
 def _setpoint_driver(label: dict) -> type:
     class _Setpoint(shal.Driver):
@@ -290,10 +289,25 @@ def _setpoint_driver(label: dict) -> type:
     return _Setpoint
 
 
-def test_an_idempotent_op_without_side_effect_is_a_problem_word_for_word():
+def test_an_idempotent_op_without_side_effect_gets_the_one_warning():
     report = conformance.check_driver(_setpoint_driver({}))
-    assert report.problems == [IDEMPOTENT_PROBLEM] and not report.ok
-    assert report.warnings == []   # reported once: not ALSO #162's warning
+    assert report.warnings == [_omission_warning("set_level")]
+    assert report.problems == [] and report.ok   # a warning, never a problem
+
+
+def test_a_device_op_with_no_op_at_all_gets_the_one_warning_too():
+    class _Bare(shal.Driver):
+        compatible = ""
+        kind = None
+        llm_ready = True
+
+        @shal.idempotent
+        def level(self) -> int:
+            return 1
+
+    report = conformance.check_driver(_Bare)
+    assert report.warnings == [_omission_warning("level")]
+    assert report.problems == ["level: missing @shal.op description"]
 
 
 @pytest.mark.parametrize("side_effect", ["none", "write"])
@@ -302,7 +316,25 @@ def test_the_same_op_with_side_effect_declared_is_clean(side_effect):
     assert report.problems == [] and report.warnings == [], report
 
 
-def test_runtime_inference_is_unchanged_for_the_unlabelled_idempotent_op():
-    # the check catches it; the runtime still infers "none" (driver.py, #19)
+def test_runtime_inference_is_actuator_for_the_unlabelled_idempotent_op():
+    # one decorator, one meaning (#194): @idempotent never declares a read
     fn = _setpoint_driver({}).capability_ops()["set_level"]
-    assert shal.driver.inferred_side_effect(fn) == "none"
+    assert shal.driver.inferred_side_effect(fn) == "actuator"
+
+
+def test_a_bus_op_with_no_side_effect_is_not_warned():
+    # a Transport's ops are never gated or audited, so "treated as actuator
+    # (gated, audited)" would not be true for them (#194)
+    class _Bus(shal.Driver, shal.transport.Transport, shal.MessageTransport):
+        compatible = ""
+        kind = None
+
+        def exchange(self, addr, msg):
+            return {}
+
+        @shal.op("Flush the bus buffers.")
+        def flush(self) -> None:
+            pass
+
+    report = conformance.check_driver(_Bus)
+    assert not any("no side_effect declared" in w for w in report.warnings), report

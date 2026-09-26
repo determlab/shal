@@ -24,6 +24,7 @@ class _FakeMotor(shal.Driver):
         return f"spinning {rpm}"
 
     @shal.idempotent
+    @shal.op("Read the motor speed.", side_effect="none")
     def get_rpm(self) -> int:                # read op: idempotent, not audited
         return 100
 

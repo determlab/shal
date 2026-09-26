@@ -83,6 +83,8 @@ class Deebot(Driver, VacuumRobot):
         self._command("playSound", {"sid": 30})
 
     @idempotent
+    @op("Read the battery level in percent. A read.", unit="percent",
+        side_effect="none")
     def get_battery_percent(self) -> int:
         data = self._command("getBattery")
         if "value" not in data:                # no reading yet (event bus not warm):
@@ -92,6 +94,8 @@ class Deebot(Driver, VacuumRobot):
         return int(data["value"])
 
     @idempotent
+    @op("Read the cleaning state (idle, clean, pause, goCharging). A read.",
+        side_effect="none")
     def get_clean_state(self) -> str:
         """e.g. 'idle' | 'clean' | 'pause' | 'goCharging'."""
         data = self._command(self._CLEAN_INFO)

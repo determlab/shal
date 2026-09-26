@@ -77,17 +77,17 @@ structured fields as kwargs: `self.log.debug("conv ready", event="...")`).
    - Everything else (relative moves, counters, fire-and-forget commands) stays
      unmarked: a `HopError(delivered="unknown")` reaches the USER, who decides.
      Never catch-and-retry transport errors inside a driver.
-   - A `write`/`actuator` op you want **audited** must NOT be `@idempotent` — the
-     audit trail logs only non-idempotent commands, and the conformance kit fails
-     a write that produces no audit record. Mark reads idempotent; leave
-     writes/actuators unmarked (even absolute setpoints).
+   - `@idempotent` is about retry, never the label (#194): the `side_effect`
+     label alone decides the gate and the audit. Every op that is not `"none"`
+     is audited, `@idempotent` or not — an absolute setpoint can be
+     `@idempotent` + `side_effect="write"` and still lands in the audit log.
 3. **Payloads are yours; transport is not.** You know your device's register
    map / JSON commands; you never open sockets, spawn processes, or build
    shell strings. If you need a new way to reach hardware, that's a bus
    (see shal-build-bus).
 4. **Public method = capability op.** The framework wraps every public method:
-   txn id assignment, DEBUG call/raise traces, audit records for non-idempotent
-   ops. Keep helpers underscore-prefixed so they aren't wrapped or audited.
+   txn id assignment, DEBUG call/raise traces, audit records for every op that
+   is not a read (`side_effect` other than `"none"`). Keep helpers underscore-prefixed so they aren't wrapped or audited.
 5. **Capabilities are shared contracts.** Prefer an existing Protocol
    (`shal.capabilities`) over inventing one; specify units, ranges, error
    behavior in the docstring. Actuator capabilities must implement
@@ -104,7 +104,8 @@ agent surface stays a guarantee, not an afterthought. Every op carries a
 
 `side_effect` is `"none"` (read), `"write"` (a benign state change), `"actuator"`
 (physical motion), or `"config"` (a destructive/configuration write) — if omitted
-it's inferred from `@idempotent`. Then `hal.tool_schemas()` emits Anthropic
+it is `"actuator"` (gated, audited), `@idempotent` or not; declare `"none"` for a
+read. Then `hal.tool_schemas()` emits Anthropic
 tool-use definitions, `hal.tool_catalog()` reports side-effects for gating, and
 `hal.call_tool(name, args)` dispatches (a delivery-unknown write is reported,
 never auto-retried). Input schemas come from your type hints — annotate params.

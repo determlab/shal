@@ -41,23 +41,15 @@ All notable changes to this project are documented here. The format follows
   `shal.errors.HOW_TO_APPROVE_LINE`, also added to `shal call --json`'s refusal as
   `how_to_approve`; `shal call`'s printed refusal is unchanged. The default
   approver and its TTY check are unchanged.
-- **`check_driver` reports an `@idempotent` op with no `side_effect` as a problem**
-  (#183) — that op is inferred `"none"` and runs **ungated**, the one omission that
-  opens the gate, and an idempotent op is not always a read (an absolute setpoint is
-  an idempotent write). So it is a problem, not a warning, and `shal check` exits 1.
-  The problem names the op: `<op>: @idempotent with no side_effect is inferred "none"
-  and runs ungated. An idempotent op is not always a read (an absolute setpoint is an
-  idempotent write): declare side_effect explicitly — "none" for a read, "write" for
-  a benign, reversible change.` The op gets only this problem, not also the #162
-  warning. Runtime inference does not change. Every ADK reference, example driver,
-  demo and guide example already declares the label, so none of them fails.
-- **`check_driver` warns when an `@op` has no `side_effect`** (#162) — the op is
-  still legal and still gated (it infers `"actuator"`, fail-closed), so this is a
-  warning, never a problem, and `shal check` still exits 0. The warning names the op
-  and the fix: `<op>: no side_effect declared; inferred "actuator" (gated). Declare
-  side_effect= — "none" for a read, "write" for a benign, reversible change,
-  "config" or "actuator" for a gated one.` Every ADK reference, example driver and
-  demo already declares its labels, so none of them gains a warning.
+- **`check_driver` warns when an op has no `side_effect`** (#162, text and scope
+  set by #194; device drivers only — a bus's ops are never gated) — the op is still legal and fails closed (it is treated as
+  `"actuator"`, gated and audited), so this is a warning, never a problem, and
+  `shal check` still exits 0. It is one rule with one text for every op,
+  `@idempotent` or not: `<op>: no side_effect declared; treated as actuator (gated,
+  audited). Declare it — "none" for a read, "write" for a benign, reversible
+  change, "config"/"actuator" for a gated one.` (#183's separate problem for an
+  unlabelled `@idempotent` op, merged in PR #193, is folded into this warning by
+  #194 — the runtime no longer lets that omission run ungated.)
 - **The ADK reference set gains `sqlite,database`: four side-effect labels on one
   software node, zero dependencies** (#157, `adk.md` §3.7) —
   `src/shal/adk/reference/sqlite/` (`driver.py`, `test_sqlite.py`,
@@ -277,6 +269,31 @@ All notable changes to this project are documented here. The format follows
   cloud-device example with both `config:` and `address`.
 
 ### Changed
+- **BREAKING: one decorator, one meaning — `@idempotent` is only about retry**
+  (#194, ADR-001 addendum 4). The `side_effect` label alone decides the gate and
+  the audit. (1) **Audit follows the label:** every op whose effective
+  `side_effect` is not `"none"` is audited on a device driver — limit rejection,
+  approval decision, outcome — `@idempotent` or not; before, every `@idempotent`
+  op skipped the audit, so an idempotent `write` (an absolute setpoint) left no
+  trail. Reads stay unaudited. (2) **Inference is uniformly fail-closed:** an op
+  with no `side_effect` is `"actuator"` (gated, audited) even when it is
+  `@idempotent`; before, an unlabelled `@idempotent` op was inferred `"none"` and
+  ran ungated. `side_effect="none"` is the only way to declare a read, and
+  `shal call` now refuses an unlabelled `@idempotent` op (exit 2). (3) **Retry is
+  unchanged:** an `@idempotent` op still reconnects and retries once on
+  `delivered="no"`. A gated op is approved once, before the first send; the retry
+  does not ask again (nothing reached the device), and the call keeps one outcome
+  audit record, which carries `attempt: 2` and the dropped `hop` when the retry
+  fired (`attempt: 1` and no `hop` otherwise). The tool description follows the
+  label too: only an `@idempotent` `"none"` op says "Idempotent read"; an
+  `@idempotent` op with another label says `Side effect (<label>): safe to
+  re-send; a lost delivery is retried once.` (plus `It needs a person's
+  approval.` when gated), so `rigol,dp832`'s `set_voltage` is no longer
+  described as a read. The mesh demo's `ping`, `get_user`, `get_order` and `job_status`
+  and the deebot demo's `get_battery_percent` and `get_clean_state` gain
+  `@op(..., side_effect="none")`; without it they would now stop at the gate.
+  AGENT_GUIDE rule 4, SDK.md §5 and §7 and the `shal-build-driver` skill say the
+  same.
 - **BREAKING: no device driver ships registered** (#149; D1 re-affirmed on #110,
   D7 amended) — the seven bundled drivers and the `nxp,pca9548` mux chip leave the
   package's registry and its `shal.drivers` entry points. `ti,tmp102`,

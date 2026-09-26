@@ -41,9 +41,10 @@ _SIDE_EFFECTS = frozenset({"none", "write", "actuator", "config"})
 # motion ("actuator") and destructive/configuration writes ("config"). A plain
 # "write" (a benign setpoint/register) is audited but NOT gated.
 _GATED_EFFECTS = frozenset({"actuator", "config"})
-# fail-closed default (issue #19): an un-annotated, non-idempotent op infers
-# "actuator" (gated), never "write" — a forgotten side_effect must not silently
-# reach hardware. Authors opt DOWN to "write" (benign, ungated) explicitly.
+# fail-closed default (issue #19, #194): an un-annotated op infers "actuator"
+# (gated, audited), never "write" or "none" — whether or not it is @idempotent. A
+# forgotten side_effect must not silently reach hardware. Authors opt DOWN to
+# "write" (benign, ungated) or "none" (a read) explicitly.
 
 
 def op(description: str, *, unit: str | None = None,
@@ -54,9 +55,9 @@ def op(description: str, *, unit: str | None = None,
     `description` should say WHEN to call it, not just what it does — that is what
     a model keys on. `side_effect` is "none" (a read), "write" (a benign state
     change), "actuator" (physical motion), or "config" (a destructive/
-    configuration write); if omitted it is inferred FAIL-CLOSED (issue #19): an
-    @idempotent op is a read ("none"), any other op is treated as "actuator"
-    (gated) — declare "write" explicitly for a benign, ungated state change.
+    configuration write); if omitted it is inferred FAIL-CLOSED (issue #19, #194):
+    the op is treated as "actuator" (gated, audited), @idempotent or not —
+    declare "none" for a read and "write" for a benign, ungated state change.
     "actuator" and "config" ops are gated by the approval interlock (issue #14) — they stop
     for the active Approver before any bus I/O. The metadata
     feeds `hal.tool_schemas()` and is required on every public op of a driver that
@@ -91,14 +92,16 @@ def inferred_side_effect(fn: Callable) -> str:
     gate, the audit, and the advertised tool hints (advertised == enforced).
 
     Explicit `@op(side_effect=...)` wins. Otherwise it is inferred FAIL-CLOSED
-    (issue #19): an `@idempotent` op is a read ("none"); any other un-annotated op
-    is treated as "actuator" (gated), so a forgotten annotation stops for approval
-    rather than silently reaching hardware. Authors opt DOWN to "write" (a benign,
-    ungated state change) explicitly."""
+    (issue #19; ADR-001 addendum 4, #194): an un-annotated op is "actuator"
+    (gated, audited) whether or not it is `@idempotent` — `@idempotent` says only
+    that a lost-delivery retry is safe, never that the op is a read. So a
+    forgotten annotation stops for approval rather than silently reaching
+    hardware. Authors opt DOWN to "none" (a read) or "write" (a benign, ungated
+    state change) explicitly."""
     declared = (getattr(fn, "__shal_op__", None) or {}).get("side_effect")
     if declared:
         return declared
-    return "none" if getattr(fn, "__shal_idempotent__", False) else "actuator"
+    return "actuator"
 
 
 class Driver:
@@ -200,9 +203,13 @@ class Driver:
         from .transport import Transport
         retry = getattr(fn, "__shal_idempotent__", False)
         op = fn.__name__
-        # audit covers state-changing ops on DEVICE drivers; a bus's public
-        # helpers are not device commands (and reads are not audited either)
-        audited = not retry and not isinstance(self, Transport)
+        # side_effect is fail-closed by default (see inferred_side_effect)
+        side_effect = inferred_side_effect(fn)
+        # audit follows the LABEL, not @idempotent (ADR-001 addendum 4, #194):
+        # every non-read op on a DEVICE driver is audited — an idempotent write
+        # included; reads are not, and a bus's public helpers are not device
+        # commands
+        audited = side_effect != "none" and not isinstance(self, Transport)
         # operating limits: effective schema (class ⊕ op_limits() ⊕ config.limits)
         # compiled ONCE at bind, checked on every call BEFORE the op body — the
         # only path to bus I/O (issue #10)
@@ -213,8 +220,7 @@ class Driver:
         # human-in-the-loop gate (issue #14): actuator/config ops, and only device
         # drivers (a bus provides transport, not actuation — same rule as audit).
         # The approver is consulted at CALL time, so a host can inject a policy
-        # after load. side_effect is fail-closed by default (see inferred_side_effect).
-        side_effect = inferred_side_effect(fn)
+        # after load.
         gated = side_effect in _GATED_EFFECTS and not isinstance(self, Transport)
         sig = inspect.signature(fn) if gated else None
 
@@ -223,6 +229,8 @@ class Driver:
             from .errors import LimitError
             token = _log.current_txn.set(_log.new_txn())
             t0 = time.perf_counter()
+            attempt = 1  # 2 once the idempotent reconnect-and-retry fires
+            dropped: dict = {}  # {"hop": <hop that dropped>} once the retry fires
             try:
                 if guard is not None:
                     try:
@@ -244,7 +252,14 @@ class Driver:
                 except HopError as e:
                     if retry and e.delivered == "no" and self.bus is not None:
                         # reconnect once, retry once — the common case stays magic,
-                        # but a handled anomaly is WARNED, never silent (rule 4)
+                        # but a handled anomaly is WARNED, never silent (rule 4).
+                        # Nothing reached the device the first time, so the ONE
+                        # approval above covers this send (no second ask), and the
+                        # call keeps ONE outcome record, marked attempt=2 and
+                        # carrying the dropped hop in the stable `hop` field — the
+                        # same key and meaning as this WARNING line (#194)
+                        attempt = 2
+                        dropped = {"hop": e.hop}
                         self.log.warning("reconnect-and-retry after drop (1/1)",
                                          event="retry", op=op, attempt=2, hop=e.hop)
                         self.bus.close()
@@ -259,6 +274,7 @@ class Driver:
                                 extra={"event": "audit", "id": self.node.id or "",
                                        "path": self.node.path, "op": op,
                                        "outcome": "ok", "duration_ms": duration,
+                                       "attempt": attempt, **dropped,
                                        "txn": _log.current_txn.get()})
                 return result
             except HopError as e:
@@ -275,8 +291,8 @@ class Driver:
                                 extra={"event": "audit", "id": self.node.id or "",
                                        "path": self.node.path, "op": op,
                                        "outcome": "error", "delivered": e.delivered,
-                                       "duration_ms": duration,
-                                       "txn": _log.current_txn.get()})
+                                       "duration_ms": duration, "attempt": attempt,
+                                       **dropped, "txn": _log.current_txn.get()})
                 raise
             finally:
                 _log.current_txn.reset(token)
@@ -287,9 +303,10 @@ class Driver:
 
 def _approve_or_raise(driver, op: str, side_effect: str, sig, args, kwargs) -> None:
     """Consult the active Approver for one gated (actuator/config) call. ALWAYS
-    audits the decision — independent of the op's idempotency, since an
-    @idempotent actuator is still gated — and raises ApprovalDenied (pre-I/O,
-    nothing sent) on refusal (issue #14)."""
+    audits the decision — a gated op is never a read, so it is audited whether
+    or not it is @idempotent — and raises ApprovalDenied (pre-I/O, nothing sent)
+    on refusal (issue #14). Called ONCE per call: an idempotent retry after a
+    delivered="no" drop is covered by this same decision (#194)."""
     from .approval import ApprovalRequest, ConsoleApprover, get_approver
     from .errors import ApprovalDenied
     bound = sig.bind(driver, *args, **kwargs)

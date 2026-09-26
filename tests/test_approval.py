@@ -251,7 +251,7 @@ def test_idempotent_actuator_is_gated(hal):
 
 
 def test_idempotent_actuator_decision_is_audited(hal, audit_records):
-    # `home` is @idempotent (audited=False) but gated — the decision must still log
+    # `home` is @idempotent AND gated — the decision must log (the label decides, #194)
     with shal.approver(shal.DenyAll()):
         with pytest.raises(shal.ApprovalDenied):
             hal.get_device("rig").home()

@@ -201,7 +201,8 @@ def load(source) -> Hal:
 
 def _effect(fn) -> dict:
     """side_effect + idempotency for an op: explicit @shal.op wins, else inferred
-    from @idempotent (a read is 'none' and safe to repeat)."""
+    fail-closed as 'actuator' (driver.inferred_side_effect). @idempotent is only
+    about retry, never the label (#194)."""
     meta = getattr(fn, "__shal_op__", None) or {}
     idem = bool(getattr(fn, "__shal_idempotent__", False))
     side = inferred_side_effect(fn)
@@ -229,8 +230,14 @@ def _describe(node: Node, opname: str, fn) -> str:
     parts.append(f"Device '{node.id or node.path}' at {node.path}.")
     if eff["unit"]:
         parts.append(f"Unit: {eff['unit']}.")
-    if eff["idempotent"]:
+    # keyed on the LABEL, not @idempotent (#194): advertised == enforced
+    if eff["side_effect"] == "none" and eff["idempotent"]:
         parts.append("Idempotent read — safe to call repeatedly.")
+    elif eff["idempotent"]:
+        gated = (" It needs a person's approval." if eff["side_effect"] in _GATED_EFFECTS
+                 else "")
+        parts.append(f"Side effect ({eff['side_effect']}): safe to re-send; a lost "
+                     f"delivery is retried once.{gated}")
     else:
         parts.append(f"Side effect ({eff['side_effect']}): a failed call may have "
                      f"partially applied and is NOT auto-retried — confirm before re-calling.")

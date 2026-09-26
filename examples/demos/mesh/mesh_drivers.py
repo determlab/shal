@@ -36,6 +36,7 @@ class _MeshDriver(Driver):
         return resp
 
     @idempotent
+    @op("Check that the service is up. A read.", side_effect="none")
     def ping(self) -> bool:
         return bool(self._call(cmd="ping").get("ok"))
 
@@ -45,6 +46,7 @@ class UserService(_MeshDriver):
     compatible = "acme,user-service"
 
     @idempotent
+    @op("Look up one user by id. A read.", side_effect="none")
     def get_user(self, user_id: int) -> dict:
         return self._call(cmd="get_user", id=user_id)["user"]
 
@@ -59,6 +61,7 @@ class OrderService(_MeshDriver):
         return self._call(cmd="place_order", item=item, qty=qty)["order_id"]
 
     @idempotent
+    @op("Look up one order by id. A read.", side_effect="none")
     def get_order(self, order_id: str) -> dict:
         return self._call(cmd="get_order", order_id=order_id)["order"]
 
@@ -73,5 +76,6 @@ class JobRunner(_MeshDriver):
         return self._call(cmd="submit", job=job)["job_id"]
 
     @idempotent
+    @op("Get the status of one job by id. A read.", side_effect="none")
     def job_status(self, job_id: str) -> str:
         return self._call(cmd="status", job_id=job_id)["status"]

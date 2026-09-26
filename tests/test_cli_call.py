@@ -70,6 +70,11 @@ _MARKER_DRIVER = textwrap.dedent('''\
         @op("Move by some steps.")  # no label: inferred actuator, fail-closed
         def move(self, steps: int) -> None:
             self._mark(f"move {steps}")
+
+        @idempotent
+        @op("Go to an absolute position.")  # no label: actuator too (#194)
+        def goto(self, pos: int) -> None:
+            self._mark(f"goto {pos}")
     ''')
 
 _MARKER_YAML = ("shal_version: 1\n"
@@ -166,7 +171,9 @@ def test_refused_set_target_never_reaches_the_bus(tmp_path, monkeypatch, capsys)
 
 
 def test_refused_ops_leave_no_mark_across_processes(lab):
-    for argv in (["arm"], ["move", "3"]):
+    # an unlabelled @idempotent op is refused too: @idempotent never declares a
+    # read (#194)
+    for argv in (["arm"], ["move", "3"], ["goto", "3"]):
         r = _marker(*argv, cwd=lab)
         assert r.returncode == 2, (argv, r.stderr)
         assert "'actuator'" in r.stderr
