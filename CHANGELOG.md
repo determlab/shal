@@ -345,6 +345,10 @@ All notable changes to this project are documented here. The format follows
   route the echoed address through `redact_url`. Clean addresses still echo verbatim.
 
 ### Documentation
+- **Three ledger rows: D23–D25** (#158, `adk.md` §3.6 R10 / §3.7) — what ships
+  (`shal,*` only; D1's line made explicit, and D1's Source now points at D23), the
+  side-effect rule for software (with the restorable-delete ruling), and the HTTP
+  request envelope. No code changed.
 - **Name the ADK** (#140, `adk.md` R1) — a new "## The ADK" section in
   `AGENT_GUIDE.md` names the five pieces an agent already uses to build a
   compliant driver: the rules in this guide, `@op` in `driver.py`, the typed
