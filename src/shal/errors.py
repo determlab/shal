@@ -66,9 +66,14 @@ class ApprovalDenied(Error):
     the audit trail and an agent gets a structured reason it can act on.
     """
 
+    # every refusal says how to approve, so the reader is never stuck (#156)
+    _HOW_TO_APPROVE = ("to approve: run it under an approver in Python — "
+                       "`with shal.approver(...)` — or through an MCP host via "
+                       "`shal mcp`, which asks a human")
+
     def __init__(self, msg: str, *, path: str = "?", op: str = "?",
                  side_effect: str = "actuator", params: dict | None = None) -> None:
-        super().__init__(msg)
+        super().__init__(f"{msg}; {self._HOW_TO_APPROVE}")
         self.path = path
         self.op = op
         self.side_effect = side_effect

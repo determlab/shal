@@ -2,14 +2,21 @@
 
 Run code against simulated buses with zero hardware. Device models are built
 from the children's `compatible` at activation; tests reach them via `model_for`.
+
+It also ships the sim family's one device, `shal,sim-sensor` (R10, #156): a
+temperature that drifts and one gated `config` op. It wraps no part, so it binds
+only under a `shal,sim-i2c` bus — the framework's own object, not a `vendor,part`.
 """
 from __future__ import annotations
 
 import logging
+import random
 from collections.abc import Sequence
 from typing import Any
 
-from ..driver import Driver
+from ..capabilities import TemperatureSensor
+from ..driver import Driver, idempotent
+from ..driver import op as _op  # `op` is the loop name in every model below
 from ..errors import HopError, LoadError
 from ..log import bus_logger, current_txn, redact, redact_url
 from ..node import Node
@@ -164,6 +171,62 @@ class Tmp102Model:
         return out
 
 
+# The sim family's own device (R10, #156): not a `vendor,part` twin but the
+# device the twin machinery ships, so a bare install has something to read.
+_SENSOR_TEMP = 0x00     # read-only: temperature, signed 16-bit, 0.01 C/LSB
+_SENSOR_TARGET = 0x01   # write: the setpoint the value drifts toward, same encoding
+
+
+def _centi(celsius: float) -> int:
+    return int(round(celsius * 100))
+
+
+@sim_model("shal,sim-sensor")
+class SimSensorModel:
+    """A room that drifts. Every read of the temperature register is a new
+    conversion: the value moves toward `target_c` with noise, and always by at
+    least `MIN_STEP`, so two reads differ. The live value IS this state (rule 3)
+    — nothing is seeded into the driver or cached. The start value is random, so
+    two processes (two `shal probe` runs) read different values too."""
+
+    MIN_STEP = 0.05   # C; five LSBs, so every drift shows in the reading
+
+    def __init__(self, rng: random.Random | None = None) -> None:
+        self._rng = rng or random.Random()
+        self.target_c = 25.0
+        self.temp_c = self.target_c + self._rng.uniform(-2.0, 2.0)
+        self.target_writes = 0   # test hook: setpoint writes that reached the model
+        self._pointer = _SENSOR_TEMP
+
+    def _drift(self) -> None:
+        step = 0.2 * (self.target_c - self.temp_c) + self._rng.uniform(-0.3, 0.3)
+        if abs(step) < self.MIN_STEP:
+            step = self.MIN_STEP if step >= 0 else -self.MIN_STEP
+        self.temp_c += step
+
+    def txn(self, ops: Sequence[Op]) -> bytes:
+        out = b""
+        for o in ops:
+            if isinstance(o, Write):
+                data = o.data
+                if not data:
+                    continue
+                self._pointer = data[0]
+                if self._pointer == _SENSOR_TARGET and len(data) >= 3:
+                    self.target_c = int.from_bytes(data[1:3], "big", signed=True) / 100
+                    self.target_writes += 1
+            elif isinstance(o, Read):
+                if self._pointer == _SENSOR_TEMP:
+                    self._drift()
+                    raw = _centi(self.temp_c).to_bytes(2, "big", signed=True)
+                elif self._pointer == _SENSOR_TARGET:
+                    raw = _centi(self.target_c).to_bytes(2, "big", signed=True)
+                else:
+                    raw = b"\x00\x00"
+                out += raw[: o.n]
+        return out
+
+
 # -- the bus ---------------------------------------------------------------------
 
 class SimI2cBus(Driver, Transport, ByteTransport):
@@ -229,6 +292,53 @@ class SimI2cBus(Driver, Transport, ByteTransport):
             return result
 
 
+# -- the sim device ------------------------------------------------------------------
+
+class SimSensor(Driver, TemperatureSensor):
+    """Simulated temperature sensor that ships with SHAL: reads drift, set_target is gated."""
+
+    compatible = "shal,sim-sensor"
+    kind = ByteTransport
+    llm_ready = True
+
+    def bind(self, node: Node) -> None:
+        # it wraps no part: on a real bus it would talk to whatever chip answers
+        # at this address, so only a shal,sim-i2c ancestor may carry it
+        parent = node.parent
+        while parent is not None and not isinstance(parent.driver, SimI2cBus):
+            parent = parent.parent
+        if parent is None:
+            raise LoadError(f"{node.path}: shal,sim-sensor is a simulated device — "
+                            f"put it under a shal,sim-i2c bus")
+        super().bind(node)
+
+    @idempotent  # a read: safe to auto-retry across transient drops
+    @_op("Read the simulated temperature now. It drifts, so each read is a new "
+        "value. Call when you need the current temperature.",
+        unit="celsius", side_effect="none")
+    def read_celsius(self) -> float:
+        raw = self.bus.txn(self.addr, [Write(bytes([_SENSOR_TEMP])), Read(2)])
+        return int.from_bytes(raw[:2], "big", signed=True) / 100
+
+    @_op("Set the temperature the simulated room drifts toward. It changes what "
+        "the sensor reports next, so it needs approval.", unit="celsius",
+        side_effect="config", params={"celsius": {"minimum": -40, "maximum": 125}})
+    def set_target(self, celsius: float) -> None:
+        raw = _centi(celsius).to_bytes(2, "big", signed=True)
+        self.bus.txn(self.addr, [Write(bytes([_SENSOR_TARGET]) + raw)])
+
+    @classmethod
+    def authoring_meta(cls) -> dict:  # shal.catalog() detail (issue #1)
+        return {
+            "address_schema": {"type": "integer", "minimum": 3, "maximum": 119,
+                               "description": "7-bit I2C address on the sim bus",
+                               "examples": [72]},
+            "config_schema": {"type": "object", "properties": {},
+                              "additionalProperties": False},
+        }
+
+
 from .. import registry  # noqa: E402
 
 registry.register(SimI2cBus)
+registry.register(SimSensor)
