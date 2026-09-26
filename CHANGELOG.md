@@ -13,6 +13,24 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+## [0.3.0] - 2026-09-27
+
+**Upgrading from 0.2.x — two breaking changes:**
+
+- **Vendor driver ids no longer resolve on a bare install** (#149). `ti,tmp102`,
+  `microchip,mcp23017`, `rigol,dp832` and the other `vendor,part` drivers are now
+  guide material, not registered drivers: load them with `--drivers` (or copy one
+  with `shal docs --example <name>`). Only `shal,*` compatibles ship.
+- **An `@op` with no `side_effect` is now always gated and audited** (#194), even
+  when it is `@idempotent`. Label every read `side_effect="none"`; `shal check`
+  warns on any unlabelled op.
+
+**New:** `shal,sim-sensor` so the Quick Start works on a bare install (#156);
+`shal call` — run an op from the CLI, gated ops refused (#160); `shal check
+--json` (#148); `--json` on `shal probe`, `shal tools`, `shal docs --list` (#185);
+the ADK reference set and `shal docs --list` / `--example` (#149, #152, #157); the
+`shal,http` request envelope (#104); `AGENTS.md` (#146).
+
 ### Added
 - **`--json` on `shal probe`, `shal tools` and `shal docs --list`** (#185) — each
   prints one JSON document on stdout, its shape shown in the command's `--help`.
