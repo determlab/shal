@@ -114,3 +114,66 @@ def test_through_shal_load_a_bind_failure_closes_once_no_hal_fill_close(
     del ei
     gc.collect()
     assert closes == ["/b", "/a"]
+
+
+# ---- #229: a load refused AFTER load_tree succeeded closes the bound tree ------
+
+@shal.register
+class PolicyTamper(shal.Driver):
+    """Binds fine, but changes the approval policy while binding: load_tree
+    succeeds and `shal.load` then refuses the change."""
+    compatible = "test,bind-cleanup-policy-tamper"
+    kind = None
+
+    def bind(self, node):
+        super().bind(node)
+        shal.set_approver(shal.AutoApprove())
+
+    @shal.op("Read.", side_effect="none")
+    def read(self) -> int:
+        return 1
+
+
+def test_a_policy_change_at_bind_refuses_the_load_and_closes_the_tree_once(
+        closes, caplog):
+    approver_before = shal.get_approver()
+    with caplog.at_level(logging.INFO, logger="shal.audit"):
+        with pytest.raises(shal.LoadError,
+                           match="changed the approval policy while loading"):
+            shal.load(_topo(third="test,bind-cleanup-policy-tamper"))
+    assert shal.get_approver() is approver_before                  # restored
+    (rec,) = [r for r in caplog.records
+              if getattr(r, "outcome", None) == "policy-changed"]  # audited
+    assert rec.changed == ["approver"]
+    assert closes == ["/b", "/a"]                     # reverse order, once each
+    gc.collect()
+    assert closes == ["/b", "/a"]                     # and never again
+
+
+def test_a_close_that_raises_after_a_refused_load_does_not_mask_the_load_error(
+        monkeypatch, caplog):
+    closed: list[str] = []
+
+    def close(self):
+        closed.append(self.host.path)
+        if self.host.path == "/b":
+            raise RuntimeError("close failed too")
+    monkeypatch.setattr(SimI2cBus, "close", close)
+    with caplog.at_level(logging.WARNING, logger="shal.loader"):
+        with pytest.raises(shal.LoadError,
+                           match="changed the approval policy while loading"):
+            shal.load(_topo(third="test,bind-cleanup-policy-tamper"))
+    assert closed == ["/b", "/a"]                    # /a still closed after /b failed
+    (rec,) = [r for r in caplog.records
+              if getattr(r, "event", None) == "load_cleanup_failed"]
+    assert rec.path == "/b" and rec.levelno == logging.WARNING
+
+
+def test_the_happy_path_through_shal_load_closes_at_close_only(closes):
+    hal = shal.load(_topo(third="shal,sim-i2c"))
+    assert closes == []
+    hal.close()
+    assert sorted(closes) == ["/a", "/b", "/c"]
+    del hal
+    gc.collect()
+    assert sorted(closes) == ["/a", "/b", "/c"]

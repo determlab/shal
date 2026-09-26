@@ -252,6 +252,21 @@ def _close_subtree(node: Node, seen: set[int]) -> None:
                      extra={"event": "teardown", "path": node.path})
 
 
+def _close_unowned(roots: list[Node]) -> None:
+    """Close a bound tree that no Hal owns (#229): last root first, each subtree
+    leaf->root, once. A close that raises is logged and the next root still
+    closes — it never replaces the error that brought us here."""
+    for root in reversed(roots):
+        try:
+            _close_subtree(root, set())
+        except Exception as e:  # noqa: BLE001 — never mask the original
+            # the type only: a close message may carry an address (rule 7)
+            logger.warning("close after a refused load raised %s under %s",
+                           type(e).__name__, root.path,
+                           extra={"event": "load_cleanup_failed",
+                                  "path": root.path})
+
+
 def load(source, *, approver=None) -> Hal:
     """Load a topology from a YAML file path or an in-memory mapping (dict).
 
@@ -289,22 +304,23 @@ def load(source, *, approver=None) -> Hal:
     except BaseException:
         _refuse_load_change(before, raising=False)  # restored + audited, then re-raise
         raise
-    _refuse_load_change(before)
-    declared = None
-    if policy and "gated" in policy:
-        try:
-            declared = _driver._coerce_gated(policy["gated"], operator=True)
-        except (TypeError, ValueError) as e:  # schema catches these first; belt+braces
-            Hal(roots, ids).close()
-            raise LoadError(f"{label}: policy.gated: {e}") from e
-    try:  # the ONE write of the policy — the approver included (#217)
+    # Until a Hal exists, the bound tree belongs to no one. ANY error here — a
+    # refused policy change (#229), a bad policy.gated, a fill error (#217) —
+    # closes it ONCE and re-raises the original exception. A failed Hal stays
+    # `_closed`, so its __del__ closes nothing on top of this.
+    try:
+        _refuse_load_change(before)
+        declared = None
+        if policy and "gated" in policy:
+            try:
+                declared = _driver._coerce_gated(policy["gated"], operator=True)
+            except (TypeError, ValueError) as e:  # schema catches these first
+                raise LoadError(f"{label}: policy.gated: {e}") from e
+        # the ONE write of the policy — the approver included (#217)
         hal = Hal(roots, ids, declared_gated=declared, approver=approver,
                   source_label=label)
-    except BaseException:  # ANY fill error (a cell filled first, or driver code
-        # raising): close the tree ONCE — the failed Hal stays `_closed`, so its
-        # __del__ closes nothing — and re-raise the original exception
-        for root in roots:
-            _close_subtree(root, set())
+    except BaseException:
+        _close_unowned(roots)
         raise
     widened = sorted(_driver.get_gated_effects() - _driver._canon()[2])
     source_of = (f"hal:{label}" if hal._declared_gated is not None

@@ -151,6 +151,15 @@ All notable changes to this project are documented here. The format follows
   no `calls` key, instead of `calls: []` ("collected, and there were none").
 
 ### Fixed
+- **A load refused after binding now closes the bound tree** (#229). When
+  `shal.load` refuses a load after `load_tree` succeeded (a driver changed the
+  approval policy at `bind()`, or `policy.gated` is bad), the bound tree was left
+  open until garbage collection. Now any error between a bound tree and a built
+  Hal closes it once (last root first, each subtree leaf->root) and re-raises the
+  original exception unchanged; the refusal is still restored and audited as
+  before. A close that raises here is logged (`event="load_cleanup_failed"`,
+  type and root path only) and never replaces the original. #217's fill-error
+  cleanup uses the same path, so nothing closes twice.
 - **A `bind()` that raises during a load now closes what was already bound**
   (#220). `loader.load_tree` closes each Transport driver and child bus it had
   bound, in reverse order, exactly once, then re-raises the original exception
