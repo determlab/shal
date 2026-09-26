@@ -260,7 +260,7 @@ this report and exits 1:
   ]
 }
 ```
-`ok` is `false` because `problems` is not empty. Each problem starts with the name
+`ok` is `false` because `problems` is not empty. An op problem starts with the name
 of the op. The fix is one line, added directly above `def get_volume`:
 ```python
     @op("Read the current volume (0-100).", side_effect="none")
