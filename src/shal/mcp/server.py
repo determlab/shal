@@ -131,6 +131,37 @@ def _resolve_hal(topology: str | None):
         raise
 
 
+def _is_read(d: dict) -> bool:
+    return bool((d.get("annotations") or {}).get("readOnlyHint"))
+
+
+def _probe_pick(defs: list[dict], which: str) -> dict:
+    """The tool def ``shal probe <topology> <which>`` runs. SystemExit with the
+    message if there is no such tool, or if it is not a read. Shared with
+    ``shal probe --json`` (#185) so both give the same refusal."""
+    d = next((x for x in defs if x["name"] == which), None)
+    if d is None:
+        # `shal probe` users see these too (#166): a neutral `shal:` prefix, and
+        # only commands both entry points have (they ship in one package).
+        raise SystemExit(f"shal: no tool '{which}'. Run `shal probe <topology>` "
+                         f"(no tool) to list what this topology exposes.")
+    if not _is_read(d):
+        raise SystemExit(f"shal: `shal probe` runs reads only; '{which}' changes "
+                         f"hardware — use `shal call` (gated ops are refused "
+                         f"until approved).")
+    return d
+
+
+def _probe_split(defs: list[dict]) -> tuple[list[dict], list[dict]]:
+    """(the reads a snapshot runs, the writes it names and does not run). A read
+    that needs arguments is in neither; the MCP-only approve/deny tools are not
+    writes. Shared with ``shal probe --json`` (#185): one list, one footer."""
+    reads = [d for d in defs if _is_read(d) and not d["input_schema"].get("required")]
+    writes = [d for d in defs if not _is_read(d)
+              and d["name"] not in ("shal_approve", "shal_deny")]
+    return reads, writes
+
+
 def _probe(bridge, which: str | None) -> int:
     """One-shot, human-runnable read (issue #39): print real device state to the
     terminal and exit — no MCP host needed. Reads only (writes are gated; run the
@@ -140,28 +171,13 @@ def _probe(bridge, which: str | None) -> int:
     ``--probe`` with no tool snapshots every no-arg read; ``--probe <tool>`` runs
     one named read."""
     defs = bridge.tool_defs()
-
-    def is_read(d) -> bool:
-        return bool((d.get("annotations") or {}).get("readOnlyHint"))
-
     if which:
-        d = next((x for x in defs if x["name"] == which), None)
-        if d is None:
-            # `shal probe` users see these too (#166): a neutral `shal:` prefix, and
-            # only commands both entry points have (they ship in one package).
-            raise SystemExit(f"shal: no tool '{which}'. Run `shal probe <topology>` "
-                             f"(no tool) to list what this topology exposes.")
-        if not is_read(d):
-            raise SystemExit(f"shal: `shal probe` runs reads only; '{which}' changes "
-                             f"hardware — use `shal call` (gated ops are refused "
-                             f"until approved).")
+        _probe_pick(defs, which)
         out = bridge.call(which, {})
         print(json.dumps(out.get("result", out) if isinstance(out, dict) else out))
         return 0
 
-    reads = [d for d in defs if is_read(d) and not d["input_schema"].get("required")]
-    writes = [d for d in defs if not is_read(d)
-              and d["name"] not in ("shal_approve", "shal_deny")]
+    reads, writes = _probe_split(defs)
     print(f"# {len(reads)} read(s), {len(writes)} write(s) on this topology")
     for d in reads:
         try:
