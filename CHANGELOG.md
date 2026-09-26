@@ -95,6 +95,12 @@ All notable changes to this project are documented here. The format follows
     "Policy is the operator's". The `set_approver` docstring now says that
     `anyio.to_thread` workers (`shal mcp`) inherit the policy; only a raw new OS
     thread does not.
+- **`record.runner` gains `script`** (#214, D22, `record.md` §2). `runner` is now
+  a closed set of three, `pytest | bricks | script`. `script` names operator code
+  that is neither runner — a loop a person wrote, a one-off bench script. It
+  records provenance; no plugin produces it. `read()` accepts it like the other
+  two, filters included. Any fourth value is still a `RecordError`, and the
+  message lists all three.
 
 ### Fixed
 - **A device refusal now leaves an outcome audit record** (#198). When the body of

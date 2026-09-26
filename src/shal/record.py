@@ -62,12 +62,16 @@ YAML_DIRNAME = "records"
 
 Verdict = Literal["pass", "fail", "error", "aborted"]
 StepVerdict = Literal["pass", "fail", "error"]
-Runner = Literal["pytest", "bricks"]
+# `script` is operator code that is neither runner — a loop a person wrote, a
+# one-off bench script. It records provenance; no plugin produces it. A closed
+# set, not a free string: a reader must be able to enumerate who wrote a record
+# (`record.md` §2, #214).
+Runner = Literal["pytest", "bricks", "script"]
 AbortBy = Literal["predictor", "human"]
 
 _VERDICTS = frozenset(("pass", "fail", "error", "aborted"))
 _STEP_VERDICTS = frozenset(("pass", "fail", "error"))
-_RUNNERS = frozenset(("pytest", "bricks"))
+_RUNNERS = frozenset(("pytest", "bricks", "script"))
 _ABORT_BY = frozenset(("predictor", "human"))
 
 # A record id becomes a file name (`records/<id>.yaml`), so it may not be able to
