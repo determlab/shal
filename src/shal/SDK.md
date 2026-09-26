@@ -310,24 +310,32 @@ def start_cleaning(self) -> None:
   shal.get_gated_effects()                                  # the active set
   ```
 
-  NARROWING (dropping `actuator` or `config`) raises `ValueError` from code; only
-  the operator declares it, in the main topology file:
+  NARROWING (dropping `actuator` or `config`) raises `ValueError` from code. A
+  topology may loosen the default for ITS OWN devices, in its main file — the
+  declaration belongs to the Hal that loads it, never to the process (ADR-001
+  addendum 5b):
 
   ```yaml
   policy:
     gated: [config]      # this rig: motion runs without a human; config still asks
   ```
 
+  The effective set for an op = (its Hal's declared set, or the default) ∪ (the
+  host's widenings); `hal.get_gated_effects()` returns it. Two Hals in one process
+  gate independently, `close()` has nothing to reset, and no topology can undo a
+  host widening. `shal.catalog()` describes a class, not a Hal, so it shows the
+  host-level set.
+
   A bare string is a `TypeError`; an unknown name or `"none"` (a read is never
   gated, D6) is a `ValueError`. **A driver never touches the policy**: a
   `--drivers` module that changes it at import is a `LoadError`; an op that
   changes it during a call is restored and raises `shal.Error`; both are audited
   (`outcome: "policy-changed"`). The advertised `destructiveHint`, `shal
-  tools`/`probe` and `shal call`'s refusal read the same live set as the gate, so
-  seat it before the tool list is served. The audit follows the LABEL, never the
+  tools`/`probe` and `shal call`'s refusal read the same live set as the gate (per
+  Hal), so seat a host widening before the tool list is served. The audit follows the LABEL, never the
   set: narrowing removes the stop, never the trail (D26). Every approval record
   carries the active set (`gated`), and each load writes one `policy` audit event
-  (`gated`, `approver`, `source`). It lives in a `ContextVar`: asyncio tasks and
+  (`gated`, `approver`, `source` = `hal:<path>` / `host` / `default`, `widened`). It lives in a `ContextVar`: asyncio tasks and
   `anyio.to_thread` workers inherit it; a raw new OS thread starts from the default.
 - Use `actuator` for motion/dispense and `config` for destructive/configuration
   writes — anything you'd want a human to confirm. Plain `write` (a register, a

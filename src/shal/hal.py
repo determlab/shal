@@ -3,10 +3,11 @@ from __future__ import annotations
 
 import logging
 import re
+from collections.abc import Mapping
 
 from . import driver as _driver
 from . import limits
-from .driver import get_gated_effects, inferred_side_effect
+from .driver import _effective_gated, inferred_side_effect
 from .errors import ApprovalDenied, Error, HopError, LimitError, LoadError
 from .loader import load_tree
 from .node import Node
@@ -23,7 +24,14 @@ class Hal:
         self._roots = roots
         self._ids = ids
         self._closed = False
-        self._seated_over: tuple | None = None  # gated set to restore on close
+        # this topology's own `policy: {gated: [...]}` (ADR-001 addendum 5b): it
+        # belongs to THIS Hal, never to the process. None = the default. Set by
+        # shal.load; each node gets a back-reference so the op wrapper finds it.
+        self._declared_gated: frozenset[str] | None = None
+        self._source_label = "<dict>"
+        for root in roots:
+            for node in root.walk():
+                node.hal = self
         self._tool_idx: dict[str, tuple[Node, str]] | None = None
 
     # -- lookup (topology immutable after load -> lock-free) -----------------
@@ -89,12 +97,14 @@ class Hal:
     def tool_catalog(self) -> list[dict]:
         """Richer per-tool facts for policy/gating: side_effect + idempotency.
         Pair with tool_schemas() — the harness gates writes/actuators, not reads."""
+        gated = self.get_gated_effects()  # this Hal's set: advertised == enforced
         out = []
         for name, (node, opname) in self._tool_index().items():
             fn = type(node.driver).capability_ops()[opname]
             eff = _effect(fn)
             out.append({"name": name, "device": node.id or node.path,
-                        "op": opname, **eff, "annotations": _annotations(eff)})
+                        "op": opname, **eff,
+                        "annotations": _annotations(eff, gated)})
         return out
 
     def call_tool(self, name: str, arguments: dict | None = None) -> dict:
@@ -159,14 +169,18 @@ class Hal:
                         failures.append((node.path, e))
         return failures
 
+    def get_gated_effects(self) -> frozenset[str]:
+        """The gated set for THIS Hal's devices (ADR-001 addendum 5b): its
+        topology's declared ``policy: {gated: [...]}`` (the default if none) ∪ the
+        host's widenings (:func:`shal.set_gated_effects`). What the gate enforces
+        and what this Hal's tool surface advertises."""
+        return _effective_gated(self)
+
     def close(self) -> None:
         """Teardown leaf->root. Deterministic on exit and on exceptions."""
         if self._closed:
             return
         self._closed = True
-        if self._seated_over is not None:  # un-seat this topology's `policy:`
-            _driver._current_gated.set(self._seated_over[0])
-            self._seated_over = None
         for root in self._roots:
             self._close_subtree(root, set())
         logger.info("teardown complete", extra={"event": "teardown"})
@@ -202,36 +216,57 @@ def load(source) -> Hal:
 
     The approval policy is the operator's (ADR-001 addendum 5). Driver code runs
     here too (entry-point imports, ``bind``): if it changed the policy, the policy
-    is restored and the load is a ``LoadError``. A topology's top-level
-    ``policy: {gated: [...]}`` is the operator's declaration — the one place that
-    may NARROW the gated set — and is seated until ``close()``. Either way one
-    ``policy`` audit event records the active gated set and the approver class, so
-    a narrowing leaves a trace even if no gated call is ever made."""
+    is restored and audited — even when the load raises — and the load is a
+    ``LoadError``. A topology's top-level ``policy: {gated: [...]}`` belongs to the
+    returned Hal alone (addendum 5b): it may loosen the default for this Hal's
+    devices, never the host's widenings, and nothing else in the process sees it.
+    One ``policy`` audit event records this Hal's effective gated set, the
+    approver class and the true ``source`` (``hal:<path>``, ``host`` or
+    ``default``), so a narrowing leaves a trace even if no gated call is made."""
     from .approval import get_approver
+    label = "<dict>" if isinstance(source, Mapping) else str(source)
     before = _driver._policy_snapshot()
-    roots, ids, policy = load_tree(source)
+    try:
+        roots, ids, policy = load_tree(source)
+    except BaseException:
+        _refuse_load_change(before, raising=False)  # restored + audited, then re-raise
+        raise
+    _refuse_load_change(before)
+    hal = Hal(roots, ids)
+    hal._source_label = label
+    if policy and "gated" in policy:
+        try:
+            hal._declared_gated = _driver._coerce_gated(policy["gated"], operator=True)
+        except (TypeError, ValueError) as e:  # schema catches these first; belt+braces
+            hal.close()
+            raise LoadError(f"{label}: policy.gated: {e}") from e
+    widened = sorted(_driver.get_gated_effects() - _driver._DEFAULT_GATED)
+    source_of = (f"hal:{label}" if hal._declared_gated is not None
+                 else "host" if widened else "default")
+    gated = sorted(hal.get_gated_effects())
+    approver = type(get_approver()).__name__
+    _audit.info("approval policy: gated %s, approver %s (%s)", gated, approver,
+                source_of,
+                extra={"event": "policy", "gated": gated, "approver": approver,
+                       "source": source_of, "widened": widened})
+    return hal
+
+
+def _refuse_load_change(before, *, raising: bool = True) -> None:
+    """Driver code that ran during the load (entry-point imports, ``bind``) must not
+    have changed the policy: restore it and audit the attempt — even when the load
+    is failing anyway — and raise ``LoadError`` when ``raising``."""
     changed = _driver._policy_changed(before)
-    if changed:
-        _driver._restore_policy(before)
-        _audit.info("a driver changed the approval policy while loading (%s); refused",
-                    ", ".join(changed),
-                    extra={"event": "audit", "outcome": "policy-changed",
-                           "changed": changed})
+    if not changed:
+        return
+    _driver._restore_policy(before)
+    _audit.info("a driver changed the approval policy while loading (%s); refused",
+                ", ".join(changed),
+                extra={"event": "audit", "outcome": "policy-changed",
+                       "changed": changed})
+    if raising:
         raise LoadError("a driver changed the approval policy while loading "
                         f"({', '.join(changed)}); only the operator sets it")
-    hal = Hal(roots, ids)
-    source_of = "default" if before[0] is None else "host"
-    if policy and "gated" in policy:
-        hal._seated_over = (before[0],)
-        _driver._seat_operator_gated(policy["gated"])
-        source_of = "topology"
-    gated = sorted(get_gated_effects())
-    _audit.info("approval policy: gated %s, approver %s", gated,
-                type(get_approver()).__name__,
-                extra={"event": "policy", "gated": gated,
-                       "approver": type(get_approver()).__name__,
-                       "source": source_of})
-    return hal
 
 
 # -- LLM tool-schema helpers ----------------------------------------------------
@@ -246,17 +281,17 @@ def _effect(fn) -> dict:
     return {"side_effect": side, "idempotent": idem, "unit": meta.get("unit")}
 
 
-def _annotations(eff: dict) -> dict:
+def _annotations(eff: dict, gated: frozenset[str]) -> dict:
     """Map SHAL's side_effect/idempotency onto MCP tool-annotation hint names so
-    agent harnesses recognize them (issue #1)."""
+    agent harnesses recognize them (issue #1). ``gated`` is the effective set of
+    the Hal whose tool this is (ADR-001 addendum 5b)."""
     side = eff["side_effect"]
     return {"readOnlyHint": side == "none",
             "idempotentHint": eff["idempotent"],
-            # destructive == gated by the approval interlock. Read the LIVE policy
-            # (issue #114), never the shipped default: a host that seats a wider
-            # gated set must not be advertised a narrower one, or the tool surface
-            # tells an agent a call is free while the gate stops it for a human.
-            "destructiveHint": side in get_gated_effects()}
+            # destructive == gated by the approval interlock. The LIVE set of THIS
+            # Hal (issues #114, 5b), never the shipped default: the tool surface must
+            # not tell an agent a call is free while the gate stops it for a human.
+            "destructiveHint": side in gated}
 
 
 def _describe(node: Node, opname: str, fn) -> str:
@@ -275,7 +310,8 @@ def _describe(node: Node, opname: str, fn) -> str:
         parts.append("Idempotent read — safe to call repeatedly.")
     elif eff["idempotent"]:
         gated = (" It needs a person's approval."
-                 if eff["side_effect"] in get_gated_effects() else "")
+                 if eff["side_effect"] in _effective_gated(getattr(node, "hal", None))
+                 else "")
         parts.append(f"Side effect ({eff['side_effect']}): safe to re-send; a lost "
                      f"delivery is retried once.{gated}")
     else:

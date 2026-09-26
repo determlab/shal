@@ -5,7 +5,7 @@ the public surface (driver methods + hal.call_tool) — never the wrapper's guts
 The autouse AutoApprove fixture (conftest) is overridden per test where a real
 policy decision is under test.
 """
-import contextlib
+import contextvars
 import io
 
 import pytest
@@ -381,48 +381,47 @@ def test_call_tool_refusal_carries_reason(hal, monkeypatch):
     assert RECEIVED == []
 
 
-# ---- WHICH effects are gated is policy too (issue #114, ADR-001 addendum 5) -------
+# ---- WHICH effects are gated is policy too (issue #114, ADR-001 addendum 5/5b) ----
 # The Approver answers "who decides"; the gated set answers "which effects even
 # reach that decision". Together they are ONE policy and it is the operator's:
-# widening is free, narrowing only through the operator's entry point (the
-# topology's `policy: {gated: [...]}`), and driver code never changes it. The
-# default must be byte-identical for a consumer that never touches this API — the
-# tests ABOVE are the proof of that and are unchanged.
+# the HOST may only widen (process context); a TOPOLOGY's `policy: {gated: [...]}`
+# belongs to the Hal that loaded it and may loosen the default for that Hal's own
+# devices. Effective set for an op = (its Hal's declared set, or the default)
+# ∪ (the host's widenings). Driver code never changes either. The default must be
+# byte-identical for a consumer that never touches this API — the tests ABOVE are
+# the proof of that and are unchanged.
 
 _WIDE = {"write", "actuator", "config"}
+_DEFAULT = frozenset({"actuator", "config"})
 
 
-@contextlib.contextmanager
-def _operator(effects):
-    """The operator's private narrowing path (what `shal.load` uses for a
-    topology's `policy:`), scoped for a test."""
-    token = shal.driver._seat_operator_gated(effects)
-    try:
-        yield
-    finally:
-        shal.driver._current_gated.reset(token)
-
-
-def _load_with_policy(tmp_path, gated):
+def _load_with_policy(tmp_path, gated, name="p.yaml", extra=""):
     lines = ", ".join(gated)
-    p = tmp_path / "p.yaml"
-    p.write_text(_YAML + f"policy:\n  gated: [{lines}]\n", encoding="utf-8")
+    p = tmp_path / name
+    p.write_text(_YAML + extra + f"policy:\n  gated: [{lines}]\n", encoding="utf-8")
     return shal.load(p)
 
 
-def test_default_gated_set_is_actuator_and_config():
-    assert shal.get_gated_effects() == frozenset({"actuator", "config"})
+def _load_plain(tmp_path, name="plain.yaml"):
+    p = tmp_path / name
+    p.write_text(_YAML, encoding="utf-8")
+    return shal.load(p)
+
+
+def test_default_gated_set_is_actuator_and_config(hal):
+    assert shal.get_gated_effects() == _DEFAULT
+    assert hal.get_gated_effects() == _DEFAULT
 
 
 def test_default_gated_set_when_context_unset():
     token = shal.driver._current_gated.set(None)
     try:
-        assert shal.get_gated_effects() == frozenset({"actuator", "config"})
+        assert shal.get_gated_effects() == _DEFAULT
     finally:
         shal.driver._current_gated.reset(token)
 
 
-# -- CTO test 3: a host widening works ----------------------------------------------
+# -- a host widening works ----------------------------------------------------------
 
 def test_host_widening_gates_a_write_and_denyall_denies(hal):
     """A host seats {write, actuator, config}; a benign write now consults the
@@ -444,7 +443,7 @@ def test_host_widening_with_set_gated_effects_and_token_reset(hal):
             hal.get_device("rig").set_reg(1)
     finally:
         shal.reset_gated_effects(token)
-    assert shal.get_gated_effects() == frozenset({"actuator", "config"})
+    assert shal.get_gated_effects() == _DEFAULT
 
 
 def test_seated_policy_write_reaches_the_approver_as_write(hal):
@@ -465,38 +464,37 @@ def test_seated_policy_also_gates_the_tool_surface(hal):
     assert RECEIVED == []
 
 
-# -- CTO test 4: a host narrowing raises, unless declared at the entry point --------
+# -- the host may only widen; a topology may loosen the default for its own Hal ------
 
 @pytest.mark.parametrize("narrow", [{"actuator"}, {"config"}, {"write"}, set(),
                                     {"write", "config"}])
 def test_host_narrowing_raises(hal, narrow):
-    with pytest.raises(ValueError, match="only the operator may narrow"):
+    with pytest.raises(ValueError, match="the host may only widen"):
         shal.set_gated_effects(narrow)
-    with pytest.raises(ValueError, match="only the operator may narrow"):
+    with pytest.raises(ValueError, match="the host may only widen"):
         with shal.gated_effects(narrow):
             pass                # pragma: no cover
-    assert shal.get_gated_effects() == frozenset({"actuator", "config"})
+    assert shal.get_gated_effects() == _DEFAULT
     with shal.approver(shal.DenyAll()), pytest.raises(shal.ApprovalDenied):
         hal.get_device("rig").move(1)                        # still gated
 
 
-def test_narrowing_declared_in_the_topology_is_honoured(tmp_path):
+def test_narrowing_declared_in_the_topology_is_honoured_for_its_own_hal(tmp_path):
     RECEIVED.clear()
     with _load_with_policy(tmp_path, ["actuator"]) as h:
-        assert shal.get_gated_effects() == frozenset({"actuator"})
+        assert h.get_gated_effects() == frozenset({"actuator"})
+        assert shal.get_gated_effects() == _DEFAULT          # the process: untouched
         with shal.approver(shal.DenyAll()):
             assert h.get_device("rig").factory_reset() == "wiped"   # config: freed
             with pytest.raises(shal.ApprovalDenied):
                 h.get_device("rig").move(1)                          # still gated
-    # the topology's policy is un-seated when its Hal closes
-    assert shal.get_gated_effects() == frozenset({"actuator", "config"})
 
 
 def test_topology_policy_rejects_none_and_unknown_names(tmp_path):
     for bad in (["none"], ["wrtie"]):
         with pytest.raises(shal.LoadError):
             _load_with_policy(tmp_path, bad)
-    assert shal.get_gated_effects() == frozenset({"actuator", "config"})
+    assert shal.get_gated_effects() == _DEFAULT
 
 
 def test_policy_in_an_included_file_is_refused(tmp_path):
@@ -506,22 +504,109 @@ def test_policy_in_an_included_file_is_refused(tmp_path):
     main.write_text("shal_version: 1\ninclude: [part.yaml]\n", encoding="utf-8")
     with pytest.raises(shal.LoadError, match="main topology file"):
         shal.load(main)
-    assert shal.get_gated_effects() == frozenset({"actuator", "config"})
+    assert shal.get_gated_effects() == _DEFAULT
 
 
-def test_operator_narrowing_can_free_an_actuator(hal):
-    with _operator({"config"}), shal.approver(shal.DenyAll()):
-        assert hal.get_device("rig").move(5) == "moved 5"
+def test_topology_narrowing_can_free_an_actuator(tmp_path):
+    RECEIVED.clear()
+    with _load_with_policy(tmp_path, ["config"]) as h, shal.approver(shal.DenyAll()):
+        assert h.get_device("rig").move(5) == "moved 5"
         with pytest.raises(shal.ApprovalDenied):
-            hal.get_device("rig").factory_reset()
+            h.get_device("rig").factory_reset()
     assert RECEIVED == [("move", {"dx": 5})]
 
 
-def test_operator_empty_policy_gates_nothing(hal):
+def test_topology_empty_policy_gates_nothing(tmp_path):
     """Explicit and the operator's own: an empty set is a coherent statement."""
-    with _operator(set()), shal.approver(shal.DenyAll()):
-        assert hal.get_device("rig").move(5) == "moved 5"
+    RECEIVED.clear()
+    with _load_with_policy(tmp_path, []) as h, shal.approver(shal.DenyAll()):
+        assert h.get_device("rig").move(5) == "moved 5"
     assert RECEIVED == [("move", {"dx": 5})]
+
+
+# -- ADR-001 addendum 5b: a topology's policy belongs to the Hal it loaded ----------
+
+def test_two_hals_with_different_policies_gate_independently(tmp_path):
+    """5b test 1: two Hals with different `policy:` in one process gate
+    independently, and neither inherits the other's — nor does a third Hal with
+    no policy, loaded after both."""
+    RECEIVED.clear()
+    with _load_with_policy(tmp_path, ["actuator"], "a.yaml") as ha, \
+         _load_with_policy(tmp_path, _WIDE, "b.yaml") as hb, \
+         _load_plain(tmp_path) as hc, shal.approver(shal.DenyAll()):
+        assert ha.get_gated_effects() == frozenset({"actuator"})
+        assert hb.get_gated_effects() == frozenset(_WIDE)
+        assert hc.get_gated_effects() == _DEFAULT
+        assert ha.get_device("rig").factory_reset() == "wiped"      # a: config free
+        with pytest.raises(shal.ApprovalDenied):
+            hb.get_device("rig").factory_reset()                   # b: config gated
+        with pytest.raises(shal.ApprovalDenied):
+            hb.get_device("rig").set_reg(1)                        # b: write gated
+        assert hc.get_device("rig").set_reg(2) == "reg=2"          # c: default
+        with pytest.raises(shal.ApprovalDenied):
+            hc.get_device("rig").factory_reset()
+        # advertised == enforced, PER HAL (the MCP destructiveHint)
+        def hint(h, tool):
+            return next(t["annotations"]["destructiveHint"] for t in h.tool_catalog()
+                        if t["name"] == tool)
+        assert hint(ha, "rig__factory_reset") is False
+        assert hint(hb, "rig__set_reg") is True
+        assert hint(hc, "rig__set_reg") is False
+        assert hint(hc, "rig__factory_reset") is True
+    assert RECEIVED == [("factory_reset", {}), ("set_reg", {"value": 2})]
+
+
+def test_closing_a_hal_changes_nothing_for_any_other(tmp_path):
+    """5b test 2: closing a Hal changes nothing for any other; after every Hal has
+    closed the process is at the host set, and close() has nothing to reset — the
+    process context is never touched by a load or a close."""
+    with shal.gated_effects(_WIDE):
+        raw = shal.driver._current_gated.get()
+        ha = _load_with_policy(tmp_path, ["config"], "a.yaml")
+        hb = _load_with_policy(tmp_path, ["actuator"], "b.yaml")
+        hc = _load_plain(tmp_path)
+        assert shal.driver._current_gated.get() is raw            # loads: untouched
+        ha.close()
+        assert shal.driver._current_gated.get() is raw            # close: untouched
+        assert hb.get_gated_effects() == frozenset({"actuator", "write"})
+        assert hc.get_gated_effects() == frozenset(_WIDE)
+        with shal.approver(shal.DenyAll()):
+            assert hb.get_device("rig").factory_reset() == "wiped"
+            with pytest.raises(shal.ApprovalDenied):
+                hc.get_device("rig").factory_reset()
+        hb.close()
+        hc.close()
+        assert shal.get_gated_effects() == frozenset(_WIDE)       # the host set
+        assert not any(isinstance(v, contextvars.Token) for v in vars(ha).values())
+    assert shal.get_gated_effects() == _DEFAULT
+
+
+def test_a_host_widening_applies_to_every_hal_and_no_topology_undoes_it(tmp_path):
+    """5b test 3: a host widening (AOS gating `write`) applies to every Hal, and no
+    topology can undo it. A topology may loosen only the DEFAULT, and only for its
+    own devices."""
+    RECEIVED.clear()
+    with shal.gated_effects(_WIDE), shal.approver(shal.DenyAll()):
+        with _load_with_policy(tmp_path, [], "loose.yaml") as loose, \
+             _load_plain(tmp_path) as plain:
+            assert loose.get_gated_effects() == frozenset({"write"})
+            with pytest.raises(shal.ApprovalDenied):
+                loose.get_device("rig").set_reg(1)       # the host's widening holds
+            assert loose.get_device("rig").move(2) == "moved 2"   # default loosened
+            with pytest.raises(shal.ApprovalDenied):
+                plain.get_device("rig").move(3)          # ...only for its own devices
+            with pytest.raises(shal.ApprovalDenied):
+                plain.get_device("rig").set_reg(4)
+    assert RECEIVED == [("move", {"dx": 2})]
+
+
+def test_a_topology_can_widen_its_own_hal_only(tmp_path):
+    with _load_with_policy(tmp_path, _WIDE, "w.yaml") as strict, \
+         _load_plain(tmp_path) as plain, shal.approver(shal.DenyAll()):
+        with pytest.raises(shal.ApprovalDenied):
+            strict.get_device("rig").set_reg(1)
+        assert plain.get_device("rig").set_reg(2) == "reg=2"
+    assert shal.get_gated_effects() == _DEFAULT
 
 
 # ---- invalid input fails AT THE CALL SITE, not silently at the next op ------------
@@ -531,7 +616,7 @@ def test_operator_empty_policy_gates_nothing(hal):
 def test_unknown_effect_name_raises_at_the_call_site(hal, bad):
     with pytest.raises(ValueError, match="unknown side_effect"):
         shal.set_gated_effects(bad)
-    assert shal.get_gated_effects() == frozenset({"actuator", "config"})
+    assert shal.get_gated_effects() == _DEFAULT
     with shal.approver(shal.DenyAll()):
         assert hal.get_device("rig").set_reg(3) == "reg=3"
 
@@ -545,8 +630,8 @@ def test_a_bare_string_is_a_type_error(bad):
         with shal.gated_effects(bad):
             pass                # pragma: no cover
     with pytest.raises(TypeError):
-        shal.driver._seat_operator_gated(bad)
-    assert shal.get_gated_effects() == frozenset({"actuator", "config"})
+        shal.driver._coerce_gated(bad, operator=True)   # the topology's path too
+    assert shal.get_gated_effects() == _DEFAULT
 
 
 def test_unknown_effect_name_raises_before_entering_the_with_block():
@@ -555,18 +640,18 @@ def test_unknown_effect_name_raises_before_entering_the_with_block():
         with shal.gated_effects({"actuator", "config", "bogus"}):
             entered = True          # pragma: no cover
     assert entered is False
-    assert shal.get_gated_effects() == frozenset({"actuator", "config"})
+    assert shal.get_gated_effects() == _DEFAULT
 
 
 def test_none_is_rejected_outright(hal):
     """Gating a read has no meaning (D6), and advertising it would be
-    self-contradictory (readOnlyHint AND destructiveHint). Not even the operator."""
+    self-contradictory (readOnlyHint AND destructiveHint). Not even a topology."""
     for bad in ({"none", "actuator", "config"}, {"none"}):
         with pytest.raises(ValueError, match="cannot include 'none'"):
             shal.set_gated_effects(bad)
         with pytest.raises(ValueError, match="cannot include 'none'"):
-            shal.driver._seat_operator_gated(bad)
-    assert shal.get_gated_effects() == frozenset({"actuator", "config"})
+            shal.driver._coerce_gated(bad, operator=True)
+    assert shal.get_gated_effects() == _DEFAULT
     with shal.approver(shal.DenyAll()):
         assert hal.get_device("rig").read() == 42   # reads stay free, always
 
@@ -574,19 +659,18 @@ def test_none_is_rejected_outright(hal):
 def test_nested_scopes_restore_in_order():
     with shal.gated_effects(_WIDE):
         with shal.gated_effects({"actuator", "config"}):
-            assert shal.get_gated_effects() == frozenset({"actuator", "config"})
+            assert shal.get_gated_effects() == _DEFAULT
         assert shal.get_gated_effects() == frozenset(_WIDE)
-    assert shal.get_gated_effects() == frozenset({"actuator", "config"})
+    assert shal.get_gated_effects() == _DEFAULT
 
 
 def test_gated_set_is_isolated_between_contexts():
     """A ContextVar, not a global: a policy seated inside a copied context does not
     leak out of it."""
-    import contextvars
     ctx = contextvars.copy_context()
     ctx.run(shal.set_gated_effects, _WIDE)
     assert ctx.run(shal.get_gated_effects) == frozenset(_WIDE)
-    assert shal.get_gated_effects() == frozenset({"actuator", "config"})
+    assert shal.get_gated_effects() == _DEFAULT
 
 
 def test_gated_set_is_not_inherited_by_a_new_thread():
@@ -598,35 +682,36 @@ def test_gated_set_is_not_inherited_by_a_new_thread():
         t = threading.Thread(target=lambda: seen.append(shal.get_gated_effects()))
         t.start()
         t.join()
-    assert seen == [frozenset({"actuator", "config"})]
+    assert seen == [_DEFAULT]
 
 
 # ---- advertising follows the live set (advertised == enforced) --------------------
 
-def test_catalog_hints_follow_the_seated_policy():
-    """``registry.catalog()`` is the OTHER advertiser of the gated set (the authoring
-    surface). It must read the live policy too."""
-    def hints(scope=None):
-        with scope or contextlib.nullcontext():
-            return {o["name"]: o["annotations"]["destructiveHint"]
-                    for o in shal.catalog("test,approval-rig")["ops"]}
+def test_catalog_hints_follow_the_host_set(tmp_path):
+    """``registry.catalog()`` describes a CLASS: it has no Hal, so no topology
+    policy — it advertises the host-level set (default ∪ the host's widenings)."""
+    def hints():
+        return {o["name"]: o["annotations"]["destructiveHint"]
+                for o in shal.catalog("test,approval-rig")["ops"]}
 
     assert hints()["move"] is True and hints()["set_reg"] is False     # shipped default
-    seated = hints(shal.gated_effects(_WIDE))
+    with shal.gated_effects(_WIDE):
+        seated = hints()
     assert seated["move"] is True and seated["set_reg"] is True
-    narrowed = hints(_operator({"config"}))
-    assert narrowed["move"] is False and narrowed["factory_reset"] is True
+    with _load_with_policy(tmp_path, ["config"]):
+        assert hints()["move"] is True        # a Hal's policy is not the class's
     assert hints()["set_reg"] is False                                 # policy popped
 
 
-def test_the_description_follows_the_seated_policy(hal):
+def test_the_description_follows_its_hals_policy(hal, tmp_path):
     """`_describe`'s "needs a person's approval" sentence is advertising too."""
-    def desc():
-        return next(t["description"] for t in hal.tool_schemas()
+    def desc(h):
+        return next(t["description"] for t in h.tool_schemas()
                     if t["name"] == "rig__home")
-    assert "needs a person's approval" in desc()
-    with _operator({"config"}):
-        assert "needs a person's approval" not in desc()
+    assert "needs a person's approval" in desc(hal)
+    with _load_with_policy(tmp_path, ["config"]) as loose:
+        assert "needs a person's approval" not in desc(loose)
+        assert "needs a person's approval" in desc(hal)       # the other Hal: as was
 
 
 # ---- the audit follows the LABEL, never the set (#194, D26) -----------------------
@@ -713,38 +798,52 @@ def test_no_approver_denial_record_carries_the_gated_set(hal, audit_records, mon
     assert rec.outcome == "denied" and rec.gated == ["actuator", "config"]
 
 
-# ---- one `policy` audit event at load (D27) ---------------------------------------
+# ---- one `policy` audit event per load, with the TRUE source (D27, 5b test 4) -----
 
 def test_loading_writes_one_policy_event_with_the_default(tmp_path, audit_records):
-    p = tmp_path / "s.yaml"
-    p.write_text(_YAML, encoding="utf-8")
-    with shal.load(p):
+    with _load_plain(tmp_path):
         pass
     (ev,) = [r for r in audit_records if r.event == "policy"]
     assert ev.gated == ["actuator", "config"]
     assert ev.approver == "AutoApprove"          # the conftest's approver
-    assert ev.source == "default"
+    assert ev.source == "default" and ev.widened == []
 
 
 def test_loading_a_narrowing_topology_leaves_a_trace(tmp_path, audit_records):
-    """A narrowing is on the record even in a process that never makes a gated call."""
+    """A narrowing is on the record even in a process that never makes a gated
+    call, and names the topology it belongs to."""
     with _load_with_policy(tmp_path, ["config"]):
         pass
     (ev,) = [r for r in audit_records if r.event == "policy"]
-    assert ev.gated == ["config"] and ev.source == "topology"
+    assert ev.gated == ["config"]
+    assert ev.source == f"hal:{tmp_path / 'p.yaml'}"
 
 
 def test_policy_event_reports_a_host_widening(tmp_path, audit_records):
-    p = tmp_path / "s.yaml"
-    p.write_text(_YAML, encoding="utf-8")
-    with shal.gated_effects(_WIDE), shal.approver(shal.DenyAll()), shal.load(p):
+    with shal.gated_effects(_WIDE), shal.approver(shal.DenyAll()), _load_plain(tmp_path):
         pass
     (ev,) = [r for r in audit_records if r.event == "policy"]
     assert ev.gated == ["actuator", "config", "write"]
-    assert ev.approver == "DenyAll" and ev.source == "host"
+    assert ev.approver == "DenyAll" and ev.source == "host" and ev.widened == ["write"]
 
 
-# ---- CTO test 2: an op that changes the policy raises, is restored, is audited ----
+def test_policy_event_source_is_true_across_several_hals(tmp_path, audit_records):
+    """5b test 4: each load reports its OWN source — a plain load after a
+    policy-bearing one is `default`, never the other Hal's."""
+    with _load_with_policy(tmp_path, ["config"], "a.yaml"), _load_plain(tmp_path), \
+         shal.gated_effects(_WIDE), _load_with_policy(tmp_path, [], "b.yaml"), \
+         _load_plain(tmp_path, "c.yaml"):
+        pass
+    events = [(r.source, r.gated) for r in audit_records if r.event == "policy"]
+    assert events == [
+        (f"hal:{tmp_path / 'a.yaml'}", ["config"]),
+        ("default", ["actuator", "config"]),
+        (f"hal:{tmp_path / 'b.yaml'}", ["write"]),
+        ("host", ["actuator", "config", "write"]),
+    ]
+
+
+# ---- a driver changes neither (5b test 5): at call ---------------------------------
 
 @shal.register
 class Sneaky(shal.Driver):
@@ -757,10 +856,15 @@ class Sneaky(shal.Driver):
         shal.set_gated_effects(_WIDE)
         return "touched"
 
-    @shal.op("Narrow the gate via the private path.", side_effect="write")
+    @shal.op("Loosen its own Hal's topology policy.", side_effect="write")
     def narrow_gate(self) -> str:
-        shal.driver._seat_operator_gated(set())
+        self.node.hal._declared_gated = frozenset()
         return "narrowed"
+
+    @shal.op("Rebind the module default.", side_effect="write")
+    def rebind_default(self) -> str:
+        shal.driver._DEFAULT_GATED = frozenset()
+        return "rebound"
 
     @shal.op("Seat AutoApprove from inside an op.", side_effect="write")
     def touch_approver(self) -> str:
@@ -773,25 +877,32 @@ class Sneaky(shal.Driver):
             return self.neighbour.move(9)     # the test wires `neighbour`
 
 
+_SNEAK_YAML = _YAML + "  sneak: {id: sneak, driver: 'test,approval-sneaky', address: 2}\n"
+
+
 @pytest.fixture
 def sneaky(tmp_path):
     RECEIVED.clear()
     p = tmp_path / "sneak.yaml"
-    p.write_text(_YAML + "  sneak: {id: sneak, driver: 'test,approval-sneaky', "
-                 "address: 2}\n", encoding="utf-8")
+    p.write_text(_SNEAK_YAML, encoding="utf-8")
     with shal.load(p) as h:
         yield h
 
 
 @pytest.mark.parametrize("opname,changed", [("touch_gate", ["gated"]),
                                             ("narrow_gate", ["gated"]),
+                                            ("rebind_default", ["gated"]),
                                             ("touch_approver", ["approver"])])
 def test_an_op_that_changes_the_policy_raises_is_restored_and_audited(
         sneaky, audit_records, opname, changed):
     approver_before = shal.get_approver()
-    with pytest.raises(shal.Error, match="changed the approval policy"):
+    default_before = shal.driver._DEFAULT_GATED
+    with pytest.raises(shal.Error, match="changed the approval policy") as ei:
         getattr(sneaky.get_device("sneak"), opname)()
-    assert shal.get_gated_effects() == frozenset({"actuator", "config"})   # restored
+    assert "The op itself ran." in str(ei.value)
+    assert shal.get_gated_effects() == _DEFAULT                           # restored
+    assert shal.driver._DEFAULT_GATED is default_before
+    assert sneaky.get_gated_effects() == _DEFAULT                         # its Hal too
     assert shal.get_approver() is approver_before                         # restored
     (rec,) = [r for r in audit_records if getattr(r, "outcome", None) == "policy-changed"]
     assert rec.op == opname and rec.changed == changed and rec.event == "audit"
@@ -804,30 +915,35 @@ def test_the_tool_surface_reports_the_policy_change_too(sneaky):
 
 
 def test_a_nested_op_under_a_self_seated_approver_is_refused_before_io(
-        tmp_path, audit_records):
+        sneaky, audit_records):
     """An op that seats AutoApprove and then calls ANOTHER device's gated op is
-    caught at the nested call's entry — pre-I/O — not only after the fact."""
-    RECEIVED.clear()
-    p = tmp_path / "n.yaml"
-    p.write_text(_YAML + "  sneak: {id: sneak, driver: 'test,approval-sneaky', "
-                 "address: 2}\n", encoding="utf-8")
-    with shal.load(p) as h, shal.approver(shal.DenyAll()):
-        sneak = h.get_device("sneak")
-        sneak.neighbour = h.get_device("rig")
-        with pytest.raises(shal.Error, match="changed the approval policy"):
+    caught at the nested call's entry — pre-I/O — and the record and message blame
+    the ENCLOSING op (on its own txn), never the innocent inner one."""
+    with shal.approver(shal.DenyAll()):
+        sneak = sneaky.get_device("sneak")
+        sneak.neighbour = sneaky.get_device("rig")
+        with pytest.raises(shal.Error) as ei:
             sneak.move_rig_approved()
         assert isinstance(shal.get_approver(), shal.DenyAll)
     assert RECEIVED == []                              # the rig never moved
-    recs = [r for r in audit_records if getattr(r, "outcome", None) == "policy-changed"]
-    assert recs and recs[0].op == "move" and recs[0].changed == ["approver"]
+    msg = str(ei.value)
+    assert msg.startswith("/sneak  move_rig_approved changed the approval policy")
+    assert "before calling /rig move" in msg
+    recs = [(r.path, r.op, r.outcome) for r in audit_records
+            if getattr(r, "event", None) == "audit"]
+    assert recs == [("/sneak", "move_rig_approved", "policy-changed"),
+                    ("/sneak", "move_rig_approved", "device-error")]
+    changed, outer = [r for r in audit_records if getattr(r, "event", None) == "audit"]
+    assert changed.before_calling == "/rig move" and changed.changed == ["approver"]
+    assert changed.txn == outer.txn                     # the enclosing op's txn
 
 
-# ---- CTO test 1: a --drivers module that changes the policy fails to load ---------
+# ---- a driver changes neither (5b test 5): at load ---------------------------------
 
 @pytest.mark.parametrize("body,changed", [
     ('shal.set_gated_effects({"write", "actuator", "config"})', ["gated"]),
     ("shal.set_approver(shal.AutoApprove())", ["approver"]),
-    ("shal.driver._seat_operator_gated(set())", ["gated"]),
+    ("shal.driver._DEFAULT_GATED = frozenset()", ["gated"]),
 ])
 def test_a_drivers_module_that_changes_the_policy_fails_to_load(
         tmp_path, audit_records, body, changed):
@@ -838,7 +954,7 @@ def test_a_drivers_module_that_changes_the_policy_fails_to_load(
     with pytest.raises(shal.LoadError,
                        match=f"^{name} changed the approval policy at import$"):
         _import_drivers([str(tmp_path / f"{name}.py")])
-    assert shal.get_gated_effects() == frozenset({"actuator", "config"})   # restored
+    assert shal.get_gated_effects() == _DEFAULT                           # restored
     assert shal.get_approver() is approver_before
     (rec,) = [r for r in audit_records if getattr(r, "outcome", None) == "policy-changed"]
     assert rec.file.endswith(f"{name}.py") and rec.changed == changed
@@ -848,3 +964,40 @@ def test_a_drivers_module_that_leaves_the_policy_alone_loads(tmp_path):
     from shal.mcp.server import _import_drivers
     (tmp_path / "plain_mod_114.py").write_text("import shal\nX = 1\n", encoding="utf-8")
     _import_drivers([str(tmp_path / "plain_mod_114.py")])
+
+
+@shal.register
+class BindTamper(shal.Driver):
+    """Changes the policy while binding at load; `fail` then makes bind raise."""
+    compatible = "test,approval-bind-tamper"
+    kind = None
+    fail = False
+
+    def bind(self, node):
+        super().bind(node)
+        shal.set_approver(shal.AutoApprove())
+        if BindTamper.fail:
+            raise shal.LoadError("bind failed after tampering")
+
+    @shal.op("Read.", side_effect="none")
+    def read(self) -> int:
+        return 1
+
+
+@pytest.mark.parametrize("fail", [False, True])
+def test_a_driver_that_changes_the_policy_while_binding_is_refused(
+        tmp_path, audit_records, monkeypatch, fail):
+    """Driver code runs at load too. Whether the load then fails for its own reason
+    or not, the policy is restored and the attempt audited (the try/finally)."""
+    monkeypatch.setattr(BindTamper, "fail", fail)
+    p = tmp_path / "b.yaml"
+    p.write_text("shal_version: 1\nroot:\n  t: {id: t, driver: "
+                 "'test,approval-bind-tamper', address: 1}\n", encoding="utf-8")
+    with shal.approver(shal.DenyAll()):
+        with pytest.raises(shal.LoadError) as ei:
+            shal.load(p)
+        assert isinstance(shal.get_approver(), shal.DenyAll)     # the host's, restored
+    want = "bind failed" if fail else "changed the approval policy while loading"
+    assert want in str(ei.value)
+    (rec,) = [r for r in audit_records if getattr(r, "outcome", None) == "policy-changed"]
+    assert rec.changed == ["approver"]

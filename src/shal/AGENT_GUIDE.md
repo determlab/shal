@@ -88,8 +88,9 @@ class MyThing(Driver):                     # a capability is OPTIONAL — see be
    - `"write"` → a **benign** write (instant, reversible — runs free).
    - `"actuator"` (physical motion) / `"config"` → **gated**: stops for human approval.
    - Which labels are gated is the OPERATOR's policy, never the driver's: the
-     default is `{"actuator", "config"}`; a host may widen it, and only the
-     topology's `policy: {gated: [...]}` may narrow it. So a `"write"` can be gated
+     default is `{"actuator", "config"}`; a host may widen it, and a topology's
+     `policy: {gated: [...]}` may loosen it for that topology's own devices only.
+     So a `"write"` can be gated
      on a stricter rig. Label the op honestly; do not pick a label to get or avoid
      the gate. **Never call `set_gated_effects` or `set_approver` in a driver**: at
      import it fails to load, and inside an op it raises and is audited.

@@ -144,8 +144,9 @@ def _op_entries(cls: type) -> list[dict]:
             "input_schema": _limits.merged_params_schema(fn),
             "annotations": {"readOnlyHint": side == "none",
                             "idempotentHint": idem,
-                            # destructive == gated — the LIVE policy, not the shipped
-                            # default, so advertised == enforced (issues #14/#114)
+                            # destructive == gated. A class catalog has no Hal, so
+                            # no topology policy: the host-level set (default ∪ the
+                            # host's widenings), never the constant (#114, 5b)
                             "destructiveHint": side in get_gated_effects()},
         })
     return ops

@@ -23,32 +23,41 @@ All notable changes to this project are documented here. The format follows
   exactly as before. A rig that wants every register write to stop for a human
   says `shal.set_gated_effects({"write", "actuator", "config"})` instead of
   monkey-patching `driver._GATED_EFFECTS` (which no longer exists).
-  - **Widening is free; narrowing is the operator's.** Code may seat any superset
-    of the default; a set that drops `actuator` or `config` is a `ValueError`
-    unless it comes from the main topology file's new top-level
-    `policy: {gated: [...]}` key (seated by `shal.load`, un-seated by
-    `Hal.close()`; an included file or `use:` template may not carry it).
+  - **The host may only widen; a topology's policy belongs to its own Hal**
+    (ADR-001 addendum 5b). Code may seat any superset of the default; a set that
+    drops `actuator` or `config` is a `ValueError`. The main topology file's new
+    top-level `policy: {gated: [...]}` key may loosen (or tighten) the default for
+    that Hal's own devices — it lives on the Hal, never in process state (an
+    included file or `use:` template may not carry it). The effective set for an
+    op is (its Hal's declared set, or the default) ∪ (the host's widenings), read
+    through a new `Node.hal` back-reference; new `Hal.get_gated_effects()` returns
+    it. Two Hals in one process gate independently, `close()` has nothing to
+    reset, and no topology can undo a host widening.
   - **A driver can never change the policy** (gated set or approver). A
     `--drivers` module that changes it at import is refused with
     `LoadError("<module> changed the approval policy at import")`; driver code
-    that changes it while `shal.load` binds is a `LoadError` too; an op that
-    changes it during a call — or seats its own approver and then calls another
-    device — has it restored and raises `shal.Error` (the nested call is refused
-    before any I/O). Each attempt is audited (`outcome: "policy-changed"`).
+    that changes it while `shal.load` binds is a `LoadError` too (restored and
+    audited even when the load fails for another reason); `shal check
+    module:Class` refuses such a module the same way. An op that changes it
+    during a call — or seats its own approver and then calls another device — has
+    it restored and raises `shal.Error`; the nested call is refused before any
+    I/O, and the record and message name the ENCLOSING op (on its txn). Each
+    attempt is audited (`outcome: "policy-changed"`). Rebinding the module
+    defaults counts as a change.
   - **Every approval record carries the active gated set** (`gated`, sorted), and
     **each load writes one `policy` audit event** (`gated`, `approver` class,
-    `source`: default / host / topology), so a narrowing leaves a trace even in a
-    process that never makes a gated call.
+    `source`: `hal:<topology path>` / `host` / `default`, `widened`), so a
+    narrowing leaves a trace even in a process that never makes a gated call.
   - **The audit follows the label, never the set** (D26): an op that is not
     `none` is audited even when the operator narrowed the set so it is not gated.
   - Invalid input fails at the call: a bare string is a `TypeError` (`""` used to
     gate nothing); an unknown name or `"none"` (D6: reads are free) is a
     `ValueError`.
   - **Advertised == enforced still holds.** Every reader of the old constant reads
-    the live policy: the gate (now checked at call time), the MCP
-    `destructiveHint` and "needs a person's approval" text, `shal.catalog()`, and
-    `shal call`'s refusal, so `shal call` refuses exactly what the runtime would
-    stop.
+    the live policy of the op's own Hal: the gate (now checked at call time), the
+    MCP `destructiveHint` and "needs a person's approval" text, and `shal call`'s
+    refusal, so `shal call` refuses exactly what the runtime would stop.
+    `shal.catalog()` describes a class (no Hal), so it shows the host-level set.
   - Ledger: D4, D24 and D26 now say "under the operator's gated set"; new D27
     "Policy is the operator's". The `set_approver` docstring now says that
     `anyio.to_thread` workers (`shal mcp`) inherit the policy; only a raw new OS

@@ -120,7 +120,8 @@ def load_tree(
     `.env` is never consulted, so one setup has exactly one source of secrets.
 
     The third value is the main file's top-level `policy:` mapping (or None) —
-    the operator's approval policy, seated by `shal.load` (ADR-001 addendum 5).
+    the operator's approval policy, kept on the Hal `shal.load` returns
+    (ADR-001 addendum 5b), never in process state.
     Only the main file may declare it: an included file or a `use:` template
     that carries `policy:` is a `LoadError`."""
     if isinstance(source, Mapping):

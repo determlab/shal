@@ -38,10 +38,10 @@ op through untouched — it is never gated, so the Approver is never asked::
 Both live in :class:`~contextvars.ContextVar`\\ s with the same caveat: a raw newly
 spawned OS thread inherits neither and falls back to the safe defaults (asyncio
 tasks and ``anyio.to_thread`` workers inherit both). Together they are ONE policy
-and it is the operator's (ADR-001 addendum 5): widening the gated set is free,
-narrowing it only comes from the topology's ``policy: {gated: [...]}``, and driver
-code that changes either half — at import or during an op — is refused and
-audited.
+and it is the operator's (ADR-001 addendum 5/5b): the host may only widen the
+gated set, a topology's ``policy: {gated: [...]}`` loosens the default for its own
+Hal only, and driver code that changes either half — at import, at load or during
+an op — is refused and audited.
 """
 from __future__ import annotations
 

@@ -81,12 +81,10 @@ def _import_drivers(paths: list[str]) -> None:
     (``outcome="policy-changed"``) and ``LoadError("<module> changed the approval
     policy at import")`` raised."""
     import importlib
-    import logging
     import sys
     from pathlib import Path
 
-    from ..driver import _policy_changed, _policy_snapshot, _restore_policy
-    from ..errors import LoadError
+    from ..driver import _policy_snapshot, _refuse_import_change
 
     for raw in paths:
         p = Path(raw).resolve()
@@ -109,15 +107,7 @@ def _import_drivers(paths: list[str]) -> None:
             except Exception as e:
                 raise SystemExit(f"shal-mcp: failed importing driver '{f}': "
                                  f"{type(e).__name__}: {e}") from e
-            changed = _policy_changed(before)
-            if changed:
-                _restore_policy(before)
-                logging.getLogger("shal.audit").info(
-                    "%s changed the approval policy at import (%s); refused",
-                    f.stem, ", ".join(changed),
-                    extra={"event": "audit", "outcome": "policy-changed",
-                           "file": str(f), "changed": changed})
-                raise LoadError(f"{f.stem} changed the approval policy at import")
+            _refuse_import_change(before, f.stem, str(f))  # LoadError if it did
 
 
 def _resolve_hal(topology: str | None):

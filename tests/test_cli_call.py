@@ -220,7 +220,7 @@ def test_a_narrowed_topology_policy_lets_shal_call_run_what_the_runtime_runs(lab
 
 
 @pytest.mark.parametrize("seat", ['shal.set_gated_effects({"write", "actuator", "config"})',
-                                  "shal.driver._seat_operator_gated({'config'})",
+                                  "shal.driver._DEFAULT_GATED = frozenset()",
                                   "shal.set_approver(shal.AutoApprove())"])
 def test_a_drivers_module_that_seats_a_policy_fails_to_load(lab, seat):
     """Round 1 let a --drivers module narrow the set and `shal call` honoured it:

@@ -250,39 +250,32 @@ _ADVERTISED_EQ_ENFORCED = [
     (None,                                {"rig__read": False, "rig__move": True,
                                            "rig__set_reg": False}),   # shipped default
     ({"write", "actuator", "config"},     {"rig__read": False, "rig__move": True,
-                                           "rig__set_reg": True}),
-    # narrowing is the operator's (ADR-001 addendum 5): seated via the private
-    # entry-point path, as a topology's `policy: {gated: [write]}` would
-    (("operator", {"write"}),             {"rig__read": False, "rig__move": False,
+                                           "rig__set_reg": True}),    # host widening
+    # a topology's own `policy: {gated: [write]}` (ADR-001 addendum 5b): it belongs
+    # to that Hal, and loosens the default for its devices only
+    (("topology", ["write"]),             {"rig__read": False, "rig__move": False,
                                            "rig__set_reg": True}),
 ]
 
 
-def _scope(policy):
-    if policy is None:
-        return contextlib.nullcontext()
-    if isinstance(policy, tuple):           # ("operator", effects)
-        @contextlib.contextmanager
-        def seat():
-            token = shal.driver._seat_operator_gated(policy[1])
-            try:
-                yield
-            finally:
-                shal.driver._current_gated.reset(token)
-        return seat()
-    return shal.gated_effects(policy)       # a host widening
-
-
 @pytest.mark.parametrize("policy,expected", _ADVERTISED_EQ_ENFORCED)
-def test_advertised_gated_set_equals_enforced(hal, policy, expected):
+def test_advertised_gated_set_equals_enforced(hal, tmp_path, policy, expected):
     """Advertised (`destructiveHint`) == enforced (what the single gate defers) —
-    under the shipped default AND under a gated set the host seats (issue #114).
+    under the shipped default, a host widening, and a topology's own policy
+    (issue #114), PER HAL.
 
     Without the parametrization this test only ever exercised the default, where the
     two readers cannot disagree; a hint computed from the shipped constant while the
     gate consults the live policy would advertise a `write` as free while stopping it
     for a human — the tool surface lying to the agent."""
-    with _scope(policy):
+    with contextlib.ExitStack() as stack:
+        if isinstance(policy, tuple):
+            p = tmp_path / "policy.yaml"
+            p.write_text(_YAML + f"policy:\n  gated: [{', '.join(policy[1])}]\n",
+                         encoding="utf-8")
+            hal = stack.enter_context(shal.load(p))
+        elif policy is not None:
+            stack.enter_context(shal.gated_effects(policy))
         b = Bridge(hal)
         defs = {d["name"]: d for d in b.tool_defs()}
         for name, want in expected.items():
