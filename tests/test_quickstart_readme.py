@@ -112,7 +112,8 @@ def test_prompted_block_splits_commands_from_output() -> None:
 
 
 SHOWN = ["# 1 read(s) on this topology", "ambient_temp__read_celsius: 25.59",
-         "# writes — not run by --probe: ambient_temp__set_target"]
+         "# writes — not run by `shal probe`; use `shal call` "
+         "(gated ops are refused until approved): ambient_temp__set_target"]
 
 
 def test_exact_output_matches() -> None:
