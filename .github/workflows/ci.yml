@@ -199,7 +199,9 @@ jobs:
     # The samples are for a person deciding whether SHAL does their job (#206);
     # one that no longer runs from a fresh install tells them no. So every change
     # runs every sample the way a person would: `shal docs --sample <name> --to
-    # DIR`, then the one command it prints, stdin closed. A sample fails on a
+    # DIR`, then the one command it prints, with stdin an empty pipe (not
+    # DEVNULL: on Windows that is NUL, which isatty() calls a terminal, so a
+    # gated op would prompt instead of being refused). A sample fails on a
     # non-zero exit, unless its folder's expect.json names the exit (and the
     # output) it must end with. The set comes from `shal docs --samples --json`,
     # which lists the installed folder — never a hard-coded list; see

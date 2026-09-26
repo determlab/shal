@@ -11,8 +11,13 @@ editing this script or CI.
 
 **Run the way a person runs it.** For each sample: ``shal docs --sample <name>
 --to <new folder>``, then the one command that printed on stdout, run through
-the shell from a different scratch folder, stdin closed (``DEVNULL``: a sample
-that waits for input fails on the timeout instead of hanging CI). The venv's
+the shell from a different scratch folder, with stdin an **empty pipe** (a
+sample that reads input gets EOF at once, and nothing hangs CI). Not
+``DEVNULL``: on Windows that is the ``NUL`` device, and ``isatty()`` is True
+for it, so shal's ``ConsoleApprover`` would believe a person is there, prompt,
+read EOF and deny with the generic reason. A pipe is no terminal on any OS, so
+a sample sees what a person's non-interactive run sees: no approver is set
+and stdin is not a terminal. The venv's
 ``bin`` / ``Scripts`` dir is first on ``PATH``, so ``python`` and ``shal`` are the
 venv's.
 
@@ -123,7 +128,10 @@ def run_one(sample: dict, shal: str, scratch: Path, env: dict[str, str]) -> list
     cwd = scratch / "cwd" / name  # not the sample's folder: it must run from anywhere
     cwd.mkdir(parents=True)
     print(f"      $ {cmd}")
-    r = subprocess.run(cmd, shell=True, cwd=cwd, env=env, stdin=subprocess.DEVNULL,
+    # input="": an empty PIPE, not DEVNULL. On Windows DEVNULL is the NUL device,
+    # which isatty() calls a terminal, so shal's ConsoleApprover would think a
+    # person is there, prompt, and read EOF (see the module docstring)
+    r = subprocess.run(cmd, shell=True, cwd=cwd, env=env, input="",
                        capture_output=True, text=True, encoding="utf-8", errors="replace",
                        timeout=300)
     wrong = verdict(expect, r.returncode, r.stdout, r.stderr)

@@ -221,6 +221,34 @@ def test_verdict_names_each_miss():
                    "stderr lacks 'limit'", "stderr has 'Traceback'"]
 
 
+def test_run_one_gives_the_sample_no_terminal(tmp_path, monkeypatch, capsys):
+    # On Windows a DEVNULL stdin is the NUL device, and NUL is a character device:
+    # isatty() is True, so ConsoleApprover.has_person() is True and a gated op
+    # prompts and hits EOF. The runner must hand the sample an empty PIPE, where no
+    # OS sees a terminal (the limits sample, #207, relies on "stdin is not a terminal").
+    src = tmp_path / "src" / "tty"
+    src.mkdir(parents=True)
+    (src / "run.py").write_text(
+        '"""Report the terminal."""\nimport sys\nfrom shal.approval import ConsoleApprover\n'
+        'print(sys.stdin.isatty(), ConsoleApprover().has_person())\n', encoding="utf-8")
+    (src / "expect.json").write_text('{"stdout_has": ["False False"]}', encoding="utf-8")
+    real_run = run_samples.subprocess.run
+
+    def fake_run(args, **kw):   # stands in for `shal docs --sample tty --to DEST` only
+        if isinstance(args, list) and args[1:3] == ["docs", "--sample"]:
+            dest = Path(args[-1])
+            dest.mkdir(parents=True)
+            (dest / "run.py").write_bytes((src / "run.py").read_bytes())
+            return subprocess.CompletedProcess(args, 0, f"python {dest / 'run.py'}\n", "")
+        return real_run(args, **kw)
+
+    monkeypatch.setattr(run_samples.subprocess, "run", fake_run)
+    env = {**os.environ, "PATH": str(Path(sys.executable).parent) + os.pathsep
+           + os.environ.get("PATH", "")}
+    sample = {"name": "tty", "folder": str(src), "files": ["run.py"]}
+    assert run_samples.run_one(sample, "shal", tmp_path / "scratch", env) == []
+
+
 def test_runner_runs_every_installed_sample(tmp_path, capsys):
     # the installed shal next to this Python (the dev venv); CI runs it on the wheel
     assert run_samples.main(["--scratch", str(tmp_path)]) == 0
