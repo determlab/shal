@@ -14,6 +14,14 @@ All notable changes to this project are documented here. The format follows
 ## [Unreleased]
 
 ### Added
+- **The agent guide shows one real failing `shal check` report, and its fix** (#154,
+  R9 in `adk.md` §3.6) — the ADK section of `AGENT_GUIDE.md` gains "A failing check,
+  and its fix": `shal check my_driver:MyThing --json` on a driver whose `get_volume`
+  has no `@op` line, the JSON report it prints (exit 1), and the one `@op(...)` line
+  that clears it. `tests/test_guide_failing_check.py` runs the command on
+  `tests/fixtures/adk_check/my_driver.py` and fails if the report differs from the
+  guide's, then applies the guide's fix line to a copy and requires exit 0. The
+  broken example is test-only: not in the reference set, not registered.
 - **CI runs the README Quick Start exactly as printed** (#159) — a new `quickstart`
   job (ubuntu + windows, every PR) builds the wheel, makes a clean venv, and runs
   `dev/quickstart/run_readme.py`, which reads the Quick Start blocks out of

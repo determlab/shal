@@ -236,6 +236,38 @@ Write the driver in this order, in one file:
 
 The decorators are the contract. There is nothing else to write first.
 
+### A failing check, and its fix
+
+`shal check` runs the same checks from the shell. Run it in the folder that holds
+`my_driver.py`:
+```bash
+shal check my_driver:MyThing --json
+```
+In this driver, `get_volume` has `@idempotent` but no `@op` line. A real run prints
+this report and exits 1:
+```json
+{
+  "compatible": "community,my-thing",
+  "ok": false,
+  "problems": [
+    "get_volume: missing @shal.op description"
+  ],
+  "warnings": [],
+  "checked": [
+    "static: capability ops discovered",
+    "static: catalog entry + schemas well-formed",
+    "static: limit declarations reviewed"
+  ]
+}
+```
+`ok` is `false` because `problems` is not empty. Each problem starts with the name
+of the op. The fix is one line, added directly above `def get_volume`:
+```python
+    @op("Read the current volume (0-100).", side_effect="none")
+```
+Run the same command again: it exits 0, and `problems` is `[]`. Exit 2 means the
+check could not run (for example, a wrong `module:Class`); the reason is on stderr.
+
 ### Side effects for software
 
 A database, a service or a CI system uses the same four labels. The label says
