@@ -14,6 +14,19 @@ All notable changes to this project are documented here. The format follows
 ## [Unreleased]
 
 ### Added
+- **`shal,http` reaches read-only REST resources: the request envelope** (#104, S1 in
+  `adk.md` §3.7) — a message carrying any of the reserved keys `method`, `path`,
+  `query`, `headers`, `json` is sent as that HTTP request to
+  `<base>/<addr>/<path>?<query>` and answers `{status, headers, json | text}`. A
+  message with none of them is the **plain** shape, unchanged: POSTed as JSON, the
+  reply is the parsed body. `None` query params are dropped; `json` on `GET` is a
+  `LoadError`; a non-2xx is a `HopError` with the status, sent once, never retried.
+  **Credentials live on the bus node**: `config: {headers: {Authorization: "Bearer
+  ${TOKEN}"}}` (new `config.headers` schema key), `${ENV}` resolved at load, added
+  by the bus to every request, winning over an envelope header of the same name,
+  and never forwarded across a redirect. They never appear in the envelope, the
+  reply, a log or an error; logs carry `<addr>/<path>` and the status only.
+  `shal,sim-msg` answers the same envelopes.
 - **The ADK reference set, and `shal docs --list` / `--example`** (#149, R7 in
   `adk.md` §3.6) — `ti,tmp102`, `microchip,mcp23017` and `rigol,dp832` ship inside
   the Authoring Kit at `src/shal/adk/reference/<name>/`, each four files: `driver.py`,
