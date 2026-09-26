@@ -37,6 +37,7 @@ All notable changes to this project are documented here. The format follows
     any later assignment (an op, a thread it started, host code) raises
     `AttributeError` and is audited (`outcome: "policy-changed"`), and the op
     wrapper also checks that `node.hal` is still the same Hal after each call.
+    Deleting either is refused the same way. Deliberate reflection between calls can still change policy; Python is not a sandbox (ADR-001 addendum 5). The guarantees are that a driver cannot change policy by importing or by running an op, and that every change the wrapper sees is audited.
   - **A driver can never change the policy** (gated set or approver). A
     `--drivers` module that changes it at import is refused with
     `LoadError("<module> changed the approval policy at import")`; driver code

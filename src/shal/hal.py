@@ -47,6 +47,14 @@ class Hal:
                                        self.__dict__.get("_source_label", "<hal>"))
         object.__setattr__(self, name, value)
 
+    def __delattr__(self, name: str) -> None:
+        # deleting the declared set would drop the Hal back to the default (a
+        # widening topology loosened) — refused the same way as reassigning it
+        if name == "_declared_gated":
+            _driver._refuse_write_once("Hal._declared_gated",
+                                       self.__dict__.get("_source_label", "<hal>"))
+        object.__delattr__(self, name)
+
     # -- lookup (topology immutable after load -> lock-free) -----------------
     def get_device(self, key: str | None = None, *,
                    id: str | None = None, path: str | None = None):

@@ -43,6 +43,14 @@ class Node:
             _refuse_write_once("Node.hal", self.path)  # audits, raises AttributeError
         object.__setattr__(self, name, value)
 
+    def __delattr__(self, name: str) -> None:
+        # deleting `hal` would make the next assignment look like the first one
+        # (set-once is checked on the current value) — refused the same way
+        if name == "hal":
+            from .driver import _refuse_write_once
+            _refuse_write_once("Node.hal", self.path)  # audits, raises AttributeError
+        object.__delattr__(self, name)
+
     @property
     def description(self) -> str | None:
         """Optional instance context from the topology (issue #1) — blended into

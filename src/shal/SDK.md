@@ -325,7 +325,8 @@ def start_cleaning(self) -> None:
   gate independently, `close()` has nothing to reset, and no topology can undo a
   host widening. `shal.catalog()` describes a class, not a Hal, so it shows the
   host-level set. `node.hal` and the Hal's declared set are write-once (set by
-  `shal.load`); assigning either later raises `AttributeError`.
+  `shal.load`); assigning or deleting either later raises `AttributeError`.
+  Deliberate reflection between calls can still change policy; Python is not a sandbox (ADR-001 addendum 5). The guarantees are that a driver cannot change policy by importing or by running an op, and that every change the wrapper sees is audited.
 
   A bare string is a `TypeError`; an unknown name or `"none"` (a read is never
   gated, D6) is a `ValueError`. **A driver never touches the policy**: a

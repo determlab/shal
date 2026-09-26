@@ -1098,3 +1098,31 @@ def test_host_code_cannot_reassign_either_after_load(tmp_path, audit_records):
         assert other.get_gated_effects() == _DEFAULT
     assert len([r for r in audit_records
                 if getattr(r, "outcome", None) == "policy-changed"]) == 4
+
+
+def test_deleting_node_hal_between_calls_is_refused(hal, audit_records):
+    """`del node.hal` would make the next assignment look like the first one."""
+    node = hal.get_node("rig")
+    with pytest.raises(AttributeError, match="Node.hal is set once"):
+        del node.hal
+    assert node.hal is hal
+    assert [r.attribute for r in audit_records
+            if getattr(r, "outcome", None) == "policy-changed"] == ["Node.hal"]
+    with shal.approver(shal.DenyAll()), pytest.raises(shal.ApprovalDenied):
+        hal.get_device("rig").move(1)
+    assert RECEIVED == []
+
+
+def test_deleting_the_declared_set_between_calls_is_refused(tmp_path, audit_records):
+    """`del hal._declared_gated` would drop a widening topology back to the default."""
+    RECEIVED.clear()
+    with _load_with_policy(tmp_path, _WIDE) as h:
+        with pytest.raises(AttributeError, match="Hal._declared_gated is set once"):
+            del h._declared_gated
+        assert h.get_gated_effects() == frozenset(_WIDE)
+        assert [r.attribute for r in audit_records
+                if getattr(r, "outcome", None) == "policy-changed"] == [
+                    "Hal._declared_gated"]
+        with shal.approver(shal.DenyAll()), pytest.raises(shal.ApprovalDenied):
+            h.get_device("rig").set_reg(1)        # the topology's `write` gate holds
+    assert RECEIVED == []
