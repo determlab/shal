@@ -2,6 +2,9 @@
 import pytest
 
 import shal
+from shal import registry
+from shal.conformance import check_driver
+from shal.driver import inferred_side_effect
 
 
 def _load(tmp_path, addr_hex: str, compatible: str):
@@ -68,6 +71,51 @@ def test_mcp23017_gpio_roundtrip(tmp_path):
         dev.write_pin(0, high=False)
         assert dev.read_pin(0) is False
         assert isinstance(dev, shal.GPIOExpander)
+
+
+def test_mcp23017_set_direction_is_config_and_gated(tmp_path):
+    # arming a pin as an output is a configuration change, so it is gated (#151)
+    cls = registry.resolve("microchip,mcp23017")
+    assert inferred_side_effect(cls.set_direction) == "config"
+    asked: list[str] = []
+
+    def ask(allow):
+        return shal.CallableApprover(lambda req: asked.append(req.op) or allow)
+
+    with _load(tmp_path, "0x20", "microchip,mcp23017") as hal:
+        model = hal.get_node("bench").driver.model_for(0x20)
+        txns: list = []
+        real_txn = model.txn
+        model.txn = lambda ops: txns.append(ops) or real_txn(ops)
+        dev = hal.get_device("dev")
+        with shal.approver(ask(False)):
+            with pytest.raises(shal.ApprovalDenied):
+                dev.set_direction(0, output=True)
+        assert asked == ["set_direction"]
+        assert txns == [] and model.regs[0x00] == 0xFF  # nothing reached the bus
+        with shal.approver(ask(True)):
+            dev.set_direction(0, output=True)
+            assert model.regs[0x00] == 0xFE
+            asked.clear()
+            dev.read_pin(0)  # a plain read never consults the approver
+        assert asked == []
+
+
+def test_mcp23017_conformance_clean():
+    report = check_driver("microchip,mcp23017")
+    assert report.problems == []
+    assert report.warnings == []
+
+
+def test_mcp23017_write_pin_out_of_range_is_refused_before_io(tmp_path):
+    with _load(tmp_path, "0x20", "microchip,mcp23017") as hal:
+        model = hal.get_node("bench").driver.model_for(0x20)
+        txns: list = []
+        real_txn = model.txn
+        model.txn = lambda ops: txns.append(ops) or real_txn(ops)
+        with pytest.raises(shal.LimitError):
+            hal.get_device("dev").write_pin(16, high=True)
+        assert txns == []
 
 
 def test_new_drivers_in_catalog():

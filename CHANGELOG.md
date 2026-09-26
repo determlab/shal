@@ -150,6 +150,11 @@ All notable changes to this project are documented here. The format follows
   cloud-device example with both `config:` and `address`.
 
 ### Changed
+- **`microchip,mcp23017` `set_direction` is labelled `config`, not `write`** (#151,
+  R8b in `adk.md` §3.6) — turning a pin into an output arms it, so the call now
+  stops at the approval gate like any `config` op. `set_direction` and `write_pin`
+  now declare `pin` as 0-15, so pin 16+ raises `LimitError` before any bus I/O on
+  both ops, and `check_driver` reports no problems and no warnings for the class.
 - **The release workflow now fails if the version is already on PyPI** (#116) —
   `release.yml` publishes with `skip-existing: true`, which exists so that re-running a
   partially-failed upload does not explode. The cost is that "uploaded nothing" and
