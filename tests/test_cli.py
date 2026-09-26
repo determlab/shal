@@ -95,6 +95,20 @@ def test_agent_guide_is_bundled_in_the_package():
     assert "shal probe" in text
 
 
+def test_guide_adk_states_authoring_order_and_software_labels():
+    # #147: the ADK section gives the order (declare, check, implement) and the
+    # software side-effect rule (the four labels; not sure -> gated).
+    from importlib.resources import files
+    text = (files("shal") / "AGENT_GUIDE.md").read_text(encoding="utf-8")
+    adk = text.split("## The ADK", 1)[1]
+    steps = [adk.index(f"**{w}.**") for w in ("Declare", "Check", "Implement")]
+    assert steps == sorted(steps)
+    for label in ("none", "write", "config", "actuator"):
+        assert f"**`{label}`**" in adk
+    assert "Not sure" in adk and "gated" in adk
+    assert "contract file" not in text and "stub generator" not in text
+
+
 def test_guide_cloud_device_example_loads(tmp_path, monkeypatch):
     # #95: the guide's cloud-device example (config: + address, no IP) must
     # actually load — not just read well. Pull the fenced yaml block straight
