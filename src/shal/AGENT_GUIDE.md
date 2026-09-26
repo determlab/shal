@@ -87,7 +87,7 @@ class MyThing(Driver):                     # a capability is OPTIONAL — see be
      **empty / "no data yet" success** (raise instead; the device just isn't ready).
    - `"write"` → a **benign** write (instant, reversible — runs free).
    - `"actuator"` (physical motion) / `"config"` → **gated**: stops for human approval.
-   - *Forget to annotate? It defaults to gated (fail-closed).*
+   - *Forget to annotate? It defaults to gated (fail-closed), and `check_driver` warns.*
 4. **`@idempotent`** on a read lets the framework auto-retry it; never on a write.
 5. **Connect lazily — never in `bind()`.** `bind()` only reads config; open the connection
    on the first real op via a guarded `_ensure_connected()` (above). Why: `shal tools` /

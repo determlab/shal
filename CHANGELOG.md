@@ -14,6 +14,13 @@ All notable changes to this project are documented here. The format follows
 ## [Unreleased]
 
 ### Added
+- **`check_driver` warns when an `@op` has no `side_effect`** (#162) — the op is
+  still legal and still gated (it infers `"actuator"`, fail-closed), so this is a
+  warning, never a problem, and `shal check` still exits 0. The warning names the op
+  and the fix: `<op>: no side_effect declared; inferred "actuator" (gated). Declare
+  side_effect= — "none" for a read, "write" for a benign, reversible change,
+  "config" or "actuator" for a gated one.` Every ADK reference, example driver and
+  demo already declares its labels, so none of them gains a warning.
 - **The ADK reference set gains `sqlite,database`: four side-effect labels on one
   software node, zero dependencies** (#157, `adk.md` §3.7) —
   `src/shal/adk/reference/sqlite/` (`driver.py`, `test_sqlite.py`,
