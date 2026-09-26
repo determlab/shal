@@ -90,9 +90,13 @@ class ConsoleApprover:
         self._stream = stream
         self._prompt = prompt
 
-    def approve(self, request: ApprovalRequest) -> bool:
+    def has_person(self) -> bool:
+        """True when the input stream is a TTY, so a person can answer. Read-only."""
         stream = self._stream or sys.stdin
-        if not getattr(stream, "isatty", lambda: False)():
+        return bool(getattr(stream, "isatty", lambda: False)())
+
+    def approve(self, request: ApprovalRequest) -> bool:
+        if not self.has_person():
             return False  # no one to ask -> don't move
         args = ", ".join(f"{k}={v!r}" for k, v in request.params.items())
         who = request.id or request.path

@@ -248,3 +248,13 @@ def test_help_says_there_is_no_approve_flag_and_where_approval_happens(lab):
     assert "NO --approve flag" in r.stdout
     assert "shal mcp <topology>" in r.stdout and "shal.approver(" in r.stdout
     assert "2 refused" in r.stdout and "3 could not run" in r.stdout
+
+
+def test_refusal_json_how_to_approve_is_the_same_constant_as_the_denial(lab):
+    """#186: `shal call`'s refusal and the no-approver denial share ONE string."""
+    from shal.errors import HOW_TO_APPROVE_LINE, NO_APPROVER_MESSAGE
+    r = _shal("call", "sim.yaml", "ambient_temp", "set_target", "30", "--json", cwd=lab)
+    assert r.returncode == 2
+    out = json.loads(r.stdout)
+    assert out["how_to_approve"] == HOW_TO_APPROVE_LINE
+    assert NO_APPROVER_MESSAGE.endswith(out["how_to_approve"])
