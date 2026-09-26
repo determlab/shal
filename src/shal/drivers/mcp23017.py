@@ -28,14 +28,17 @@ class Mcp23017(Driver, GPIOExpander):
     def _write(self, reg: int, val: int) -> None:
         self.bus.txn(self.addr, [Write(bytes([reg, val & 0xFF]))])
 
-    @op("Set a pin (0-15) as output (true) or input (false).", side_effect="write")
+    # "config", not "write": turning a pin into an output arms it (#151).
+    @op("Set a pin (0-15) as output (true) or input (false).", side_effect="config",
+        params={"pin": {"minimum": 0, "maximum": 15}})
     def set_direction(self, pin: int, output: bool) -> None:
         reg, bit = _IODIR + pin // 8, pin % 8
         cur = self._read(reg)
         self._write(reg, cur & ~(1 << bit) if output else cur | (1 << bit))
 
+    # pin is bounded 0-15, so pin 16+ is a LimitError before any bus I/O.
     @op("Drive an output pin (0-15) high (true) or low (false).",
-        side_effect="actuator")
+        side_effect="actuator", params={"pin": {"minimum": 0, "maximum": 15}})
     def write_pin(self, pin: int, high: bool) -> None:
         reg, bit = _OLAT + pin // 8, pin % 8
         cur = self._read(reg)
