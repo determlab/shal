@@ -1,0 +1,11 @@
+# One simulated bus and one simulated temperature sensor on it.
+shal_version: 1
+root:
+  bus:
+    driver: shal,sim-i2c
+    address: sim0
+    children:
+      temp0:
+        id: room
+        driver: shal,sim-sensor
+        address: 0x48

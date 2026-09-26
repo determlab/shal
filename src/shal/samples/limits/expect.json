@@ -1,0 +1,4 @@
+{"exit": 2,
+ "stdout_has": ["PASS  room temperature", "FAIL  curing temperature",
+                "no approver is set and stdin is not a terminal"],
+ "stderr_lacks": ["Traceback"]}

@@ -6,8 +6,10 @@ never mix. The real run — a clean venv, the built wheel — is the `samples` C
 """
 from __future__ import annotations
 
+import io
 import json
 import os
+import runpy
 import subprocess
 import sys
 from importlib.resources import files
@@ -15,7 +17,9 @@ from pathlib import Path
 
 import pytest
 
+import shal
 from shal import cli
+from shal.errors import NO_APPROVER_MESSAGE
 
 _ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(_ROOT / "dev" / "samples"))
@@ -255,3 +259,121 @@ def test_runner_runs_every_installed_sample(tmp_path, capsys):
     out = capsys.readouterr().out
     assert "ok    hello" in out and "all " in out
     assert (tmp_path / "samples" / "hello" / "run.py").is_file()
+
+
+# -- the limits sample (#207) ------------------------------------------------------------
+
+LIMITS = SAMPLES_DIR / "limits" / "run.py"
+
+
+class _Stdin(io.StringIO):
+    """A stdin that says whether it is a terminal; a person's answer is its text."""
+
+    def __init__(self, text: str, tty: bool) -> None:
+        super().__init__(text)
+        self._tty = tty
+
+    def isatty(self) -> bool:
+        return self._tty
+
+
+@pytest.fixture
+def sim_rooms(monkeypatch):
+    """Every sim-sensor model the sample builds, so a test can see what reached it."""
+    from shal.buses import sim
+    built = []
+
+    class Spy(sim.SimSensorModel):
+        def __init__(self, *a, **kw):
+            super().__init__(*a, **kw)
+            built.append(self)
+
+    monkeypatch.setitem(sim.SIM_MODELS, "shal,sim-sensor", Spy)
+    return built
+
+
+def _run_limits(monkeypatch, stdin) -> int | None:
+    """Run the sample in this process with the shipped default approver (none set)."""
+    monkeypatch.setattr("sys.stdin", stdin)
+    token = shal.approval._current.set(None)       # undo conftest's AutoApprove
+    try:
+        runpy.run_path(str(LIMITS), run_name="__main__")
+    except SystemExit as e:
+        return e.code
+    finally:
+        shal.approval._current.reset(token)
+    return None
+
+
+def test_limits_first_comment_is_the_issue_text():
+    # the issue's text, word for word, wrapped over two lines at ruff's 100 columns
+    lines = LIMITS.read_text(encoding="utf-8").splitlines()
+    first = lines[0] + " " + lines[1].removeprefix("# ")
+    assert lines[1].startswith("# ")
+    assert first == ("# In a terminal this asks you. In CI, or in a pipe, there is nobody "
+                     "to ask, so it refuses and exits 2.")
+    assert len(LIMITS.read_text(encoding="utf-8").splitlines()) <= 40
+    assert "approver(" not in LIMITS.read_text(encoding="utf-8")   # never pins one
+
+
+def test_limits_no_terminal_refuses_exit_2_and_no_write_reached_the_sim(
+        monkeypatch, capsys, sim_rooms):
+    assert _run_limits(monkeypatch, _Stdin("", tty=False)) == 2
+    out = capsys.readouterr().out.splitlines()
+    assert out[0].startswith("PASS  room temperature")
+    assert out[1].startswith("FAIL  curing temperature")
+    assert out[2].startswith("refused: ") and out[2].endswith(NO_APPROVER_MESSAGE)
+    assert len(out) == 3                                   # the reason is one line
+    [room] = sim_rooms
+    assert room.target_writes == 0 and room.target_c == 25.0
+
+
+def test_limits_terminal_y_sets_the_target_and_says_so(monkeypatch, capsys, sim_rooms):
+    assert _run_limits(monkeypatch, _Stdin("y\n", tty=True)) is None     # exit 0
+    out = capsys.readouterr().out
+    assert "Allow this actuation? [y/N]" in out
+    assert "approved: the sim room now drifts toward 30.0 C" in out
+    [room] = sim_rooms
+    assert room.target_writes == 1 and room.target_c == 30.0
+
+
+def test_limits_terminal_n_refuses_and_exits_2(monkeypatch, capsys, sim_rooms):
+    assert _run_limits(monkeypatch, _Stdin("N\n", tty=True)) == 2
+    out = capsys.readouterr().out
+    assert "Allow this actuation? [y/N]" in out
+    assert "set_target denied by the approval policy" in out
+    assert NO_APPROVER_MESSAGE not in out           # a person said no; someone was there
+    [room] = sim_rooms
+    assert room.target_writes == 0 and room.target_c == 25.0
+
+
+def test_limits_sim_reading_stays_between_the_two_limits():
+    # why PASS then FAIL is not luck: the room starts within 2 C of its 25 C target and
+    # each read moves 20% of the way back plus at most 0.3 C of noise, so a reading
+    # stays in 23..27 C: always inside 15..35, never inside 30..40
+    import random
+
+    from shal.buses.sim import SimSensorModel
+    for seed in range(200):
+        m = SimSensorModel(random.Random(seed))
+        for _ in range(50):
+            m._drift()
+            assert 23.0 <= m.temp_c <= 27.0
+
+
+def test_limits_runs_as_the_runner_runs_it(tmp_path, capsys):
+    # `--to`, then the printed command from another folder, stdin an empty pipe
+    dest = tmp_path / "limits"
+    assert cli.main(["docs", "--sample", "limits", "--to", str(dest)]) == 0
+    cmd = capsys.readouterr().out.strip()
+    elsewhere = tmp_path / "elsewhere"
+    elsewhere.mkdir()
+    env = {**os.environ, "PATH": str(Path(sys.executable).parent) + os.pathsep
+           + os.environ.get("PATH", ""), "PYTHONUTF8": "1"}
+    r = subprocess.run(cmd, shell=True, cwd=elsewhere, env=env, input="",
+                       capture_output=True, text=True, encoding="utf-8", timeout=120)
+    assert r.returncode == 2, r.stdout + r.stderr
+    assert "no approver is set and stdin is not a terminal" in r.stdout
+    assert "Traceback" not in r.stderr
+    assert load_expect(SAMPLES_DIR / "limits")["exit"] == 2
+    assert verdict(load_expect(SAMPLES_DIR / "limits"), r.returncode, r.stdout, r.stderr) == []
