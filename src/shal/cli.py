@@ -86,22 +86,31 @@ def _json_load(args, cmd: str):
                            f"{type(e).__name__}: {e}")
 
 
-# A token made only of these pastes as-is into bash, PowerShell and cmd.
-_PLAIN_TOKEN = re.compile(r"[\w\-./:\\+]+\Z")
-# Inside double quotes, bash still expands $ ` ! (and " ends the quote), PowerShell
-# expands $ `, cmd expands % and !. No one quoting is safe in all three for these.
-_UNQUOTABLE = re.compile(r"[\"$`%!\r\n]")
+# run_with is built from an ALLOW-list, never a deny-list: a token pastes into bash,
+# PowerShell and cmd only if every character is one we know is literal there.
+# Plain (bare) tokens: ASCII letters, digits and _ - . / : \ + — none of the three
+# shells gives any of these a meaning in a bare word (bash drops a \ inside a word
+# but never runs anything because of it).
+_PLAIN_TOKEN = re.compile(r"[A-Za-z0-9_\-./:\\+]+\Z")
+# Quoted tokens add only a space and # = @ ~ , each literal inside "..." in all
+# three: bash expands only $ ` \ ! there, PowerShell $ ` and the curly quotes it
+# reads as ", cmd % ! and " itself. Nothing non-ASCII, no control character.
+_QUOTABLE_TOKEN = re.compile(r"[A-Za-z0-9_\-./:\\+ #=@~]+\Z")
+_PARAM_NAME = re.compile(r"[A-Za-z_][A-Za-z0-9_]*\Z")
 
 
 def _shell_token(token: str) -> str | None:
     """``token`` as it can be pasted into bash, PowerShell and cmd alike: bare when
-    it is plain, else in double quotes (the quoting all three share). None when no
-    such form exists (a ", $, `, %, ! or newline in it)."""
+    it is plain, else in double quotes (the quoting all three share). None when
+    neither is safe: a character outside the allow-lists, or a trailing \\ (bare,
+    bash reads it as escaping the next space; quoted, it escapes the closing ")."""
+    if token.endswith("\\") or token == "--%":  # --% stops PowerShell's parser
+        return None
     if _PLAIN_TOKEN.match(token):
         return token
-    if _UNQUOTABLE.search(token):
-        return None
-    return f'"{token}"'
+    if _QUOTABLE_TOKEN.match(token):
+        return f'"{token}"'
+    return None
 
 
 def _call_command(args, fact: dict, schema: dict) -> str | None:
@@ -113,9 +122,10 @@ def _call_command(args, fact: dict, schema: dict) -> str | None:
     for d in args.drivers:
         tokens += ["--drivers", d]
     quoted = [_shell_token(t) for t in tokens]
-    if None in quoted:
+    names = schema.get("required", [])
+    if None in quoted or not all(_PARAM_NAME.match(p) for p in names):
         return None
-    required = [f"{p}=<{p}>" for p in schema.get("required", [])]
+    required = [f"{p}=<{p}>" for p in names]
     return " ".join(["shal call", *quoted[:3], *required, *quoted[3:]])
 
 
@@ -656,10 +666,12 @@ def main(argv: list[str] | None = None) -> int:
                '  top-level "ok" is still true (the probe ran, exit 0). With a named\n'
                '  tool, "reads" holds that one read. A gated write is refused by\n'
                '  `shal call` (exit 2) until a person approves it.\n'
-               '  run_with: replace each name=<name> with a value. A path with a space\n'
-               '  or other special character is in double quotes, so the line pastes\n'
-               '  into bash, PowerShell and cmd. A path with " $ ` % ! in it cannot be\n'
-               '  quoted for all three: then run_with is null.\n'
+               '  run_with: replace each name=<name> with a value. It pastes into bash,\n'
+               '  PowerShell and cmd. A path of ASCII letters, digits and _ - . / : \\ +\n'
+               '  is bare; one that also has a space or # = @ ~ is in double quotes.\n'
+               '  Any other character (non-ASCII too), or a path ending in \\, makes\n'
+               '  run_with null: build that call yourself. bash reads a \\ as an\n'
+               '  escape, so use / in paths there.\n'
                "\n"
                "exit: 0 ran; 1 no such tool, the tool is a write, or the topology\n"
                "  does not load. The message is on stderr; with --json, stdout also\n"

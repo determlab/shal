@@ -19,9 +19,11 @@ All notable changes to this project are documented here. The format follows
   `probe`: `{ok, topology, reads: [{tool, device, op, ok, value|error, unit}],
   writes_not_run: [{tool, device, op, side_effect, gated, run_with}]}` — `run_with`
   is the `shal call` line for that write, with a `name=<name>` placeholder per
-  required value; a path with a space is in double quotes, so the line pastes into
-  bash, PowerShell and cmd, and `run_with` is `null` when a path holds `" $ ` % !`
-  (no quoting is safe in all three). `tools`: every device op with `tool, device,
+  required value. It is built from an allow-list so it pastes into bash, PowerShell
+  and cmd with nothing extra run: a path of ASCII letters, digits and `_ - . / : \ +`
+  is bare, one that also has a space or `# = @ ~` is in double quotes, and any other
+  character (non-ASCII included) or a path ending in `\` makes `run_with` `null`.
+  `tools`: every device op with `tool, device,
   op, kind, side_effect, gated, idempotent, unit`, the full `description` and the
   `input_schema` (the MCP-only `shal_approve`/`shal_deny` are not listed). `docs
   --list`: each reference's `name, compatible, summary, folder, files, has_sim,

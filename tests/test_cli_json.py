@@ -12,6 +12,7 @@ import re
 import subprocess
 import sys
 import textwrap
+from pathlib import Path
 
 import pytest
 
@@ -32,12 +33,18 @@ _SIM_YAML = textwrap.dedent("""\
 
 _BAD_YAML = "shal_version: 1\nroot:\n  x: {driver: 'no,such'}\n"
 
+# The child imports THIS tree's shal, whatever the venv has installed: the tests run
+# from a temp dir, so the path must be absolute.
+_SRC = str(Path(__file__).resolve().parents[1] / "src")
+_ENV = {**os.environ,
+        "PYTHONPATH": os.pathsep.join(p for p in (_SRC, os.environ.get("PYTHONPATH")) if p),
+        # the legacy `shal-mcp` entry does not set its own stdout to UTF-8 (only
+        # `shal` does); this makes both print the footer's dash the same way
+        "PYTHONIOENCODING": "utf-8"}
+
 
 def _run(*argv: str, cwd, module: str = "shal.cli") -> subprocess.CompletedProcess:
-    # the legacy `shal-mcp` entry does not set its own stdout to UTF-8 (only `shal`
-    # does); the env makes both print the footer's dash the same way on Windows
-    env = {**os.environ, "PYTHONIOENCODING": "utf-8"}
-    return subprocess.run([sys.executable, "-m", module, *argv], cwd=cwd, env=env,
+    return subprocess.run([sys.executable, "-m", module, *argv], cwd=cwd, env=_ENV,
                           capture_output=True, text=True, encoding="utf-8", timeout=60)
 
 
@@ -215,26 +222,142 @@ def test_probe_json_run_with_quotes_paths_with_spaces(space_lab):
                         '--drivers "my drivers/space_rig_driver.py"')
 
 
-def test_probe_json_run_with_runs_when_pasted_into_a_shell(space_lab):
-    """The line, pasted into the platform shell (sh on POSIX, cmd on Windows) and
-    into PowerShell where there is one, runs the op with the right values."""
+def _shells() -> list[tuple[str, object]]:
+    """Every shell a run_with may be pasted into here, as (name, argv-builder): the
+    platform shell (sh on POSIX, cmd on Windows), bash where there is one (Git Bash
+    on Windows; not the WSL launcher), and PowerShell where there is one."""
     import shutil
-    run_with = _space_run_with(space_lab, "sp ace/rig.yaml")
-    assert run_with.startswith("shal call ")
-    # fill the placeholders; `shal` is this interpreter's module (it may not be on PATH)
-    rest = run_with[len("shal "):].replace("<count>", "5").replace("<label>", "hi")
-    marks = space_lab / "marks.txt"
-    runs = [("platform shell", f'"{sys.executable}" -m shal.cli {rest}', True)]
+    py = sys.executable
+    out = [("platform shell", lambda rest: f'"{py}" -m shal.cli {rest}')]
+    bash = shutil.which("bash")
+    if sys.platform == "win32" and bash and "system32" not in bash.lower():
+        posix_py = Path(py).as_posix()
+        out.append(("bash", lambda rest: [bash, "-c", f'"{posix_py}" -m shal.cli {rest}']))
     ps = shutil.which("pwsh") or shutil.which("powershell")
     if ps:
-        runs.append(("powershell", [ps, "-NoProfile", "-Command",
-                                    f'& "{sys.executable}" -m shal.cli {rest}'], False))
-    for name, cmd, shell in runs:
-        marks.unlink(missing_ok=True)
-        r = subprocess.run(cmd, shell=shell, cwd=space_lab, capture_output=True,
-                           text=True, encoding="utf-8", timeout=60)
-        assert r.returncode == 0, (name, cmd, r.stdout, r.stderr)
+        out.append(("powershell", lambda rest: [ps, "-NoProfile", "-Command",
+                                                f'& "{py}" -m shal.cli {rest}']))
+    return out
+
+
+def _paste(run_with: str, cwd, **values: str):
+    """run_with with its placeholders filled, pasted into each shell. `shal` is this
+    interpreter's module (the script may not be on PATH). Yields (shell, result)."""
+    assert run_with.startswith("shal call ")
+    rest = run_with[len("shal "):]
+    for k, v in values.items():
+        rest = rest.replace(f"<{k}>", v)
+    for name, build in _shells():
+        cmd = build(rest)
+        yield name, subprocess.run(cmd, shell=isinstance(cmd, str), cwd=cwd, env=_ENV,
+                                   capture_output=True, text=True, encoding="utf-8",
+                                   timeout=60)
+
+
+def test_probe_json_run_with_runs_when_pasted_into_a_shell(space_lab):
+    """The line, pasted into every shell there is here, runs the op with the right
+    values."""
+    run_with = _space_run_with(space_lab, "sp ace/rig.yaml")
+    marks = space_lab / "marks.txt"
+    for name, r in _paste(run_with, space_lab, count="5", label="hi"):
+        assert r.returncode == 0, (name, run_with, r.stdout, r.stderr)
         assert marks.read_text() == "5 hi 1.0 False", name
+        marks.unlink()
+
+
+# Each tries to make a shell run `echo x>pwned` — a command bash, cmd and PowerShell
+# all run — by breaking out of run_with's quoting. The first two were reproduced by
+# the reviewer against the round-2 deny-list.
+_INJECTIONS = [
+    ["x y\\", ";echo x>pwned;", "c d\\"],   # bash: a trailing \ escapes the closing "
+    ["a\u201d; echo x>pwned; \u201db"],     # PowerShell reads curly quotes as "
+    ["a\u201c; echo x>pwned; \u201eb"],
+    ['a"; echo x>pwned; "b'],
+    ["trail\\"],
+    ["x; echo x>pwned"],
+    ["x & echo x>pwned"],
+    ["x ^& echo x>pwned"],
+    ["x | echo x>pwned"],
+    ["x $(echo x>pwned)"],
+    ["x `echo x>pwned`"],
+    ["x %COMSPEC%"],
+    ["x !x! echo"],
+    ["x (echo x>pwned)"],
+    ["x 'echo x>pwned'"],
+    ["caf\u00e9 dir/drv.py"],               # non-ASCII, even a harmless letter
+    ["tab\there"],
+    ["new\nline"],
+    ["--%"],                                # PowerShell's stop-parsing token
+]
+
+
+@pytest.mark.parametrize("drivers", _INJECTIONS)
+def test_run_with_is_null_for_anything_off_the_allow_list(drivers):
+    import argparse
+
+    from shal import cli
+    fact = {"device": "rig", "op": "put"}
+    args = argparse.Namespace(topology="sim.yaml", drivers=drivers)
+    assert cli._call_command(args, fact, {"required": ["n"]}) is None
+    # the topology is checked the same way as each --drivers value
+    args = argparse.Namespace(topology=drivers[0], drivers=[])
+    assert cli._call_command(args, fact, {"required": ["n"]}) is None
+
+
+# The same attacks end to end: real --drivers folders with these names (a folder of
+# no .py files imports nothing), `shal probe --json` in a fresh process, and its
+# run_with pasted into every shell here if it is not null. No name holds > or |, so
+# each folder can exist on Windows too; each payload makes a file named pwned.
+_ATTACK_FOLDERS = [
+    ["x y\\", ";touch pwned;", "c d\\"],    # the reviewer's bash reproduction
+    ["a”; ni pwned; ”b"],         # the reviewer's PowerShell reproduction
+    ["a & copy nul pwned & b"],             # cmd
+    ["x ^& copy nul pwned"],
+    ["a;touch pwned;b"],
+    ["x $(touch pwned)"],
+    ["x `touch pwned`"],
+    ["x %COMSPEC%"],
+    ["café dir"],
+]
+
+
+@pytest.mark.parametrize("folders", _ATTACK_FOLDERS)
+def test_probe_json_attack_paths_paste_nothing(lab, folders):
+    for f in folders:
+        try:
+            (lab / f).mkdir(exist_ok=True)
+        except OSError:
+            pytest.skip(f"this file system cannot name a folder {f!r}")
+    argv = ["probe", "sim.yaml"]
+    for f in folders:
+        argv += ["--drivers", f]
+    r = _run(*argv, "--json", cwd=lab)
+    assert r.returncode == 0, r.stderr
+    [write] = _doc(r)["writes_not_run"]
+    if write["run_with"] is not None:
+        for name, _ in _paste(write["run_with"], lab, celsius="30"):
+            assert not (lab / "pwned").exists(), (name, write["run_with"])
+    assert write["run_with"] is None  # every one of these is off the allow-list
+    assert not (lab / "pwned").exists()
+
+
+def test_run_with_paste_runs_nothing_extra(tmp_path):
+    """Every character the allow-list lets through, pasted into every shell here:
+    no marker file appears, and the arguments arrive intact: the topology loads, the
+    --drivers folder is found, and `shal call` reaches the gate and refuses."""
+    (tmp_path / "p q#1=@~").mkdir()
+    (tmp_path / "p q#1=@~" / "sim.yaml").write_text(_SIM_YAML, encoding="utf-8")
+    drivers = "d r#2=@~/a-b_c.d+e"  # a folder of no .py files: imports nothing
+    (tmp_path / drivers).mkdir(parents=True)
+    r = _run("probe", "p q#1=@~/sim.yaml", "--drivers", drivers, "--json", cwd=tmp_path)
+    assert r.returncode == 0, r.stderr
+    [write] = _doc(r)["writes_not_run"]
+    assert write["run_with"] == ('shal call "p q#1=@~/sim.yaml" ambient_temp set_target '
+                                 f'celsius=<celsius> --drivers "{drivers}"')
+    for name, p in _paste(write["run_with"], tmp_path, celsius="30"):
+        assert not (tmp_path / "pwned").exists(), name
+        assert "refused: ambient_temp.set_target" in p.stderr, (name, p.stdout, p.stderr)
+    assert not (tmp_path / "pwned").exists()
 
 
 def test_call_takes_name_value_for_every_param_shape(space_lab):
