@@ -368,7 +368,8 @@ assert report.ok, str(report)
 Verifies: `llm_ready` + complete `@op` metadata, catalog entry + all schemas
 well-formed, declared limits **actually reject** out-of-range calls pre-I/O,
 write ops **actually produce audit records**, capability protocols actually
-`isinstance`. Warnings flag numeric write params with no declared limit.
+`isinstance`. Warnings flag numeric write params with no declared limit, and an
+`@op` with no `side_effect` (legal, inferred `"actuator"` and gated — but declare it).
 A generated driver is not done until this is green.
 
 **Your tests must additionally cover** (with the sim): one value-correctness
