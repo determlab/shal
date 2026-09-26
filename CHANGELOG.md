@@ -25,6 +25,17 @@ All notable changes to this project are documented here. The format follows
   except an explicit `KNOWN_VENDOR_IDS` set: the seven drivers #149 removes and
   `nxp,pca9548` (awaiting a ruling). A second test fails if an id in that set no
   longer ships, so the set must shrink with #149.
+
+- **`shal check` — conformance from the command line** (#148, ADK R6) —
+  `shal check <compatible|module:Class> [--topology t.yaml] [--json]` runs the
+  existing `conformance.check_driver` (what it checks is unchanged). `--json`
+  prints the report (`compatible`, `ok`, `problems`, `warnings`, `checked`) on
+  stdout; without it, the same report as text. Exit 0 when `problems` is empty
+  (warnings never fail), 1 when it is not, 2 when the check cannot run (unknown
+  compatible, bad `module:Class`, import failure, missing topology) — a message
+  on stderr, never a traceback. `module:Class` imports from the cwd, so an
+  unpackaged `driver.py` is `shal check driver:MyThing`; an unregistered class is
+  registered for that one process so its catalog entry and `--topology` resolve.
 - **`shal.record` — one test-result shape for the bench and the floor** (#141,
   D22, `record.md`) — a new module `src/shal/record.py` holding the record shape
   **once**, so `pytest-shal`, Bricks and AOS stop writing three different things.
