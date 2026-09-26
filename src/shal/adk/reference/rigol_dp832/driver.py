@@ -60,8 +60,7 @@ class RigolDp832(Driver, PowerSupply):
     def read_current(self) -> float:
         return float(self._query(f":MEAS:CURR? CH{self.ch}"))
 
-    @op("Enable or disable this channel's output (energizes hardware).",
-        side_effect="actuator")
+    @op("Enable or disable this channel's output (energizes hardware).")
     def output(self, on: bool) -> None:
         self._write(f":OUTP CH{self.ch},{'ON' if on else 'OFF'}")
 
