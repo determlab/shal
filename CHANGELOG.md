@@ -14,6 +14,17 @@ All notable changes to this project are documented here. The format follows
 ## [Unreleased]
 
 ### Added
+- **`shal,sim-sensor` — a device that ships, so a bare install has something to
+  read** (#156, R10 in `adk.md` §3.6) — a `TemperatureSensor` under `shal,sim-i2c`,
+  its model and class next to the bus in `buses/sim.py`. Its reading drifts, so two
+  reads differ (the live value is the model's state), and it has one `config` op,
+  `set_target`, which stops at the gate. It wraps no part: it binds only under a
+  `shal,sim-i2c` bus and fails the load anywhere else. `ApprovalDenied` now says
+  how to approve (`with shal.approver(...)` in Python, or an MCP host via
+  `shal mcp`). A test asserts every id `shal.catalog()` lists is `shal,*` (D1),
+  except an explicit `KNOWN_VENDOR_IDS` set: the seven drivers #149 removes and
+  `nxp,pca9548` (awaiting a ruling). A second test fails if an id in that set no
+  longer ships, so the set must shrink with #149.
 - **`shal check` — conformance from the command line** (#148, ADK R6) —
   `shal check <compatible|module:Class> [--topology t.yaml] [--json]` runs the
   existing `conformance.check_driver` (what it checks is unchanged). `--json`

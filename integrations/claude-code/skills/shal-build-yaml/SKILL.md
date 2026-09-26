@@ -32,8 +32,11 @@ root:
    the tree is wrong.
 3. **Pick drivers by `compatible`**. Bundled buses: `shal,local`, `shal,ssh-host`,
    `shal,i2c-cli`, `shal,spi-cli`, `shal,tcp`, `shal,http`, `shal,scpi-raw`,
-   `shal,sim-i2c`, `shal,sim-scpi`, `shal,sim-msg`, `nxp,pca9548` (mux). Bundled
-   device drivers: `ti,tmp102`, `ti,ina219`, `ti,ads1115`, `microchip,mcp9808`,
+   `shal,sim-i2c`, `shal,sim-scpi`, `shal,sim-msg`, `nxp,pca9548` (mux). The sim
+   family's own device: `shal,sim-sensor` (a `TemperatureSensor` whose reading
+   drifts, with one gated `config` op `set_target`; it binds only under
+   `shal,sim-i2c`). Bundled device drivers: `ti,tmp102`, `ti,ina219`,
+   `ti,ads1115`, `microchip,mcp9808`,
    `microchip,mcp23017`, `rigol,dp832`, `keysight,34461a`. The **authoritative,
    always-current** list is `shal.catalog()` (`{"buses": [...], "drivers": [...]}`).
    A driver must be installed (entry point group `shal.drivers`) or explicitly
