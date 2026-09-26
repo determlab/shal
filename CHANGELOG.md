@@ -119,6 +119,11 @@ All notable changes to this project are documented here. The format follows
   that — it's a static metadata check and needs no venv of its own.
 
 ### Fixed
+- **`rigol,dp832` `set_voltage` declares its limits from the DP832 ratings**
+  (#150, R8a in `adk.md` §3.6) — `params=` bounds `volts` to 0-30 V (CH1/CH2),
+  and `op_limits()` narrows CH3 to 0-5 V (Rigol DP800 Series datasheet). A value
+  above the channel's rating is a `LimitError` before any bus I/O, and
+  `shal check rigol,dp832` no longer warns.
 - **Including a `use:` template file now fails loudly instead of loading
   nothing** (#137, D21) — an included file with `template:` and no `root:`
   (a board meant for `use:`, not a topology) used to pass schema and merge
