@@ -136,6 +136,9 @@ All notable changes to this project are documented here. The format follows
   is written `calls: []` and reads back `()`. Records already written with
   `calls: []` read back unchanged; no migration. A `calls` that is not a list
   is still a `RecordError`.
+- **The `jig` sample writes `calls=None`** (#222). Its loop does not collect
+  SHAL calls, so each record now says "not collected" and the record file has
+  no `calls` key, instead of `calls: []` ("collected, and there were none").
 
 ### Fixed
 - **A device refusal now leaves an outcome audit record** (#198). When the body of
