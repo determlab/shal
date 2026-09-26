@@ -30,6 +30,15 @@ PyPI, not this commit. So the README's pip line is run as printed, with the
 package name ``pyshal`` replaced by the path of the wheel built from this
 commit. Nothing else in any command is changed.
 
+**Published mode (shal#188): no substitution at all.** With ``--published``
+instead of ``--dist``, the README's pip line runs verbatim, so it installs
+whatever PyPI serves today — what a reader actually downloads. That is the
+only difference between the two modes. Right after the pip line passes, the
+script reads the installed ``pyshal`` version from the venv's own metadata
+(``importlib.metadata``) and prints it; the pass line, a failure line
+("README Quick Start FAILED against published pyshal 0.2.2: ...") and the
+``$GITHUB_STEP_SUMMARY`` entry all name that version.
+
 **Pass/fail.** A step fails when its command exits with a code other than
 the expected one, or when its output does not match the output the README
 shows. The expected exit code is 0, unless the first paragraph after the
@@ -53,6 +62,7 @@ when that is set. No such read in the Quick Start fails the run.
 
 Usage:
     run_readme.py --venv VENV_DIR --dist DIST_DIR [--readme README.md]
+    run_readme.py --venv VENV_DIR --published [--readme README.md]
 
 ``VENV_DIR`` is a clean venv (created by the caller, nothing installed).
 ``DIST_DIR`` must hold exactly one wheel. Exit 0 when every step passes,
@@ -122,6 +132,12 @@ class Run:
     exit_code: int = 0
     installs: bool = False  # the README's `pip install` (timer start)
     reads: bool = False  # its shown output holds a reading (timer stop)
+
+
+@dataclass
+class Installed:
+    """What the README's pip line put in the venv (published mode only)."""
+    version: str | None = None
 
 
 def quickstart_blocks(readme: str) -> list[Block]:
@@ -272,8 +288,27 @@ def venv_bin(venv: Path) -> Path:
     return venv / ("Scripts" if os.name == "nt" else "bin")
 
 
-def run_quickstart(readme: Path, venv: Path, wheel: Path, workdir: Path) -> float:
-    """Run every step; return seconds from pip install to the first good read."""
+def installed_version(venv: Path, env: dict[str, str]) -> str:
+    """The ``pyshal`` version in the venv, from the venv's own package metadata."""
+    py = shutil.which("python", path=str(venv_bin(venv)))
+    if py is None:
+        raise ReadmeError(f"no python in {venv_bin(venv)}")
+    proc = subprocess.run(
+        [py, "-c", f"from importlib.metadata import version; print(version({PACKAGE!r}))"],
+        env=env, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, timeout=60)
+    out = proc.stdout.decode("utf-8", errors="replace").strip()
+    if proc.returncode != 0 or not out:
+        raise StepFailed(f"the pip line passed but {PACKAGE} is not installed in the venv:\n{out}")
+    return out
+
+
+def run_quickstart(readme: Path, venv: Path, wheel: Path | None, workdir: Path,
+                   installed: Installed | None = None) -> float:
+    """Run every step; return seconds from pip install to the first good read.
+
+    ``wheel=None`` is published mode: the pip line runs verbatim (PyPI), and the
+    version it installed is stored in ``installed`` as soon as it is known.
+    """
     steps = plan(quickstart_blocks(readme.read_text(encoding="utf-8")))
     env = dict(os.environ)
     env.pop("PYTHONPATH", None)
@@ -289,11 +324,12 @@ def run_quickstart(readme: Path, venv: Path, wheel: Path, workdir: Path) -> floa
             (workdir / s.name).parent.mkdir(parents=True, exist_ok=True)
             (workdir / s.name).write_text(s.content, encoding="utf-8")
             continue
-        argv = substitute_wheel(s.argv, wheel) if s.installs else list(s.argv)
+        swap = s.installs and wheel is not None
+        argv = substitute_wheel(s.argv, wheel) if s.installs and wheel else list(s.argv)
         exe = shutil.which(argv[0], path=env["PATH"])
         if exe is None:
             raise ReadmeError(f"README line {s.line}: `{argv[0]}` not found on PATH")
-        print(f"$ {s.raw}" + (f"    [run as: {shlex.join(argv)}]" if s.installs else ""))
+        print(f"$ {s.raw}" + (f"    [run as: {shlex.join(argv)}]" if swap else ""))
         if s.installs and t0 is None:
             t0 = time.monotonic()
         proc = subprocess.run([exe, *argv[1:]], cwd=workdir, env=env, stdout=subprocess.PIPE,
@@ -308,6 +344,9 @@ def run_quickstart(readme: Path, venv: Path, wheel: Path, workdir: Path) -> floa
                 _norm(s.expected), _norm(out), "README shows", "command printed", lineterm=""))
             raise StepFailed(f"README line {s.line}: `{s.raw}` printed something other than "
                              f"the README shows\n{diff}")
+        if s.installs and wheel is None and installed is not None and installed.version is None:
+            installed.version = installed_version(venv, env)
+            print(f"--- installed from PyPI: {PACKAGE} {installed.version}")
         if s.reads and first_read is None and t0 is not None:
             first_read = time.monotonic() - t0
     if first_read is None:
@@ -318,7 +357,10 @@ def run_quickstart(readme: Path, venv: Path, wheel: Path, workdir: Path) -> floa
 def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(description=__doc__.split("\n", 1)[0])
     ap.add_argument("--venv", type=Path, required=True, help="a clean venv to install into")
-    ap.add_argument("--dist", type=Path, required=True, help="dir holding exactly one wheel")
+    source = ap.add_mutually_exclusive_group(required=True)
+    source.add_argument("--dist", type=Path, help="dir holding exactly one wheel")
+    source.add_argument("--published", action="store_true",
+                        help="run the README's pip line verbatim, against PyPI (#188)")
     ap.add_argument("--readme", type=Path,
                     default=Path(__file__).resolve().parents[2] / "README.md")
     args = ap.parse_args(argv)
@@ -326,6 +368,8 @@ def main(argv: list[str] | None = None) -> int:
         sys.stdout.reconfigure(encoding="utf-8", errors="replace")  # type: ignore[union-attr]
     except Exception:
         pass
+    if args.published:
+        return _main_published(args.readme, args.venv)
     wheels = sorted(args.dist.glob("*.whl"))
     if len(wheels) != 1:
         print(f"FAIL: {args.dist} must hold exactly one wheel, found {len(wheels)}")
@@ -344,6 +388,29 @@ def main(argv: list[str] | None = None) -> int:
         with open(summary, "a", encoding="utf-8") as f:
             f.write(f"{line} ({sys.platform}).\n")
     return 0
+
+
+def _main_published(readme: Path, venv: Path) -> int:
+    """Published mode: the README as printed, pip line included; every result names the version."""
+    workdir = Path(tempfile.mkdtemp(prefix="shal-quickstart-"))
+    print(f"Quick Start from {readme} in {workdir} (venv {venv}), pip line verbatim (PyPI)")
+    installed = Installed()
+    try:
+        secs = run_quickstart(readme, venv.resolve(), None, workdir, installed)
+    except (ReadmeError, StepFailed) as e:
+        what = f"published {PACKAGE} {installed.version or '(version unknown: not installed)'}"
+        line, ok = f"README Quick Start FAILED against {what}: {e}", False
+    else:
+        line = (f"README Quick Start passed against published {PACKAGE} {installed.version}: "
+                f"`pip install` to first successful read in {secs:.1f} s")
+        ok = True
+    print(line)
+    summary = os.environ.get("GITHUB_STEP_SUMMARY")
+    if summary:  # the first line only: a failing step's diff stays in the log
+        head = line.split("\n", 1)[0]
+        with open(summary, "a", encoding="utf-8") as f:
+            f.write(f"{head} ({sys.platform}).\n")
+    return 0 if ok else 1
 
 
 if __name__ == "__main__":
