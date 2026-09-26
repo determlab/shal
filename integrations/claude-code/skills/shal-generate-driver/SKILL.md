@@ -46,9 +46,13 @@ NO range checks — the framework enforces your declaration.
 
 SCPI specifics: `self.bus.exchange(self.addr, {"scpi": cmd, "query": True})
 ["reply"]` for queries, omit `query` for writes; channel/instrument selection
-comes from `self.addr`. HTTP/REST specifics: the message dict you pass to
+comes from `self.addr`. HTTP/REST specifics: a plain message dict you pass to
 `exchange(self.addr, msg)` is POSTed to the service path = your node address;
 shape it after the API's request schema, read the reply per the response schema.
+For any other request (a `GET`, query params, a path below the address) send the
+envelope `{"method", "path", "query", "headers", "json"}` and read
+`reply["status"]` / `reply["json"]` (SDK §3). Never put a token in the driver —
+it is the bus node's `config.headers` in the topology.
 
 ## Step 3 — Write the sim model from the SAME doc
 

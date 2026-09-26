@@ -131,7 +131,10 @@ root:
   my_device: {id: thing, driver: 'community,my-thing', address: '192.168.1.50'}
 ```
 `shal.load()` also accepts this as an in-memory dict. Secrets go via `${ENV_VAR}` in a
-`config:` block — never literal in the file, never in logs.
+`config:` block — never literal in the file, never in logs. For an HTTP API, the token
+is a header on the `shal,http` bus node — `config: {headers: {Authorization: "Bearer
+${GH_TOKEN}"}}` — never in the driver; the driver sends `{"method": "GET", "path":
+"runs", "query": {...}}` and reads `reply["json"]` (SDK §3, the request envelope).
 
 A cloud device (no IP to give) still needs an `address` — every node needs exactly one
 of `address` | `routes` | `to`, even if `config:` holds the real connection details:

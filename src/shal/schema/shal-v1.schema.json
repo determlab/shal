@@ -103,6 +103,11 @@
           "type": "object",
           "description": "Bus/driver-specific parameters. String values of the form ${ENV_VAR} resolve from the environment at load (the documented home for secrets); literals are the local-file convenience. The reserved `limits` key is installation safety policy consumed by the framework, never by the driver.",
           "properties": {
+            "headers": {
+              "type": "object",
+              "description": "shal,http: HTTP headers the BUS adds to every request (credentials live here, never in a driver). ${ENV_VAR} references resolve at bind, also inside a value (\"Bearer ${TOKEN}\"). They win over an envelope header of the same name and are never forwarded across a redirect.",
+              "additionalProperties": { "type": "string" }
+            },
             "limits": {
               "type": "object",
               "description": "Installation operating limits: op name -> param name -> JSON-Schema constraint fragment. May only TIGHTEN the driver's declared device limits; widening fails the load.",
