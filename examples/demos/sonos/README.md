@@ -8,9 +8,12 @@ reviewed: 2026-06-23
 # Sonos over SHAL (example)
 
 Controls a Sonos speaker through SHAL by wrapping the [`soco`](https://github.com/SoCo/SoCo)
-library. Nothing in `shal/` is needed: the driver registers itself via
-`@shal.register` (the documented out-of-tree path; a published device package
-would use the `shal.drivers` entry-point group instead).
+library. The driver is the ADK reference `sonos` (#152): it ships in the wheel
+as guide material at `src/shal/adk/reference/sonos/` (`shal docs --example sonos`
+prints it), and `sonos_driver.py` here only imports it, so there is one copy. It
+registers itself via `@registry.register` when imported (the documented
+out-of-tree path; a published device package would use the `shal.drivers`
+entry-point group instead).
 
 This is a **"wrap an existing Python library" driver** — the smallest kind of
 SHAL driver: a root driver (`kind = None`, no SHAL bus) that calls a third-party
@@ -21,7 +24,7 @@ library.
 
 | File | Role |
 |---|---|
-| `sonos_driver.py` | `sonos,speaker` — the driver; implements the `MediaPlayer` capability. Sim-first (`address: sim` needs no `soco`). |
+| `sonos_driver.py` | imports `sonos,speaker` from the ADK reference (`shal.adk.reference.sonos`); implements the `MediaPlayer` capability. Sim-first (`address: sim` needs no `soco`). |
 | `sonos_sim.yaml` / `demo_sim.py` | runs the full stack with zero hardware or dependencies — **tested in CI** |
 | `sonos.yaml` | topology for a real speaker (set its IP) |
 
@@ -68,7 +71,8 @@ shal mcp examples/demos/sonos/sonos.yaml --drivers examples/demos/sonos/
   directly, no SHAL bus. Bound by its `compatible` string `sonos,speaker`.
 - **Capability** — `MediaPlayer` Protocol; agent/user code depends on it, not the
   driver class.
-- **Sim-first** — `address: sim` selects a built-in in-memory `soco` stand-in, so
+- **Sim-first** — `address: sim` selects the in-memory `soco` stand-in in the
+  reference's `sim.py`, so
   the whole flow validates without hardware or the `soco` dependency.
 - **Side effects** — playback/volume are `side_effect="write"` (benign, reversible,
   instant) so an agent drives them without a per-call approval prompt; reads are

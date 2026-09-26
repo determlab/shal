@@ -1,0 +1,11 @@
+# One Sonos speaker, run as its twin: `address: sim` selects the stand-in in
+# sim.py, so this needs no speaker and no `soco`. For a real speaker, put its IP
+# here and `pip install soco`. The driver is not registered by `import shal`,
+# so name its two files when you run it (D5):
+#   shal probe topology.yaml --drivers driver.py --drivers sim.py
+shal_version: 1
+root:
+  living_room:
+    id: sonos
+    driver: sonos,speaker
+    address: sim

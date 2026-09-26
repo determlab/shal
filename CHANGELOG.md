@@ -14,6 +14,20 @@ All notable changes to this project are documented here. The format follows
 ## [Unreleased]
 
 ### Added
+- **The ADK reference set gains two: `sonos` and `order_service`** (#152, R7 in
+  `adk.md` §3.6 / §3.7) — five references now, each the same four files, unregistered.
+  `sonos` (`sonos,speaker`) is the root driver that wraps a library: `kind = None`,
+  `soco` imported lazily and only for a real speaker, and `address: sim` builds the
+  stand-in in its `sim.py` — its test needs no speaker and no `soco`. It came from
+  `examples/demos/sonos/`, whose `sonos_driver.py` now only imports the reference, so
+  there is one copy. `order_service` (`acme,order-service`) is a software node under
+  `shal,http`: `get_order` is a `GET` through the request envelope (`none`),
+  `place_order` a `write` (bounded `qty`) that `cancel_order` undoes, and
+  `cancel_order` — which this driver cannot undo — is gated (`actuator`). Its twin is
+  a `@msg_sim_model` in its own `sim.py`, registered only when that file is imported,
+  so core `sim_msg.py` still registers nothing and `import shal` stays clean. `shal
+  check` on both: zero problems, zero warnings. The mesh demo keeps its own
+  `acme,*` drivers (a different protocol, served by its real processes).
 - **The agent guide shows one real failing `shal check` report, and its fix** (#154,
   R9 in `adk.md` §3.6) — the ADK section of `AGENT_GUIDE.md` gains "A failing check,
   and its fix": `shal check my_driver:MyThing --json` on a driver whose `get_volume`

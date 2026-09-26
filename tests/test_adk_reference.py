@@ -1,4 +1,4 @@
-"""The ADK reference set (#149, ADK §3.6 / R7): three drivers shipped inside the
+"""The ADK reference set (#149, #152, ADK §3.6 / R7): drivers shipped inside the
 Authoring Kit as guide material — not registered, not imported by `import shal`,
 absent from `catalog()` — each a driver, its sim twin, a test and a topology.
 """
@@ -13,11 +13,14 @@ import pytest
 
 from shal import cli
 from shal.adk.reference.mcp23017.driver import Mcp23017
+from shal.adk.reference.order_service.driver import OrderService
 from shal.adk.reference.rigol_dp832.driver import RigolDp832
+from shal.adk.reference.sonos.driver import SonosSpeaker
 from shal.adk.reference.tmp102.driver import Tmp102
 from shal.conformance import check_driver
 
-REFS = {"tmp102": Tmp102, "mcp23017": Mcp23017, "rigol_dp832": RigolDp832}
+REFS = {"tmp102": Tmp102, "mcp23017": Mcp23017, "rigol_dp832": RigolDp832,
+        "sonos": SonosSpeaker, "order_service": OrderService}
 
 
 def _ref_dir(name: str) -> Path:
@@ -50,12 +53,14 @@ def test_each_reference_test_file_passes_where_it_lives(name):
 
 def test_import_shal_does_not_import_or_register_the_references():
     code = ("import json, sys, shal; c = shal.catalog(); "
+            "from shal.buses.sim_msg import MSG_SIM_MODELS; "
             "print(json.dumps({'mods': [m for m in sys.modules if m.startswith('shal.adk')],"
-            " 'ids': [e['compatible'] for e in c['drivers']]}))")
+            " 'ids': [e['compatible'] for e in c['drivers']], 'msg': list(MSG_SIM_MODELS)}))")
     out = json.loads(subprocess.run([sys.executable, "-c", code], capture_output=True,
                                     text=True, check=True).stdout)
     assert out["mods"] == []
-    assert not {"ti,tmp102", "microchip,mcp23017", "rigol,dp832"} & set(out["ids"])
+    assert not {cls.compatible for cls in REFS.values()} & set(out["ids"])
+    assert out["msg"] == []          # the order-service twin lives in its sim.py, not core
 
 
 def test_no_device_driver_entry_point():
@@ -64,7 +69,8 @@ def test_no_device_driver_entry_point():
     assert names and all(n.startswith("shal,") for n in names), names
 
 
-def test_docs_list_names_the_three(capsys):
+def test_docs_list_names_every_reference(capsys):
+    # names, not a count: more references join the set (#157 adds sqlite)
     assert cli.main(["docs", "--list"]) == 0
     out = capsys.readouterr().out
     for name, cls in REFS.items():
@@ -72,12 +78,13 @@ def test_docs_list_names_the_three(capsys):
     assert "shal docs --example" in out
 
 
-def test_docs_example_prints_the_four_files(capsys):
-    assert cli.main(["docs", "--example", "tmp102"]) == 0
+@pytest.mark.parametrize("name", REFS)
+def test_docs_example_prints_the_four_files(capsys, name):
+    assert cli.main(["docs", "--example", name]) == 0
     out = capsys.readouterr().out
     heads = [ln.split()[2] for ln in out.splitlines() if ln.startswith("# ==== ")]
-    assert heads == ["driver.py", "sim.py", "test_tmp102.py", "topology.yaml"]
-    assert (_ref_dir("tmp102") / "driver.py").read_text(encoding="utf-8").strip() in out
+    assert heads == ["driver.py", "sim.py", f"test_{name}.py", "topology.yaml"]
+    assert (_ref_dir(name) / "driver.py").read_text(encoding="utf-8").strip() in out
     assert "--drivers driver.py --drivers sim.py" in out
 
 
