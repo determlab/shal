@@ -6,6 +6,10 @@ include CHANGELOG.md
 include CONTRIBUTING.md
 include pyproject.toml
 recursive-include src/shal *.json *.md py.typed
+# The samples' topology files (#206). include_package_data (setuptools' default
+# with pyproject.toml) puts what this manifest lists inside a package into the
+# wheel too, so a sample's .yaml ships without a package-data line.
+recursive-include src/shal/samples *.yaml
 recursive-include docs *.md
 prune docs/design          # design/decision docs live in-repo only, not in the package
 

@@ -56,9 +56,9 @@ def _add_drivers_arg(p: argparse.ArgumentParser) -> None:
                         "or a directory of them (repeatable).")
 
 
-# `--json` on probe / tools / docs --list (shal#185). One JSON document on stdout,
-# the same exit code as without --json, and every message still on stderr (as
-# `shal call --json` does). An error is `{"ok": false, "error": <the message>}`.
+# `--json` on probe / tools / docs --list (shal#185) and docs --samples (#206). One
+# JSON document on stdout, the same exit code as without --json, and every message
+# still on stderr (as `shal call --json` does). An error is `{"ok": false, "error": <the message>}`.
 def _json_out(payload: dict) -> None:
     print(json.dumps(payload, indent=2, default=str))
 
@@ -627,19 +627,130 @@ def _cmd_docs_example(name: str) -> int:
     return 0
 
 
+# Samples (#206): small programs for a PERSON deciding whether SHAL does their job.
+# The ADK references above are for a cold agent writing a driver. Same mechanism,
+# separate folders, separate flags: --list/--example never show a sample, and
+# --samples/--sample never show a reference.
+#: a sample folder's file for the `samples` CI job, not for the person: not printed,
+#: not written by --to (see dev/samples/run_samples.py for its keys)
+_SAMPLE_EXPECT = "expect.json"
+
+
+def _samples() -> dict[str, object]:
+    """The samples: name -> its folder in the installed package. Every subfolder of
+    ``shal/samples`` holding a ``run.py`` is one; found on disk, never imported."""
+    from importlib.resources import files
+    root = files("shal") / "samples"
+    if not root.is_dir():
+        return {}
+    return {d.name: d for d in sorted(root.iterdir(), key=lambda d: d.name)
+            if d.is_dir() and (d / "run.py").is_file()}
+
+
+def _sample_files(sample) -> list:
+    """The files of one sample, ``run.py`` first, then the rest by name."""
+    picked = [f for f in sample.iterdir() if f.is_file() and f.name != _SAMPLE_EXPECT
+              and not f.name.endswith((".pyc", ".pyo"))]
+    return sorted(picked, key=lambda f: (f.name != "run.py", f.name))
+
+
+def _sample_summary(sample) -> str:
+    """The first line of ``run.py``'s module docstring, read as text (no import)."""
+    import ast
+    doc = ast.get_docstring(ast.parse((sample / "run.py").read_text(encoding="utf-8")))
+    return (doc or "").strip().splitlines()[0] if doc else ""
+
+
+def _cmd_docs_samples(as_json: bool = False) -> int:
+    samples = _samples()
+    if as_json:
+        _json_out({"ok": True, "samples": [
+            {"name": name, "summary": _sample_summary(s), "folder": str(s),
+             "files": [f.name for f in _sample_files(s)],
+             "print_with": f"shal docs --sample {name}",
+             "write_with": f"shal docs --sample {name} --to <DIR>"}
+            for name, s in samples.items()]})
+        return 0
+    print("Samples — small programs that show what SHAL does. Each runs on a simulator.")
+    print()
+    for name, s in samples.items():
+        print(f"  {name:<14} {_sample_summary(s)}")
+    print()
+    print("Print one:  shal docs --sample <name>")
+    print("Write one:  shal docs --sample <name> --to <DIR>   (it prints the command that runs it)")
+    return 0
+
+
+def _cmd_docs_sample(name: str, to: str | None) -> int:
+    samples = _samples()
+    sample = samples.get(name)
+    if sample is None:
+        print(f"shal docs: no sample named '{name}' "
+              f"(samples: {', '.join(samples) or 'none'})", file=sys.stderr)
+        return 2
+    files = _sample_files(sample)
+    if to is not None:
+        return _write_sample(name, files, to)
+    print(f"# Sample '{name}' — {_sample_summary(sample)}")
+    print(f"# Write it to a folder and run it:  shal docs --sample {name} --to <DIR>")
+    for f in files:
+        print()
+        print(f"# ==== {f.name} " + "=" * max(4, 60 - len(f.name)))
+        print(f.read_text(encoding="utf-8").rstrip())
+    return 0
+
+
+def _write_sample(name: str, files: list, to: str) -> int:
+    """``--to DIR``: write the sample's files into DIR (made if missing) and print the
+    one command that runs it on stdout — nothing else goes there. DIR must be empty:
+    a sample never overwrites a file, and never mixes into someone's folder."""
+    from pathlib import Path
+    dest = Path(to)
+    if dest.exists() and not dest.is_dir():
+        print(f"shal docs: cannot write sample '{name}' to {to}: it is a file, "
+              f"not a folder", file=sys.stderr)
+        return 1
+    if dest.is_dir() and any(dest.iterdir()):
+        print(f"shal docs: cannot write sample '{name}' to {to}: the folder is not "
+              f"empty, and a sample never overwrites or mixes with your files. "
+              f"Give an empty or new folder.", file=sys.stderr)
+        return 1
+    dest.mkdir(parents=True, exist_ok=True)
+    for f in files:
+        (dest / f.name).write_bytes(f.read_bytes())
+    run_py = str(dest / "run.py")
+    # pastes into bash, PowerShell and cmd when it can (see _shell_token); a path
+    # with any other character is quoted as the best a single line can do
+    token = _shell_token("./" + run_py if run_py.startswith("-") else run_py)
+    print(f"shal docs: wrote sample '{name}' to {to}: "
+          f"{', '.join(f.name for f in files)}", file=sys.stderr)
+    print("python " + (token or f'"{run_py}"'))
+    return 0
+
+
 def _cmd_docs(args) -> int:
     """Print an in-package authoring doc so a pip-only agent has it offline: the
     provider-neutral 'add a device' guide by default, or the complete Driver & Bus SDK
     contract with --sdk. Both ship in the wheel as package data (#55, #97).
-    ``--list`` names the ADK reference set and ``--example <name>`` prints one (#149)."""
+    ``--list`` names the ADK reference set and ``--example <name>`` prints one (#149).
+    ``--samples`` names the samples and ``--sample <name>`` prints one, or writes it
+    with ``--to DIR`` (#206)."""
     from importlib.resources import files
-    if getattr(args, "json", False) and not getattr(args, "list", False):
-        print("shal docs: --json works only with --list", file=sys.stderr)
+    if getattr(args, "json", False) and not (getattr(args, "list", False)
+                                             or getattr(args, "samples", False)):
+        print("shal docs: --json works only with --list or --samples", file=sys.stderr)
+        return 2
+    if getattr(args, "to", None) is not None and not getattr(args, "sample", None):
+        print("shal docs: --to works only with --sample <name>", file=sys.stderr)
         return 2
     if getattr(args, "list", False):
         return _cmd_docs_list(getattr(args, "json", False))
     if getattr(args, "example", None):
         return _cmd_docs_example(args.example)
+    if getattr(args, "samples", False):
+        return _cmd_docs_samples(getattr(args, "json", False))
+    if getattr(args, "sample", None):
+        return _cmd_docs_sample(args.sample, getattr(args, "to", None))
     doc = "SDK.md" if getattr(args, "sdk", False) else "AGENT_GUIDE.md"
     print(_strip_front_matter((files("shal") / doc).read_text(encoding="utf-8")))
     return 0
@@ -747,7 +858,21 @@ def main(argv: list[str] | None = None) -> int:
                '--drivers sim.py",\n'
                '                   "print_with": "shal docs --example tmp102"}]}\n'
                "  A reference whose address is its twin (sqlite) has no sim.py.\n"
-               "  --json works only with --list (exit 2 otherwise).")
+               "\n"
+               "--samples --json prints one JSON document on stdout:\n"
+               '  {"ok": true,\n'
+               '   "samples": [{"name": "hello",\n'
+               '                "summary": "<first line of the run.py docstring>",\n'
+               '                "folder": "<its folder in the installed package>",\n'
+               '                "files": ["run.py", "topology.yaml"],\n'
+               '                "print_with": "shal docs --sample hello",\n'
+               '                "write_with": "shal docs --sample hello --to <DIR>"}]}\n'
+               "  --json works only with --list or --samples (exit 2 otherwise).\n"
+               "\n"
+               "--sample NAME --to DIR writes the sample's files into DIR and prints\n"
+               "  the one command that runs it, alone on stdout (e.g. python DIR/run.py).\n"
+               "  DIR may be new; an existing DIR must be empty, or nothing is written\n"
+               "  (exit 1). An unknown NAME is exit 2.")
     dg = d.add_mutually_exclusive_group()
     dg.add_argument("--sdk", action="store_true",
                     help="print the full Driver & Bus SDK — the complete authoring contract")
@@ -755,8 +880,15 @@ def main(argv: list[str] | None = None) -> int:
                     help="list the ADK reference drivers (examples to copy)")
     dg.add_argument("--example", metavar="NAME",
                     help="print one ADK reference: driver, sim twin, test, topology")
+    dg.add_argument("--samples", action="store_true",
+                    help="list the samples (small programs that show what SHAL does)")
+    dg.add_argument("--sample", metavar="NAME",
+                    help="print one sample, or write it to a folder with --to")
+    d.add_argument("--to", metavar="DIR",
+                   help="with --sample: write its files into DIR (new or empty) and "
+                        "print the command that runs it")
     d.add_argument("--json", action="store_true",
-                   help="with --list: print the references as JSON on stdout")
+                   help="with --list or --samples: print the list as JSON on stdout")
     d.set_defaults(func=_cmd_docs)
 
     c = sub.add_parser(

@@ -90,6 +90,13 @@ if it runs.
   absent from `catalog()`. `shal docs --list` / `shal docs --example <name>` print them.
   The core suite imports them in `tests/conftest.py`; each reference's own test runs in
   its own process (`tests/test_adk_reference.py`)
+- `src/shal/samples/` — the samples (#206): small programs for a **person** deciding
+  whether SHAL does their job (the references above are for a cold agent). Each
+  subfolder with a `run.py` is one; `hello` is the placeholder. Package data like the
+  references (an implicit namespace package, no `__init__.py`); the `.yaml` files ship
+  through `MANIFEST.in`. `shal docs --samples` / `--sample <name> [--to DIR]` print or
+  write them; CI's `samples` job runs each from the wheel (`dev/samples/run_samples.py`),
+  and an optional `expect.json` in the folder names a non-zero exit it must end with
 - **No device driver ships registered.** `catalog()` on a bare install lists only `shal,*`
   (enforced by `tests/test_sim_sensor.py`)
 - `src/shal/schema/shal-v1.schema.json` — the canonical topology schema

@@ -69,13 +69,16 @@ write did not.
   drivers; `shal docs --example tmp102` prints one (driver, sim twin, test, topology).
   A new driver starts from one of these. [docs/CATALOG.md](docs/CATALOG.md) is where
   a new driver goes and what to name it (its `vendor,part` compatible).
+- `shal docs --samples` — the samples: small programs a person runs to see what SHAL
+  does. `shal docs --sample <name> --to DIR` writes one into a new or empty folder and
+  prints the one command that runs it. Samples are not references, and not in `--list`.
 - `shal mcp sim.yaml` — serve the same tools to an MCP host over stdio. Needs the
   extra: `pip install "pyshal[mcp] @ git+https://github.com/determlab/shal"`.
 - Python: `hal = shal.load("sim.yaml")`, then `hal.tool_schemas()` and
   `hal.call_tool("ambient_temp__read_celsius", {})` → `{'ok': True, 'result': 26.33}`.
 
-`--json`: `shal probe`, `shal tools`, `shal docs --list`, `shal call` and `shal check`
-take it. Each prints one JSON document on stdout; `--help` shows its shape. On an
+`--json`: `shal probe`, `shal tools`, `shal docs --list`, `shal docs --samples`,
+`shal call` and `shal check` take it. Each prints one JSON document on stdout; `--help` shows its shape. On an
 error the exit code is the same, the message is on stderr, and stdout holds
 `{"ok": false, "error": ...}`. `shal probe --json` lists the writes it did not run,
 each with the `shal call` line that runs it.
