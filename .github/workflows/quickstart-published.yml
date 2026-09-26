@@ -1,0 +1,42 @@
+name: Quickstart (published)
+
+# The README's Quick Start against what a reader actually downloads (#188).
+#
+# The `quickstart` job in ci.yml (#159) installs the wheel built from the
+# commit: it proves the code works, not that the download does. On 2026-09-27
+# the README's first screen failed for every real stranger (PyPI had 0.2.2,
+# without `shal,sim-sensor`) while CI stayed green. This job runs the same
+# script against PyPI: the README's `pip install pyshal` line, verbatim. The
+# two jobs differ only in where the package comes from (`--published` instead
+# of `--dist`). A red run means "the README promises something the published
+# package does not do"; the failure line and the job summary name the version
+# pip installed, and a green run records the seconds from pip install to the
+# first read, the same number #159 records.
+#
+# Its own workflow, not a job in ci.yml: a PR or a push cannot change what
+# PyPI holds, so this never runs on pull_request/push; and it runs daily, while
+# ci.yml's schedule is weekly. Putting a daily cron in ci.yml would run its
+# whole test matrix every day too.
+
+on:
+  # 05:43 UTC daily — off the hour, where GitHub's scheduler is least congested.
+  schedule:
+    - cron: "43 5 * * *"
+  workflow_dispatch:
+
+jobs:
+  quickstart-published:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Clean venv (no dev deps, nothing installed)
+        run: python -m venv "${{ runner.temp }}/quickstart-venv"
+      - name: README Quick Start, as printed (pip line installs pyshal from PyPI)
+        run: python dev/quickstart/run_readme.py --venv "${{ runner.temp }}/quickstart-venv" --published
