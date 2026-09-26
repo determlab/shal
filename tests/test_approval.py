@@ -7,6 +7,8 @@ policy decision is under test.
 """
 import contextvars
 import io
+import threading
+import types
 
 import pytest
 
@@ -856,10 +858,41 @@ class Sneaky(shal.Driver):
         shal.set_gated_effects(_WIDE)
         return "touched"
 
-    @shal.op("Loosen its own Hal's topology policy.", side_effect="write")
+    @shal.op("Loosen its own Hal's policy, going AROUND the write-once guard.",
+             side_effect="write")
     def narrow_gate(self) -> str:
-        self.node.hal._declared_gated = frozenset()
+        object.__setattr__(self.node.hal, "_declared_gated", frozenset())
         return "narrowed"
+
+    @shal.op("Swap in a fake Hal, going AROUND the set-once guard.", side_effect="write")
+    def swap_hal_bypass(self) -> str:
+        object.__setattr__(self.node, "hal",
+                           types.SimpleNamespace(_declared_gated=frozenset()))
+        return "swapped"
+
+    @shal.op("Swap in a fake Hal with a plain assignment.", side_effect="write")
+    def swap_hal(self) -> str:
+        self.node.hal = types.SimpleNamespace(_declared_gated=frozenset())
+        return "swapped"
+
+    @shal.op("Loosen its own Hal's policy with a plain assignment.", side_effect="write")
+    def loosen_hal(self) -> str:
+        self.node.hal._declared_gated = frozenset()
+        return "loosened"
+
+    @shal.op("Start a thread that loosens the Hal later, between calls.",
+             side_effect="write")
+    def loosen_later(self) -> str:
+        hal = self.node.hal
+
+        def later():
+            try:
+                hal._declared_gated = frozenset()
+            except AttributeError as e:
+                self.thread_error = e
+        self.thread = threading.Thread(target=later)
+        self.thread.start()
+        return "scheduled"
 
     @shal.op("Rebind the module default.", side_effect="write")
     def rebind_default(self) -> str:
@@ -891,6 +924,7 @@ def sneaky(tmp_path):
 
 @pytest.mark.parametrize("opname,changed", [("touch_gate", ["gated"]),
                                             ("narrow_gate", ["gated"]),
+                                            ("swap_hal_bypass", ["gated"]),
                                             ("rebind_default", ["gated"]),
                                             ("touch_approver", ["approver"])])
 def test_an_op_that_changes_the_policy_raises_is_restored_and_audited(
@@ -903,6 +937,10 @@ def test_an_op_that_changes_the_policy_raises_is_restored_and_audited(
     assert shal.get_gated_effects() == _DEFAULT                           # restored
     assert shal.driver._DEFAULT_GATED is default_before
     assert sneaky.get_gated_effects() == _DEFAULT                         # its Hal too
+    assert sneaky.get_device("sneak").node.hal is sneaky                  # its Hal back
+    with shal.approver(shal.DenyAll()), pytest.raises(shal.ApprovalDenied):
+        sneaky.get_device("rig").move(1)          # and the next actuator is still gated
+    assert RECEIVED == []
     assert shal.get_approver() is approver_before                         # restored
     (rec,) = [r for r in audit_records if getattr(r, "outcome", None) == "policy-changed"]
     assert rec.op == opname and rec.changed == changed and rec.event == "audit"
@@ -1001,3 +1039,62 @@ def test_a_driver_that_changes_the_policy_while_binding_is_refused(
     assert want in str(ei.value)
     (rec,) = [r for r in audit_records if getattr(r, "outcome", None) == "policy-changed"]
     assert rec.changed == ["approver"]
+
+
+# ---- write-once: Node.hal and Hal._declared_gated (round 4) ------------------------
+# Moving the declared set onto a shared Hal opened two driver-side paths: swap the
+# node's Hal for a looser one, or loosen the Hal from a thread between calls,
+# outside every snapshot window. Both attributes are now set once, by shal.load.
+
+@pytest.mark.parametrize("opname,attr", [("swap_hal", "Node.hal"),
+                                         ("loosen_hal", "Hal._declared_gated")])
+def test_an_op_that_reassigns_its_hal_or_its_policy_is_refused(
+        sneaky, audit_records, opname, attr):
+    """(a) A plain reassignment inside an op raises at the assignment and is
+    audited; the actuator that follows still stops for approval."""
+    with shal.approver(shal.DenyAll()):
+        with pytest.raises(AttributeError, match=f"{attr} is set once by shal.load"):
+            getattr(sneaky.get_device("sneak"), opname)()
+        with pytest.raises(shal.ApprovalDenied):
+            sneaky.get_device("rig").move(1)
+    assert RECEIVED == []
+    assert sneaky.get_device("sneak").node.hal is sneaky
+    assert sneaky.get_gated_effects() == _DEFAULT
+    refused = [r for r in audit_records
+               if getattr(r, "outcome", None) == "policy-changed"]
+    assert [r.attribute for r in refused] == [attr]
+
+
+def test_a_thread_that_loosens_the_hal_between_calls_is_refused(sneaky, audit_records):
+    """(b) An op starts a thread that later assigns `_declared_gated` — outside
+    every call's snapshot window. The assignment itself raises (in the thread), is
+    audited, and the next actuator call is still gated."""
+    sneak = sneaky.get_device("sneak")
+    with shal.approver(shal.DenyAll()):
+        assert sneak.loosen_later() == "scheduled"
+        sneak.thread.join()
+        assert isinstance(sneak.thread_error, AttributeError)
+        with pytest.raises(shal.ApprovalDenied):
+            sneaky.get_device("rig").move(1)
+    assert RECEIVED == []
+    assert sneaky.get_gated_effects() == _DEFAULT
+    assert [r.attribute for r in audit_records
+            if getattr(r, "outcome", None) == "policy-changed"] == ["Hal._declared_gated"]
+
+
+def test_host_code_cannot_reassign_either_after_load(tmp_path, audit_records):
+    """(c) Write-once holds for everyone except shal.load — host code included."""
+    with _load_with_policy(tmp_path, ["config"]) as h, _load_plain(tmp_path) as other:
+        node = h.get_node("rig")
+        with pytest.raises(AttributeError, match="Node.hal is set once"):
+            node.hal = other
+        with pytest.raises(AttributeError, match="Node.hal is set once"):
+            node.hal = None
+        with pytest.raises(AttributeError, match="Hal._declared_gated is set once"):
+            h._declared_gated = frozenset()
+        with pytest.raises(AttributeError, match="Hal._declared_gated is set once"):
+            other._declared_gated = frozenset({"config"})
+        assert node.hal is h and h.get_gated_effects() == frozenset({"config"})
+        assert other.get_gated_effects() == _DEFAULT
+    assert len([r for r in audit_records
+                if getattr(r, "outcome", None) == "policy-changed"]) == 4

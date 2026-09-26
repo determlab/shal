@@ -32,7 +32,11 @@ All notable changes to this project are documented here. The format follows
     op is (its Hal's declared set, or the default) ∪ (the host's widenings), read
     through a new `Node.hal` back-reference; new `Hal.get_gated_effects()` returns
     it. Two Hals in one process gate independently, `close()` has nothing to
-    reset, and no topology can undo a host widening.
+    reset, and no topology can undo a host widening. **Both are write-once:**
+    `Node.hal` and the Hal's declared set are set by `shal.load` and never after —
+    any later assignment (an op, a thread it started, host code) raises
+    `AttributeError` and is audited (`outcome: "policy-changed"`), and the op
+    wrapper also checks that `node.hal` is still the same Hal after each call.
   - **A driver can never change the policy** (gated set or approver). A
     `--drivers` module that changes it at import is refused with
     `LoadError("<module> changed the approval policy at import")`; driver code

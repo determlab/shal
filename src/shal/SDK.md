@@ -324,7 +324,8 @@ def start_cleaning(self) -> None:
   host's widenings); `hal.get_gated_effects()` returns it. Two Hals in one process
   gate independently, `close()` has nothing to reset, and no topology can undo a
   host widening. `shal.catalog()` describes a class, not a Hal, so it shows the
-  host-level set.
+  host-level set. `node.hal` and the Hal's declared set are write-once (set by
+  `shal.load`); assigning either later raises `AttributeError`.
 
   A bare string is a `TypeError`; an unknown name or `"none"` (a read is never
   gated, D6) is a `ValueError`. **A driver never touches the policy**: a

@@ -178,24 +178,31 @@ def gated_effects(effects: Iterable[str]):
 # the effective policy too — and, for an op, its Hal's declared topology set).
 # Python is not a sandbox: comparing a snapshot taken before driver code runs with
 # one taken after makes a change structural and visible instead of silent.
-_PolicySnap = tuple  # (gated, Approver, default gated, default Approver, hal, declared)
+_PolicySnap = tuple  # (gated, Approver, default gated, default Approver, node,
+#                       node's Hal, that Hal's declared set)
 # the ENCLOSING op's (snapshot, driver, op, txn), so a nested op call (a driver op
 # that calls another device) catches a change made before it — and names the
 # enclosing op that made it, not the innocent inner one
 _op_policy: ContextVar[tuple | None] = ContextVar("shal_op_policy", default=None)
 
 
-def _policy_snapshot(hal=None) -> _PolicySnap:
+def _policy_snapshot(node=None) -> _PolicySnap:
     from . import approval
+    hal = getattr(node, "hal", None)
     return (_current_gated.get(), approval._current.get(), _DEFAULT_GATED,
-            approval._DEFAULT, hal, getattr(hal, "_declared_gated", None))
+            approval._DEFAULT, node, hal, getattr(hal, "_declared_gated", None))
 
 
 def _policy_changed(snap: _PolicySnap) -> list[str]:
-    """Which halves differ from ``snap`` now: [] if none, else "gated"/"approver"."""
-    gated, appr, dgated, dappr, hal, declared = _policy_snapshot(snap[4])
+    """Which halves differ from ``snap`` now: [] if none, else "gated"/"approver".
+    For an op the node's Hal is compared by IDENTITY too (``node.hal is`` the Hal it
+    had) — swapping in another object with a looser declared set is a change —
+    and the declared set is read from the CAPTURED Hal."""
+    gated, appr, dgated, dappr, node, hal, _ = _policy_snapshot(snap[4])
+    declared = getattr(snap[5], "_declared_gated", None)
     return [name for name, same in (
-        ("gated", gated == snap[0] and dgated is snap[2] and declared is snap[5]),
+        ("gated", gated == snap[0] and dgated is snap[2] and hal is snap[5]
+         and declared is snap[6]),
         ("approver", appr is snap[1] and dappr is snap[3])) if not same]
 
 
@@ -206,8 +213,28 @@ def _restore_policy(snap: _PolicySnap) -> None:
     approval._current.set(snap[1])
     _DEFAULT_GATED = snap[2]
     approval._DEFAULT = snap[3]
+    # the write-once guards on Node.hal / Hal._declared_gated refuse a plain set,
+    # so putting the operator's values BACK goes around them (restoring, not
+    # changing)
     if snap[4] is not None:
-        snap[4]._declared_gated = snap[5]
+        object.__setattr__(snap[4], "hal", snap[5])
+    if snap[5] is not None:
+        object.__setattr__(snap[5], "_declared_gated", snap[6])
+
+
+def _refuse_write_once(what: str, path: str) -> None:
+    """The write-once guards on ``Node.hal`` / ``Hal._declared_gated`` refused an
+    assignment: audit the attempt (outcome ``policy-changed``) and raise
+    ``AttributeError`` (ADR-001 addendum 5/5b). Called from the guards, so it is
+    on the record whether an op, a thread it started, or host code tried."""
+    _audit.info("%s: refused an assignment to %s (write-once)", path, what,
+                extra={"event": "audit", "path": path, "outcome": "policy-changed",
+                       "changed": ["gated"], "attribute": what,
+                       "txn": _log.current_txn.get()})
+    raise AttributeError(
+        f"{path}: {what} is set once by shal.load and cannot be reassigned — the "
+        f"approval policy is the operator's, never a driver's (ADR-001 addendum 5b). "
+        f"The host widens with shal.set_gated_effects.")
 
 
 def _refuse_import_change(before: _PolicySnap, module: str, file: str = "") -> None:
@@ -238,8 +265,9 @@ def op(description: str, *, unit: str | None = None,
     declare "none" for a read and "write" for a benign, ungated state change.
     "actuator" and "config" ops are gated by the approval interlock (issue #14) — they stop
     for the active Approver before any bus I/O. WHICH effects are gated is itself a
-    host policy (issue #114): the default is `{"actuator", "config"}`, and a host may
-    widen or narrow it with `shal.set_gated_effects` / `shal.gated_effects`. The metadata
+    policy (issue #114): the default is `{"actuator", "config"}`; a host may only
+    widen it (`shal.set_gated_effects` / `shal.gated_effects`), and a topology's
+    `policy: {gated: [...]}` loosens the default only for its own Hal. The metadata
     feeds `hal.tool_schemas()` and is required on every public op of a driver that
     sets `llm_ready = True` (checked at bind — fail loudly, never at call time).
 
@@ -426,8 +454,8 @@ class Driver:
                     snap, outer_drv, outer_op, outer_txn = outer
                     _refuse_policy_change(outer_drv, outer_op, snap, txn=outer_txn,
                                           before_calling=f"{self.node.path} {op}")
-                hal = getattr(self.node, "hal", None)  # set by shal.load (5b)
-                before = _policy_snapshot(hal)
+                before = _policy_snapshot(self.node)
+                hal = before[5]  # the node's Hal, bound once by shal.load (5b)
                 op_token = _op_policy.set((before, self, op, _log.current_txn.get()))
                 if guard is not None:
                     try:

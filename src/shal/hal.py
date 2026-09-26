@@ -20,19 +20,32 @@ _NAME_SAFE = re.compile(r"[^a-zA-Z0-9_-]")
 
 
 class Hal:
-    def __init__(self, roots: list[Node], ids: dict[str, Node]) -> None:
+    def __init__(self, roots: list[Node], ids: dict[str, Node], *,
+                 declared_gated: frozenset[str] | None = None) -> None:
         self._roots = roots
         self._ids = ids
         self._closed = False
         # this topology's own `policy: {gated: [...]}` (ADR-001 addendum 5b): it
-        # belongs to THIS Hal, never to the process. None = the default. Set by
-        # shal.load; each node gets a back-reference so the op wrapper finds it.
-        self._declared_gated: frozenset[str] | None = None
+        # belongs to THIS Hal, never to the process. None = the default. Passed in
+        # by shal.load and WRITE-ONCE (see __setattr__); each node gets a set-once
+        # back-reference so the op wrapper finds it.
+        object.__setattr__(self, "_declared_gated", declared_gated)
         self._source_label = "<dict>"
         for root in roots:
             for node in root.walk():
                 node.hal = self
         self._tool_idx: dict[str, tuple[Node, str]] | None = None
+
+    def __setattr__(self, name: str, value) -> None:
+        # the topology's declared gated set is written ONCE, at construction by
+        # shal.load; any later assignment — a driver op, a thread it started, or
+        # host code — raises (ADR-001 addendum 5/5b). Python is not a sandbox:
+        # object.__setattr__ bypasses this; the op wrapper's snapshot still
+        # catches a change made inside a call.
+        if name == "_declared_gated":
+            _driver._refuse_write_once("Hal._declared_gated",
+                                       self.__dict__.get("_source_label", "<hal>"))
+        object.__setattr__(self, name, value)
 
     # -- lookup (topology immutable after load -> lock-free) -----------------
     def get_device(self, key: str | None = None, *,
@@ -232,14 +245,15 @@ def load(source) -> Hal:
         _refuse_load_change(before, raising=False)  # restored + audited, then re-raise
         raise
     _refuse_load_change(before)
-    hal = Hal(roots, ids)
-    hal._source_label = label
+    declared = None
     if policy and "gated" in policy:
         try:
-            hal._declared_gated = _driver._coerce_gated(policy["gated"], operator=True)
+            declared = _driver._coerce_gated(policy["gated"], operator=True)
         except (TypeError, ValueError) as e:  # schema catches these first; belt+braces
-            hal.close()
+            Hal(roots, ids).close()
             raise LoadError(f"{label}: policy.gated: {e}") from e
+    hal = Hal(roots, ids, declared_gated=declared)  # the ONE write of the policy
+    hal._source_label = label
     widened = sorted(_driver.get_gated_effects() - _driver._DEFAULT_GATED)
     source_of = (f"hal:{label}" if hal._declared_gated is not None
                  else "host" if widened else "default")
