@@ -183,8 +183,13 @@ venv on 3.11+. Dependencies: `pyyaml`, `jsonschema`.
 
 ## Quick Start
 
-Runs with **zero hardware** — the simulated bus ships with SHAL. New to hardware?
-This is the whole setup, and it's just Python and a YAML file.
+**Two commands and one file. No hardware, no account, no API key.**
+
+```bash
+pip install pyshal
+```
+
+Save this as `sim.yaml`. It is the whole setup: a bus, and one device on it.
 
 ```yaml
 # sim.yaml
@@ -196,24 +201,60 @@ root:
     children:
       temp0:
         id: ambient_temp
-        driver: ti,tmp102
+        driver: shal,sim-sensor
         address: 0x48
 ```
+
+Now read it:
+
+```bash
+shal probe sim.yaml
+```
+
+```
+# 1 read(s), 1 write(s) on this topology
+ambient_temp__read_celsius: 25.59
+# writes — not run by --probe (start the MCP server to use them): ambient_temp__set_target
+```
+
+That is the product in one command. **The read ran. The write did not.**
+`set_target` changes the device, so SHAL will not run it without a person —
+and it says so instead of doing it quietly. Run the command again and the
+reading moves: it is a simulated room that drifts, not a fixed number.
+
+Ask which is which:
+
+```bash
+shal tools sim.yaml
+```
+
+Every operation is labelled at its source — `[read ]` runs freely, `[gated]`
+stops for a human. Your driver declares the label; nothing infers it.
+
+### From your own code
+
+The same setup, from Python. Save this as `quickstart.py`:
 
 ```python
 import shal
 
 with shal.load("sim.yaml") as hal:
-    print(hal.get_device("ambient_temp").read_celsius())   # 25.0
+    print(hal.get_device("ambient_temp").read_celsius())
 ```
 
 ```bash
-$ python quickstart.py
-25.0
+python quickstart.py
 ```
 
-When the real board arrives, change `shal,sim-i2c` → `shal,i2c-cli`. **Your
-Python doesn't change.**
+### Next
+
+`shal docs` prints the authoring guide that ships inside the package — how to
+add your own device, with no network and nothing to clone.
+
+When you move to real hardware you swap the **bus** for a real one
+(`shal,i2c-cli`, `shal,ssh-host`, `shal,tcp`) and name a **driver for your
+actual chip** — `shal,sim-sensor` is a simulated device, not a real part.
+Your Python does not change.
 
 ---
 
@@ -233,7 +274,7 @@ template:                       # a `use:` target must define `template:`
   children:
     temp:
       id: ${prefix}_temp
-      driver: ti,tmp102
+      driver: shal,sim-sensor
       address: 0x48
 ```
 
@@ -251,8 +292,8 @@ root:
 import shal
 
 with shal.load("rig.yaml") as hal:
-    print(hal.get_device("a_temp").read_celsius())   # 25.0
-    print(hal.get_device("b_temp").read_celsius())   # 25.0
+    print(hal.get_device("a_temp").read_celsius())
+    print(hal.get_device("b_temp").read_celsius())
 ```
 
 Both benches come up as separate devices, and each op becomes its own agent tool
