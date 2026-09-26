@@ -27,6 +27,14 @@ All notable changes to this project are documented here. The format follows
   and never forwarded across a redirect. They never appear in the envelope, the
   reply, a log or an error; logs carry `<addr>/<path>` and the status only.
   `shal,sim-msg` answers the same envelopes.
+- **CI runs the README Quick Start exactly as printed** (#159) — a new `quickstart`
+  job (ubuntu + windows, every PR) builds the wheel, makes a clean venv, and runs
+  `dev/quickstart/run_readme.py`, which reads the Quick Start blocks out of
+  `README.md` and runs them in order: files saved under the name the README gives,
+  each command's output matched to what the README shows (only the drifting reading
+  by pattern). The README's `pip install pyshal` installs this commit's wheel
+  instead. The seconds from `pip install` to the first successful read go into the
+  job summary.
 - **The ADK reference set, and `shal docs --list` / `--example`** (#149, R7 in
   `adk.md` §3.6) — `ti,tmp102`, `microchip,mcp23017` and `rigol,dp832` ship inside
   the Authoring Kit at `src/shal/adk/reference/<name>/`, each four files: `driver.py`,
