@@ -93,6 +93,21 @@ def _static_checks(cls: type, report: Report) -> None:
                 f'Declare side_effect= — "none" for a read, "write" for a benign, '
                 f'reversible change, "config" or "actuator" for a gated one.')
 
+    # the one omission that OPENS the gate is a problem, not a warning (issue #183):
+    # an @idempotent op with no side_effect infers "none" and runs ungated, but an
+    # idempotent op is not always a read. Keyed off the declared label (None, not
+    # the inferred one) and the @idempotent marker; the loop above skips this case,
+    # so the op is reported once.
+    for name, fn in ops.items():
+        meta = getattr(fn, "__shal_op__", None)
+        if (meta is not None and meta.get("side_effect") is None
+                and getattr(fn, "__shal_idempotent__", False)):
+            report.problems.append(
+                f'{name}: @idempotent with no side_effect is inferred "none" and '
+                f'runs ungated. An idempotent op is not always a read (an absolute '
+                f'setpoint is an idempotent write): declare side_effect explicitly '
+                f'— "none" for a read, "write" for a benign, reversible change.')
+
     # catalog entry must build, and every schema in it must be valid JSON Schema
     try:
         import jsonschema
