@@ -52,6 +52,9 @@ from shal.log import current_txn
 # a table or column name: plain identifier, nothing to escape. sqlite_* is SQLite's own.
 _IDENT = re.compile(r"[A-Za-z_][A-Za-z0-9_]*")
 _SCALARS = (str, int, float, type(None))  # what a `?` parameter may carry here
+# sqlite3 refuses a second statement with sqlite3.Warning on Python 3.10 (not an
+# sqlite3.Error); 3.11+ raises ProgrammingError. Either way nothing ran.
+_SQL_ERRORS = (sqlite3.Error, sqlite3.Warning)
 
 
 def _name(ident: str) -> str:
@@ -127,7 +130,7 @@ class SqliteDatabase(Driver):
                 # autocommit mode: every transaction below is an explicit BEGIN/COMMIT
                 self._conn = sqlite3.connect(self._path, isolation_level=None,
                                              check_same_thread=False)
-            except sqlite3.Error as e:
+            except _SQL_ERRORS as e:
                 raise self._hop(e, "no") from e
         return self._conn
 
@@ -142,7 +145,7 @@ class SqliteDatabase(Driver):
                 cur = self._db().execute(sql, args)
                 cols = [d[0] for d in cur.description]
                 return [dict(zip(cols, r, strict=True)) for r in cur.fetchall()]
-            except sqlite3.Error as e:
+            except _SQL_ERRORS as e:
                 raise self._hop(e, "no") from e
 
     def _change(self, work):
@@ -157,12 +160,12 @@ class SqliteDatabase(Driver):
             except BaseException as e:
                 if conn.in_transaction:
                     conn.execute("ROLLBACK")
-                if isinstance(e, sqlite3.Error):
+                if isinstance(e, _SQL_ERRORS):
                     raise self._hop(e, "no") from e
                 raise
             try:
                 conn.execute("COMMIT")
-            except sqlite3.Error as e:
+            except _SQL_ERRORS as e:
                 raise self._hop(e, "unknown") from e
             return result
 
