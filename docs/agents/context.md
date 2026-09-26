@@ -50,7 +50,7 @@ name and CLI namespace are **`shal`** (`pip install pyshal`, then `import shal`)
 | Sim demo | `python examples/demos/mesh/demo_mesh.py` (microservice mesh) |
 | | `python examples/demos/deebot/demo_sim.py` (simulated robot vacuum) |
 
-The `shal` CLI is the front door (`shal probe / tools / mcp`); `shal-mcp` is the
+The `shal` CLI is the front door (`shal probe / tools / check / mcp`); `shal-mcp` is the
 legacy alias of `shal mcp`. There is **no mypy gate** — the code is fully
 type-hinted and mypy-clean by intent, but mypy is not in CI; don't reference it as
 if it runs.

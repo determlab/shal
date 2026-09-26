@@ -1,0 +1,143 @@
+"""`shal check` — conformance from the command line (shal#148, ADK R6).
+
+A thin CLI over `conformance.check_driver`: exit 0 clean, 1 when the report has
+problems, 2 when the check could not run. `--json` prints the report on stdout.
+"""
+import json
+import subprocess
+import sys
+
+import pytest
+
+from shal import cli
+
+# Local driver modules, imported by module:Class from the test's cwd. Neither class
+# is decorated with @register — `shal check module:Class` must work unregistered.
+_GOOD = """
+from shal import Driver, idempotent, op
+
+class GoodThing(Driver):
+    compatible = "test,check-good"
+    kind = None
+    llm_ready = True
+
+    @idempotent
+    @op("Read the level now.", side_effect="none")
+    def level(self) -> int:
+        return 11
+"""
+
+# `bare` carries no @op at all — so no side_effect and no description. That is the
+# shape check_driver reports: `@op("...")` without side_effect is legal and infers
+# "actuator" (fail-closed, driver.py `inferred_side_effect`), so it is NOT a problem.
+_BAD = """
+from shal import Driver, idempotent, op
+
+class BadThing(Driver):
+    compatible = "test,check-bad"
+    kind = None
+    llm_ready = True
+
+    @idempotent
+    @op("Read the level now.", side_effect="none")
+    def level(self) -> int:
+        return 11
+
+    def bare(self) -> str:
+        return "moved"
+"""
+
+_YAML = ("shal_version: 1\n"
+         "root:\n"
+         "  dev: {id: dev, driver: 'test,check-good', address: a}\n")
+
+
+def _shal(*argv: str, cwd=None) -> subprocess.CompletedProcess:
+    """Run the real command in a fresh process (not an import of `main`)."""
+    return subprocess.run([sys.executable, "-m", "shal.cli", *argv], cwd=cwd,
+                          capture_output=True, text=True, encoding="utf-8", timeout=60)
+
+
+@pytest.fixture
+def drivers(tmp_path, monkeypatch):
+    (tmp_path / "check_good_driver.py").write_text(_GOOD, encoding="utf-8")
+    (tmp_path / "check_bad_driver.py").write_text(_BAD, encoding="utf-8")
+    (tmp_path / "sim.yaml").write_text(_YAML, encoding="utf-8")
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(sys, "path", list(sys.path))  # `check` puts cwd on it
+    return tmp_path
+
+
+def test_registered_compatible_json_is_valid_and_exits_0():
+    r = _shal("check", "ti,tmp102", "--json")
+    assert r.returncode == 0, r.stderr
+    report = json.loads(r.stdout)
+    assert report["compatible"] == "ti,tmp102"
+    assert report["ok"] is True and report["problems"] == []
+    assert report["checked"]
+
+
+def test_op_without_metadata_exits_1_and_json_names_the_op(drivers):
+    r = _shal("check", "check_bad_driver:BadThing", "--json", cwd=drivers)
+    assert r.returncode == 1, r.stderr
+    report = json.loads(r.stdout)
+    assert report["ok"] is False
+    assert any(p.startswith("bare:") for p in report["problems"]), report
+    assert "Traceback" not in r.stderr
+
+
+def test_unregistered_module_class_checks_clean(drivers, capsys):
+    assert cli.main(["check", "check_good_driver:GoodThing", "--json"]) == 0
+    report = json.loads(capsys.readouterr().out)
+    assert report == {**report, "compatible": "test,check-good", "ok": True,
+                      "problems": []}
+
+
+def test_module_class_with_topology_runs_live_probes(drivers, capsys):
+    assert cli.main(["check", "check_good_driver:GoodThing",
+                     "--topology", "sim.yaml", "--json"]) == 0
+    checked = json.loads(capsys.readouterr().out)["checked"]
+    assert any(c.startswith("live:") for c in checked), checked
+
+
+def test_text_report_without_json(drivers, capsys):
+    assert cli.main(["check", "check_bad_driver:BadThing"]) == 1
+    out = capsys.readouterr().out
+    assert "PROBLEM  bare:" in out
+    with pytest.raises(json.JSONDecodeError):
+        json.loads(out)
+
+
+@pytest.mark.parametrize("target, says", [
+    ("nope,missing", "no driver installed for compatible 'nope,missing'"),
+    ("no_such_module_148:X", "failed importing module 'no_such_module_148'"),
+    ("json:Nope", "module 'json' has no attribute 'Nope'"),
+    ("json:JSONDecoder", "is not a shal Driver subclass"),
+    ("json:", "is not module:Class"),
+])
+def test_a_check_that_cannot_run_exits_2_on_stderr(target, says, capsys):
+    assert cli.main(["check", target, "--json"]) == 2
+    captured = capsys.readouterr()
+    assert captured.out == ""
+    assert says in captured.err
+
+
+def test_missing_topology_exits_2(capsys):
+    assert cli.main(["check", "ti,tmp102", "--topology", "no/such.yaml"]) == 2
+    assert "topology file not found" in capsys.readouterr().err
+
+
+def test_import_failure_is_a_message_not_a_traceback(drivers):
+    (drivers / "check_broken_driver.py").write_text("raise RuntimeError('boom')\n",
+                                                   encoding="utf-8")
+    r = _shal("check", "check_broken_driver:X", cwd=drivers)
+    assert r.returncode == 2
+    assert "RuntimeError: boom" in r.stderr
+    assert "Traceback" not in r.stderr
+
+
+def test_help_shows_the_three_forms():
+    r = _shal("check", "--help")
+    assert r.returncode == 0
+    for form in ("vendor,part", "module:Class", "--topology"):
+        assert form in r.stdout

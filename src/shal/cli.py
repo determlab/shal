@@ -9,6 +9,8 @@ adapter — not the front door.
     shal tools lab.yaml                  # list the device tools (read / gated)
     shal mcp   lab.yaml                  # serve to an MCP host (the adapter)
     shal probe lab.yaml --drivers ./drivers/   # load local/unpackaged drivers
+    shal check ti,tmp102 --json          # driver conformance as a JSON report
+    shal check driver:MyThing --topology sim.yaml   # a local class + live sim probes
 
 The legacy ``shal-mcp`` command still works (it is ``shal mcp``).
 
@@ -20,6 +22,7 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import json
 import os
 import sys
 
@@ -91,6 +94,84 @@ def _cmd_mcp(args) -> int:
     return server.main(argv)
 
 
+# `shal check` exit codes: 0 = no problems, 1 = the report has problems,
+# 2 = the check could not run (bad target, import failure, bad topology) —
+# the same 2 argparse uses for a usage error, so 1 always means "fix the driver".
+_CHECK_USAGE_ERROR = 2
+
+
+def _check_fail(msg: str) -> int:
+    print(f"shal check: {msg}", file=sys.stderr)
+    return _CHECK_USAGE_ERROR
+
+
+def _load_check_target(target: str) -> type:
+    """``module:Class`` imports the class (cwd first on ``sys.path``, like a local
+    ``driver.py``); anything else is a registered ``compatible``. Raises
+    ``ValueError`` with a message that says what to change."""
+    import importlib
+
+    from . import registry
+    from .driver import Driver
+    from .errors import LoadError
+    if ":" not in target:
+        try:
+            return registry.resolve(target)
+        except LoadError as e:
+            raise ValueError(f"{e}\n  - A local class? Name it as module:Class "
+                             f"(e.g. driver:MyThing).") from e
+    mod_name, _, cls_name = target.partition(":")
+    if not mod_name or not cls_name:
+        raise ValueError(f"'{target}' is not module:Class (e.g. driver:MyThing)")
+    if os.getcwd() not in sys.path:
+        sys.path.insert(0, os.getcwd())
+    try:
+        mod = importlib.import_module(mod_name)
+    except Exception as e:  # noqa: BLE001 - any import failure is a clean exit 2
+        raise ValueError(f"failed importing module '{mod_name}': "
+                         f"{type(e).__name__}: {e}") from e
+    cls = getattr(mod, cls_name, None)
+    if cls is None:
+        raise ValueError(f"module '{mod_name}' has no attribute '{cls_name}'")
+    if not (isinstance(cls, type) and issubclass(cls, Driver)):
+        raise ValueError(f"'{target}' is not a shal Driver subclass")
+    # An unregistered class is registered in THIS process only, so its catalog
+    # entry builds and a --topology naming its compatible binds it — exactly what
+    # importing a module that uses @shal.register does. Never shadow another class.
+    compatible = getattr(cls, "compatible", "")
+    if compatible:
+        claimed = registry._entries.get(compatible) or []
+        others = [c for c in claimed if c is not cls]
+        if others:
+            names = ", ".join(f"{c.__module__}.{c.__qualname__}" for c in others)
+            raise ValueError(f"compatible '{compatible}' is already registered by "
+                             f"{names} — give {cls_name} its own compatible")
+        registry.register(cls)
+    return cls
+
+
+def _cmd_check(args) -> int:
+    """A thin CLI over ``conformance.check_driver`` (shal#148, ADK R6)."""
+    from .conformance import check_driver
+    if args.topology is not None and not os.path.isfile(args.topology):
+        return _check_fail(f"topology file not found: {args.topology}")
+    try:
+        cls = _load_check_target(args.target)
+    except ValueError as e:
+        return _check_fail(str(e))
+    try:
+        report = check_driver(cls, args.topology)
+    except Exception as e:  # noqa: BLE001 - the check could not run: no traceback
+        return _check_fail(f"check could not run: {type(e).__name__}: {e}")
+    if args.json:
+        print(json.dumps({"compatible": report.compatible, "ok": report.ok,
+                          "problems": report.problems, "warnings": report.warnings,
+                          "checked": report.checked}, indent=2))
+    else:
+        print(str(report))
+    return 0 if report.ok else 1
+
+
 def _strip_front_matter(text: str) -> str:
     """Drop a leading `---` front-matter block. Both shipped docs carry the repo's
     doc-standard header (type/owner/reviewed) — that is bookkeeping for the repo, not
@@ -155,6 +236,27 @@ def main(argv: list[str] | None = None) -> int:
     d.add_argument("--sdk", action="store_true",
                    help="print the full Driver & Bus SDK — the complete authoring contract")
     d.set_defaults(func=_cmd_docs)
+
+    c = sub.add_parser(
+        "check", help="check a driver against the authoring contract (conformance)",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        description="Run conformance.check_driver on one driver and print its report.",
+        epilog="forms:\n"
+               "  shal check vendor,part                 a registered compatible\n"
+               "  shal check module:Class                a class by import path (the\n"
+               "                                         cwd is on sys.path, so\n"
+               "                                         driver:MyThing works)\n"
+               "  shal check <target> --topology t.yaml  add the live probes on a sim\n"
+               "\n"
+               "exit: 0 no problems, 1 problems (warnings never fail), "
+               "2 the check could not run")
+    c.add_argument("target", metavar="<compatible|module:Class>",
+                   help="a registered compatible (ti,tmp102) or module:Class")
+    c.add_argument("--topology", metavar="t.yaml", default=None,
+                   help="a sim topology that binds this driver — runs the live probes")
+    c.add_argument("--json", action="store_true",
+                   help="print the report as JSON on stdout (ok, problems, warnings, checked)")
+    c.set_defaults(func=_cmd_check)
 
     args = ap.parse_args(argv)
     return args.func(args)
