@@ -237,19 +237,48 @@ class Hal:
             pass
 
 
-def _close_subtree(node: Node, seen: set[int]) -> None:
-    """Teardown leaf->root of one subtree."""
+def _close_subtree(node: Node, seen: set[int], on_error=None) -> None:
+    """Teardown leaf->root of one subtree. With ``on_error(node, exc)`` given,
+    each close that raises an ``Exception`` is handed to it and the walk goes on
+    (#229); without it (``Hal.close``) the first such error propagates."""
     if id(node) in seen:  # visited-set guard, every walk
         return
     seen.add(id(node))
     for child in node.children.values():
-        _close_subtree(child, seen)
+        _close_subtree(child, seen, on_error)
+    closers = []
     if node.exposed_bus is not None:
-        node.exposed_bus.close()
+        closers.append(node.exposed_bus.close)
     if isinstance(node.driver, Transport):
-        node.driver.close()
+        closers.append(node.driver.close)
+    for close in closers:
+        if on_error is None:
+            close()
+            continue
+        try:
+            close()
+        except Exception as e:  # noqa: BLE001 — the caller decides
+            on_error(node, e)
+    if isinstance(node.driver, Transport):
         logger.debug("closed %s", node.path,
                      extra={"event": "teardown", "path": node.path})
+
+
+def _log_cleanup_failure(node: Node, e: Exception) -> None:
+    # the type only: a close message may carry an address (rule 7)
+    logger.warning("close after a refused load raised %s at %s",
+                   type(e).__name__, node.path,
+                   extra={"event": "load_cleanup_failed", "path": node.path})
+
+
+def _close_unowned(roots: list[Node]) -> None:
+    """Close a bound tree that no Hal owns (#229): last root first, each subtree
+    leaf->root, every node once. A close that raises is logged with that node's
+    path and every other node still closes — it never replaces the error that
+    brought us here."""
+    seen: set[int] = set()
+    for root in reversed(roots):
+        _close_subtree(root, seen, _log_cleanup_failure)
 
 
 def load(source, *, approver=None) -> Hal:
@@ -289,22 +318,23 @@ def load(source, *, approver=None) -> Hal:
     except BaseException:
         _refuse_load_change(before, raising=False)  # restored + audited, then re-raise
         raise
-    _refuse_load_change(before)
-    declared = None
-    if policy and "gated" in policy:
-        try:
-            declared = _driver._coerce_gated(policy["gated"], operator=True)
-        except (TypeError, ValueError) as e:  # schema catches these first; belt+braces
-            Hal(roots, ids).close()
-            raise LoadError(f"{label}: policy.gated: {e}") from e
-    try:  # the ONE write of the policy — the approver included (#217)
+    # Until a Hal exists, the bound tree belongs to no one. ANY error here — a
+    # refused policy change (#229), a bad policy.gated, a fill error (#217) —
+    # closes it ONCE and re-raises the original exception. A failed Hal stays
+    # `_closed`, so its __del__ closes nothing on top of this.
+    try:
+        _refuse_load_change(before)
+        declared = None
+        if policy and "gated" in policy:
+            try:
+                declared = _driver._coerce_gated(policy["gated"], operator=True)
+            except (TypeError, ValueError) as e:  # schema catches these first
+                raise LoadError(f"{label}: policy.gated: {e}") from e
+        # the ONE write of the policy — the approver included (#217)
         hal = Hal(roots, ids, declared_gated=declared, approver=approver,
                   source_label=label)
-    except BaseException:  # ANY fill error (a cell filled first, or driver code
-        # raising): close the tree ONCE — the failed Hal stays `_closed`, so its
-        # __del__ closes nothing — and re-raise the original exception
-        for root in roots:
-            _close_subtree(root, set())
+    except BaseException:
+        _close_unowned(roots)
         raise
     widened = sorted(_driver.get_gated_effects() - _driver._canon()[2])
     source_of = (f"hal:{label}" if hal._declared_gated is not None

@@ -1422,9 +1422,9 @@ def test_a_driver_thread_that_prefills_the_slot_makes_the_load_fail(
     closed = []
     real_close = shal.hal._close_subtree
 
-    def spy_close(node, seen):
+    def spy_close(node, seen, *rest):
         closed.append(node.path)
-        return real_close(node, seen)
+        return real_close(node, seen, *rest)
     monkeypatch.setattr(shal.hal, "_close_subtree", spy_close)
     with _host(shal.DenyAll()):
         with pytest.raises(shal.LoadError, match="already bound to a Hal"):
