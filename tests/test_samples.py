@@ -29,7 +29,8 @@ import run_samples  # noqa: E402
 from run_samples import BadSample, load_expect, verdict  # noqa: E402
 
 SAMPLES_DIR = Path(str(files("shal") / "samples"))
-REFERENCES = {"tmp102", "mcp23017", "rigol_dp832", "sonos", "order_service", "sqlite"}
+REFERENCES = {"tmp102", "mcp23017", "rigol_dp832", "sonos", "order_service", "sqlite",
+              "kvstore"}
 
 
 def _on_disk() -> set[str]:

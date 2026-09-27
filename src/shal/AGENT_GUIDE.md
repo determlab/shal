@@ -2,7 +2,7 @@
 type: reference
 owner: repo-agent
 scope: repo/shal
-reviewed: 2026-06-23
+reviewed: 2026-09-27
 ---
 
 # SHAL — agent guide (add a device, no MCP needed)
@@ -129,6 +129,63 @@ The loop lives in its own thread, so the driver behaves identically under `shal 
 Subclass a capability (`shal.MediaPlayer`, `shal.TemperatureSensor`, …) only when you want
 your driver to be **interchangeable** with other drivers of the same kind. Otherwise just
 expose `@op` methods — the agent sees them either way. (`shal.catalog()` lists what exists.)
+
+---
+
+## Wrap a library: the recipe
+
+The driver above is a **root driver**: it sits at the top of the topology, has no bus
+above it, and calls a Python library itself. `shal docs --example kvstore` prints a
+complete one to copy: a root driver over the stdlib `dbm.dumb` (nothing to install),
+with its test and topology. It loads with `shal.load` and passes `shal check`. Copy its
+three files, then put your library where `dbm.dumb` is.
+
+### Wrap a library or build a bus?
+- **A Python library or vendor SDK already talks to the device or service** (it opens
+  its own socket, session or file, and does its own auth) → **wrap it as a root
+  driver.** Do not rebuild its transport as a bus.
+- **You would write the wire protocol yourself** (register bytes, SCPI strings, raw
+  frames), or a link is shared by several devices (an I²C bus, a mux, an SSH hop) →
+  the device driver talks through a **bus** (`kind = ByteTransport`, …). A transport
+  no bundled bus covers is a new bus (`shal docs --sdk`, §9).
+- **Not sure:** if something you can `pip install` already speaks to the device, wrap it.
+
+### The five steps
+1. **Declare no `kind`.** `kind` names the transport the parent bus must provide.
+   The loader checks for a parent bus only when `kind` is set: a driver with
+   `kind = ByteTransport` on a node with no bus above it fails to load (`needs
+   ByteTransport but node has no parent bus`). With `kind = None` (the default) there
+   is no check, so the node binds at the root with no bus. `self.bus` is then `None`:
+   call your library, never `self.bus`.
+2. **No constructor arguments: `cls()`, not `cls(node)`.** The loader builds a
+   device driver as `cls()` and gives it the node later, in `bind(node)`. Only a bus
+   (a `Transport`) is built as `cls(node)`. So do not write `__init__(self, node)`:
+   override `bind()`, call `super().bind(node)` first, and read `node.address` there.
+3. **Connect lazily.** `bind()` only reads config. Import and open the library on
+   the first op, keep the client on `self`, and reuse it (rule 5 above). Then
+   `shal tools` lists the ops without reaching the device.
+4. **Register it.** In-process: `@shal.register` on the class, then name the file
+   (`--drivers driver.py`) or import it before `shal.load`. In a published package:
+   a `shal.drivers` entry point in its `pyproject.toml`. Once the package is
+   installed, `shal.load` finds the driver by its `compatible` with no `--drivers`
+   and no import:
+   ```toml
+   [project.entry-points."shal.drivers"]
+   "community,my-thing" = "my_pkg.my_thing:MyThing"
+   ```
+5. **Check it.** In the folder of your copy, `shal check driver:DbmStore --topology
+   topology.yaml` exits 0, with no problems and no warnings. Yours must too (use your
+   own `module:Class`).
+
+Load the copy from Python, in its folder:
+```python
+import shal
+import driver                        # your copy of driver.py: registers python,dbm
+with shal.load("topology.yaml") as hal:
+    store = hal.get_device("store")
+    store.put("colour", "blue")      # a write: delete undoes it
+    print(store.get("colour"))       # a read: live, or it raises
+```
 
 ---
 
@@ -303,7 +360,8 @@ what the gate must stop:
 undone by this driver, so it is not a `write`.
 
 **Bus or root driver?** A protocol you would hand-roll goes under a bus. A client
-library is a root driver (`kind = None`, like the example above).
+library is a root driver (`kind = None`, like the example above) — see
+[Wrap a library: the recipe](#wrap-a-library-the-recipe).
 
 **See it on one node:** `shal docs --example sqlite` — `query` is `none`, `insert`
 and `delete_row` are `write` (each undoes the other), `execute_ddl` is `config`,

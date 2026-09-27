@@ -9,6 +9,13 @@ A bus is a `Driver` that is also a `Transport` and implements one or more
 **transport kinds**. Complexity flows toward bus authors so users and driver
 authors stay simple — read this whole checklist before writing code.
 
+**Check first: is there a library?** If a Python client library or vendor SDK
+already reaches the device or cloud (it owns the socket, session and auth),
+don't build a bus — wrap the library as a root driver (`kind = None`; the
+shipped guide's "Wrap a library: the recipe", `shal docs --example kvstore`).
+Build a bus when you would write the wire protocol yourself, or a link is
+shared by several devices.
+
 Pick the bus's `compatible` id and target domain library (`buses/embedded`,
 `buses/net`, `buses/fieldbus`, …) from [docs/CATALOG.md](../../../../docs/CATALOG.md)
 — claim it there so two authors don't collide.

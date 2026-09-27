@@ -542,7 +542,7 @@ your_package/
 | Cisco IOS switch | `cisco,ios` | NetworkSwitch | SSH/NETCONF |
 | Arista EOS switch | `arista,eos` | NetworkSwitch | API-first |
 
-## Data — databases (12)
+## Data — databases (13)
 
 | Service | `compatible` | Capability | Notes |
 |---|---|---|---|
@@ -551,6 +551,7 @@ your_package/
 | MariaDB | `mariadb,db` | RelationalDB | MySQL fork |
 | SQLite | `sqlite,database` | — | ✅ ADK reference (`shal docs --example sqlite`); root driver over stdlib `sqlite3`, all four side-effect labels |
 | Redis | `redis,db` | KeyValueStore | cache/store |
+| Python dbm | `python,dbm` | KeyValueStore | ✅ ADK reference (`shal docs --example kvstore`); the short wrap-a-library recipe — a root driver over stdlib `dbm.dumb` |
 | MongoDB | `mongodb,db` | DocumentStore | document DB |
 | InfluxDB | `influxdb,db` | TimeSeriesDB | metrics/IoT time series |
 | TimescaleDB | `timescale,db` | TimeSeriesDB | PG time-series |

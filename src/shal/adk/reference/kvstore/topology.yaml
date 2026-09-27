@@ -1,0 +1,11 @@
+# One key-value store as a root node: no bus, the driver wraps the stdlib dbm.dumb.
+# Address "sim" is the twin (the same library in a throwaway temp folder); put a
+# path there for a real store. No sim.py: the address is the twin.
+# The driver is not registered by `import shal`, so name its file (D5):
+#   shal probe topology.yaml --drivers driver.py
+shal_version: 1
+root:
+  store:
+    id: store
+    driver: python,dbm
+    address: sim

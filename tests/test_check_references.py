@@ -41,13 +41,15 @@ def test_lists_the_shipped_set():
     # names, not a count: more references join the set
     root = Path(str(files("shal") / "adk" / "reference"))
     names = {p.name for p in list_references(root)}
-    assert {"tmp102", "mcp23017", "rigol_dp832", "sonos", "order_service", "sqlite"} <= names
+    assert {"tmp102", "mcp23017", "rigol_dp832", "sonos", "order_service", "sqlite",
+            "kvstore"} <= names
 
 
 def test_every_shipped_driver_names_its_class():
     root = Path(str(files("shal") / "adk" / "reference"))
     got = {p.name: driver_class(p / "driver.py") for p in list_references(root)}
     assert got["tmp102"] == "Tmp102" and got["sqlite"] == "SqliteDatabase"
+    assert got["kvstore"] == "DbmStore"  # one registered Driver, beside a plain Error class
 
 
 def test_driver_class_is_the_registered_driver_subclass(tmp_path):

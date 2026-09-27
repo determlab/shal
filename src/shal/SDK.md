@@ -76,6 +76,15 @@ class Sht31(Driver, shal.TemperatureSensor):
 **Class attributes you set:** `compatible` (required), `kind` (required unless
 the driver sits at root), `llm_ready = True` (required for device drivers).
 
+**A root driver wraps a library instead of a bus.** When a Python library or
+vendor SDK already reaches the device, leave `kind = None` (the default): the
+loader checks for a parent bus only when `kind` is set, so the node binds at the
+root with no bus and `self.bus` is `None`. The loader builds a device driver as
+`cls()` — no constructor arguments; only a bus is built as `cls(node)` — so do
+setup in `bind()`, and open the library lazily on the first op. The recipe, with
+the wrap-a-library-or-build-a-bus rule: `shal docs`, "Wrap a library: the
+recipe"; a complete example: `shal docs --example kvstore`.
+
 **Override `bind(self, node)`** (call `super().bind(node)` first) only when you
 must parse the address once — e.g. `self.ch = int(node.address)`. Raise
 `shal.LoadError` with the node path for a malformed address.
@@ -440,7 +449,8 @@ class — importing the module registers it. Published packages add:
 ```
 
 Two different classes claiming one `compatible` fail the load loudly;
-topologies disambiguate with `from: <distribution>`.
+topologies disambiguate with `from: <distribution>`. A root driver that wraps a
+library registers the same way — it is a driver like any other.
 
 ## 9. Buses in one box (full guide: `shal-build-bus` skill)
 

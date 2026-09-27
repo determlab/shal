@@ -6,8 +6,18 @@ description: Implement a new SHAL device driver (sensor, actuator, robot...) bou
 # Build a SHAL driver
 
 A driver is the code bound to a node by its `compatible` id. It talks through
-the PARENT bus's transport kind and exposes typed **capabilities** — user code
-depends on the capability Protocol, never on your class.
+the PARENT bus's transport kind — or, as a **root driver** (`kind = None`), calls
+an existing Python library itself — and exposes typed **capabilities** — user
+code depends on the capability Protocol, never on your class.
+
+**A Python library or vendor SDK already talks to the device?** Wrap it as a
+root driver; don't hand-roll its transport as a bus. The recipe is the shipped
+guide's "Wrap a library: the recipe" (`shal docs`): no `kind`, so the loader
+asks for no parent bus; the loader builds the driver as `cls()` (a bus is
+`cls(node)`), so setup goes in `bind()`; open the library lazily on the first op;
+register with `@register` or a `shal.drivers` entry point. The worked example is
+`shal docs --example kvstore` (a root driver over the stdlib `dbm.dumb`, clean
+under `shal check`).
 
 Pick the device's `compatible` id and target domain library (`drivers/sensors`,
 `drivers/instruments`, `drivers/data`, …) from
@@ -20,11 +30,14 @@ Start from the closest **ADK reference**: `shal docs --list` names them
 stand-in; `order_service` — a software node under `shal,http`, a `GET` through the
 request envelope, a `write` its own op undoes, twin by `@msg_sim_model`;
 `sqlite` — a root driver over a client library, all four labels on one software
-node, values as `?` parameters and names checked before any SQL),
+node, values as `?` parameters and names checked before any SQL; `kvstore` —
+the short wrap-a-library recipe, a root driver over the stdlib `dbm.dumb`,
+`address: sim` is the same library in a throwaway folder),
 and `shal docs --example <name>` prints its four files: `driver.py`, `sim.py`
 (the twin, next to the driver), `test_<name>.py`, `topology.yaml`. When the
 library has its own twin address there is no `sim.py`: `sqlite` uses
-`address: ":memory:"` and runs with `--drivers driver.py` alone. They ship in
+`address: ":memory:"`, `kvstore` uses `address: sim`, and each runs with
+`--drivers driver.py` alone. They ship in
 the wheel as guide material and are **not registered** — no `vendor,part` driver
 ships registered (D1, #149) — so your copy registers only when imported
 (`--drivers driver.py --drivers sim.py`, or `@register` in-process).
@@ -61,7 +74,8 @@ inherit it, as [shal-generate-driver](../shal-generate-driver/SKILL.md) Step 1 s
 
 ## Framework-injected attributes (after bind)
 
-`self.node` (the tree node) · `self.bus` (parent transport) · `self.addr`
+`self.node` (the tree node) · `self.bus` (parent transport; `None` for a root
+driver) · `self.addr`
 (this node's address) · `self.log` (LoggerAdapter pre-bound with path/id/txn —
 structured fields as kwargs: `self.log.debug("conv ready", event="...")`).
 
@@ -69,7 +83,8 @@ structured fields as kwargs: `self.log.debug("conv ready", event="...")`).
 
 1. **`kind` declares your dependency.** The loader fails at setup if the parent
    bus doesn't provide it (`kinds()` check) — you never test for it yourself,
-   and you NEVER use `hasattr` on the bus.
+   and you NEVER use `hasattr` on the bus. A root driver declares no `kind`
+   (`None`), and the loader then asks for no parent bus at all.
 2. **Idempotency marking is a safety decision, not a convenience.**
    - `@idempotent` ONLY on ops that can run twice with no extra side effect
      (reads, absolute setpoints re-asserted). They get reconnect-once/retry-once
@@ -83,8 +98,13 @@ structured fields as kwargs: `self.log.debug("conv ready", event="...")`).
      `@idempotent` + `side_effect="write"` and still lands in the audit log.
 3. **Payloads are yours; transport is not.** You know your device's register
    map / JSON commands; you never open sockets, spawn processes, or build
-   shell strings. If you need a new way to reach hardware, that's a bus
-   (see shal-build-bus).
+   shell strings. Need a way to reach the device that no bundled bus covers?
+   Decide first: **an existing Python library or vendor SDK already reaches it
+   → wrap that library as a root driver** (`kind = None`; the library owns the
+   transport, not you — `shal docs --example kvstore`). **You would write the
+   wire protocol yourself, or several devices share the link → that's a bus**
+   (see shal-build-bus). Not sure: if you can `pip install` something that
+   already speaks to it, wrap it.
 4. **Public method = capability op.** The framework wraps every public method:
    txn id assignment, DEBUG call/raise traces, audit records for every op that
    is not a read (`side_effect` other than `"none"`). Keep helpers underscore-prefixed so they aren't wrapped or audited.
