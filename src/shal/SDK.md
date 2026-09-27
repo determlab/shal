@@ -10,8 +10,9 @@ reviewed: 2026-06-23
 The complete authoring contract. **Everything you need to write a working
 driver or bus is on this page plus the step-by-step skills**
 (`integrations/claude-code/skills/shal-build-driver`, `shal-build-bus`, `shal-build-yaml`,
-`shal-generate-driver`). You never need to read SHAL's source — if you do,
-that's a bug in this guide: report it.
+`shal-generate-driver`). This guide aims to make reading SHAL's source
+unnecessary — if you had to read it to get a driver working, that's a gap in
+this guide: report it, naming the files you read and what you were looking for.
 
 > **Prereq.** SHAL core runs on Python 3.10+, but a device's own library may need newer —
 > async/cloud clients using `asyncio.TaskGroup` (e.g. `deebot-client`) need **3.11+**. On
@@ -64,7 +65,8 @@ class Sht31(Driver, shal.TemperatureSensor):
                                   "additionalProperties": False}}
 ```
 
-**Framework-injected attributes** (available after bind, i.e. in every method):
+**Framework-injected attributes** — set by `Driver.bind(node)`, so they exist
+only after bind (never in `__init__`), i.e. in every op method:
 
 | Attr | What |
 |---|---|
@@ -79,9 +81,8 @@ the driver sits at root), `llm_ready = True` (required for device drivers).
 **A root driver wraps a library instead of a bus.** When a Python library or
 vendor SDK already reaches the device, leave `kind = None` (the default): the
 loader checks for a parent bus only when `kind` is set, so the node binds at the
-root with no bus and `self.bus` is `None`. The loader builds a device driver as
-`cls()` — no constructor arguments; only a bus is built as `cls(node)` — so do
-setup in `bind()`, and open the library lazily on the first op. The recipe, with
+root with no bus and `self.bus` is `None`. Do setup in `bind()` (see
+"Lifecycle" below), and open the library lazily on the first op. The recipe, with
 the wrap-a-library-or-build-a-bus rule: `shal docs`, "Wrap a library: the
 recipe"; a complete example: `shal docs --example kvstore`.
 
@@ -117,14 +118,105 @@ with shal.load(topology) as hal:
     print(hal.get_device("greeter").greeting())   # hello from lab-3
 ```
 
-**Override `bind(self, node)`** (call `super().bind(node)` first) only when you
-must parse the address once — e.g. `self.ch = int(node.address)`. Raise
-`shal.LoadError` with the node path for a malformed address.
-
 **Public method = capability op.** Every public method is wrapped by the
 framework (txn id, retry policy, audit, limits, tool surface). Prefix helpers
 with `_` to keep them private. ~40–80 lines is a normal driver; >200 means
 you're doing the framework's job.
+
+### Lifecycle: built, bound, opened, closed
+
+What happens to a device driver, and when (a bus's own constructor is §9):
+
+1. **Built at load, with no arguments: `cls()`.** `shal.load()` — and so `shal
+   probe`, `tools`, `call` and `mcp` — builds each device driver as `cls()`. The
+   loader passes no node, so a device driver **never defines `__init__(self,
+   node)`**: the load fails with a `TypeError`. Most drivers need no `__init__`.
+2. **Bound at load, right after: `bind(node)`.** When `kind` is set, the loader
+   first checks that the parent bus provides it and that your address fits the
+   bus's grammar; then it calls `drv.bind(node)`. `Driver.bind` sets the
+   attributes above and wraps your ops. Anything that depends on the node —
+   parsing the address, reading `node.spec.get("config", {})` — goes in an
+   overridden `bind(self, node)`: call `super().bind(node)` **first**, then parse,
+   and raise `shal.LoadError` naming `node.path` for a malformed address. `bind`
+   does no I/O.
+3. **The bus opens on the first op, not at load.** Loading sends nothing. The
+   parent bus opens on the first call that reaches it (`self.bus.txn` / `run` /
+   `exchange`), once, under the bus lock. `shal mcp` opens every bus when it
+   starts serving (`hal.warm()`), so the first tool call does not wait for a
+   connect.
+4. **The bus closes when the Hal closes.** `hal.close()` — or leaving `with
+   shal.load(...) as hal:` — closes every bus, leaves first, once. If the load is
+   refused after binding started (a later node's `bind` raises, a bad `policy:`),
+   every bus already bound is closed before the error reaches you. The framework
+   closes buses, not device drivers: a device driver has no close hook.
+
+The whole lifecycle, runnable as is (a sim bus, no hardware):
+
+```python
+import shal
+from shal import Driver, idempotent, op
+from shal.buses.sim_msg import msg_sim_model
+from shal.transport import MessageTransport
+
+
+@msg_sim_model("example,relay")        # the sim twin (§6): answers with no hardware
+class RelaySim:
+    def handle(self, msg):
+        return {"closed": False}
+
+
+@shal.register
+class Relay(Driver):                   # no __init__: the loader calls Relay()
+    compatible = "example,relay"
+    kind = MessageTransport
+    llm_ready = True
+
+    def bind(self, node):
+        super().bind(node)             # sets self.bus/addr/node/log, wraps the ops
+        board, _, ch = str(node.address).partition("/")
+        if not board or not ch.isdigit():
+            raise shal.LoadError(f"{node.path}: address must be 'board/channel', "
+                                 f"got {node.address!r}")
+        self.ch = int(ch)              # parsed once, here; no I/O in bind
+
+    @idempotent
+    @op("Read whether this relay is closed now.", side_effect="none")
+    def read_closed(self) -> bool:
+        return bool(self.bus.exchange(self.addr, {"get": self.ch})["closed"])
+
+
+topology = {"shal_version": 1, "root": {"bench": {
+    "id": "bench", "driver": "shal,sim-msg", "address": "sim0",
+    "children": {"k2": {"id": "k2", "driver": "example,relay",
+                        "address": "board0/2"}}}}}
+
+with shal.load(topology) as hal:       # 1 + 2: Relay() then bind(node)
+    bus = hal.get_node("bench").driver
+    relay = hal.get_device("k2")
+    assert relay.ch == 2
+    assert not bus.is_active()         # loaded and bound; the bus is not open
+    assert relay.read_closed() is False
+    assert bus.is_active()             # 3: the first op opened it
+assert not bus.is_active()             # 4: leaving `with` closed it
+```
+
+**Exception — `op_limits()` reads the parsed value: parse *before*
+`super().bind(node)`.** `super().bind()` compiles the limit guards, and it calls
+your `op_limits()` to do so (§4). If `op_limits()` reads `self.ch`, set `self.ch`
+first or the load fails with `AttributeError`. `self.addr` is not set yet at
+that point, so read `node.address`:
+
+```python
+def bind(self, node):
+    try:
+        self.ch = int(node.address)          # op_limits() needs self.ch
+    except (TypeError, ValueError):
+        raise shal.LoadError(f"{node.path}: address must be a channel number, "
+                             f"got {node.address!r}") from None
+    super().bind(node)                       # calls op_limits()
+```
+
+`shal docs --example rigol_dp832` ships this pattern.
 
 ## 1b. Reads must be live — a value, or a raise (never a stale default)
 
@@ -548,7 +640,11 @@ the op, not just what it does.
 
 ## 11. Don'ts
 
-- Don't read SHAL source — this page + skills are the contract.
+- Don't read SHAL source — this page + skills are the contract; if you had to,
+  report the gap (see the top of this page).
+- Don't write `def __init__(self, node)` on a device driver — the loader builds
+  it with `cls()` (no arguments); override `bind(self, node)` instead (§1,
+  "Lifecycle").
 - Don't catch/retry transport errors; don't sleep/poll around failures.
 - Don't validate limit params in the body (declare in `params=`); DO validate
   cross-parameter envelopes imperatively.
