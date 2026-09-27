@@ -69,6 +69,9 @@ class MyBus(Driver, Transport, MessageTransport):
      HTTP error response, a `ByteTransport` short/empty read — fewer bytes
      back than the `Read` ops requested; see `spi_cli.py`/`i2c_cli.py`). The
      framework auto-retries ONLY idempotent ops and ONLY on `delivered="no"`.
+     On a node with `routes:` (#235) the route set revives the route once and
+     then moves to the next route on `delivered="no"` for ANY op, and on
+     `delivered="unknown"` only for an idempotent op — so "no" must be certain.
      Misreporting "unknown" as "no" causes double side effects — when unsure,
      say "unknown". Never let a short/empty read fall through as a truncated
      or zeroed value — that is a silent stale default, exactly what D12

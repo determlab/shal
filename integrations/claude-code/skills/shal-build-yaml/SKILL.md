@@ -126,8 +126,10 @@ must name real ops/params of the bound driver (checked at load).
   `routes: [{via: /abs/bus, address, name?}]` (name defaults to the last segment of
   `via`; in a `use:` template `via` must be a parameter, `${rack}/console2`). Refused:
   no parent bus, a `via` with no bus, two routes with one name, a jump bus without
-  the driver's transport kind. Failover is not built yet: the node binds on its
-  main route only.
+  the driver's transport kind, a jump address outside that bus's address grammar.
+  At run time the node talks through one route at a time (main first, sticky):
+  `delivered="no"` moves any op to the next route; `delivered="unknown"` moves only
+  an `@idempotent` op. Python pins a route with `dev.op(..., via="<name>")`.
 - `insecure: true` missing on a plaintext `http://` or tcp bus.
 - Duplicate `id`, unknown `compatible`, malformed address, unresolved `$ref`,
   unknown node keys (schema is `additionalProperties: false`).
