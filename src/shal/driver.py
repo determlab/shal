@@ -31,6 +31,7 @@ from .errors import HopError
 from .errors import LoadError as _LoadError
 from .routes import RouteCall, RouteSet, route_set_for
 from .routes import current_call as _route_call  # the op running now, for its RouteSet
+from .routes import last_via as _last_via  # the route that carried it, for call_tool
 
 if TYPE_CHECKING:
     from .node import Node
@@ -569,9 +570,16 @@ class Driver:
             in_body = False  # True once the driver body runs (after limits + approval)
             # a pin is not an op argument: take it off before limits see the call
             via = kwargs.pop("via", None) if routed else None
+            # `via` on the log/audit lines of a routed node (#236): the PLANNED
+            # route before the body, then the route that carried it; absent (not
+            # None) on a node without routes, so those lines are unchanged
+            route: dict = {}
+            carried: list[str] = []  # the RouteSet appends each route that delivered
             try:
                 if via is not None:  # an unknown name: refused pre-I/O, names listed
                     self.bus.check_via(via)
+                if routed:
+                    route = {"via": via if via is not None else self.bus.active}
                 # the policy is the operator's (ADR-001 addendum 5): an ENCLOSING op
                 # that changed it before calling this one is caught here, pre-I/O
                 outer = op_var.get()
@@ -592,7 +600,7 @@ class Driver:
                                         extra={"event": "audit",
                                                "id": self.node.id or "",
                                                "path": self.node.path, "op": op,
-                                               "outcome": "rejected",
+                                               "outcome": "rejected", **route,
                                                "txn": _log.current_txn.get()})
                         raise
                 # limits passed -> ask before moving (pre-I/O, unbypassable)
@@ -607,10 +615,11 @@ class Driver:
                         if approver is None:
                             approver, source = captured[3], "default"
                     _approve_or_raise(self, op, side_effect, sig, args, kwargs,
-                                      gated_now, approver, source)
+                                      gated_now, approver, source, route)
                 in_body = True
                 if routed:  # the RouteSet reads it: idempotent? pinned? (3a/3b/3i)
-                    route_token = _route_call.set(RouteCall(self.bus, retry, via))
+                    route_token = _route_call.set(RouteCall(self.bus, retry, via,
+                                                            carried))
                 try:
                     result = fn(self, *args, **kwargs)
                 except HopError as e:
@@ -635,23 +644,29 @@ class Driver:
                     else:
                         raise  # delivery unknown / non-idempotent: the USER decides
                 duration = round((time.perf_counter() - t0) * 1000, 1)
-                self.log.debug("%s ok", op, event="call", op=op, duration_ms=duration)
+                if routed:  # the route that really delivered (3a may have moved)
+                    route = {"via": carried[-1] if carried else None}
+                    _last_via.set(route["via"])
+                self.log.debug("%s ok", op, event="call", op=op, duration_ms=duration,
+                               **route)
                 if audited:
                     _audit.info("%s %s ok", self.node.id or self.node.path, op,
                                 extra={"event": "audit", "id": self.node.id or "",
                                        "path": self.node.path, "op": op,
                                        "outcome": "ok", "duration_ms": duration,
-                                       "attempt": attempt, **dropped,
+                                       "attempt": attempt, **dropped, **route,
                                        "txn": _log.current_txn.get()})
                 return result
             except HopError as e:
                 # DEBUG breadcrumb so the failure exists in the log stream too;
                 # the exception remains the report (no ERROR — raise-or-log)
                 duration = round((time.perf_counter() - t0) * 1000, 1)
+                if routed:  # the route that failed; None when every route did (3e)
+                    route = {"via": e.via}
                 self.log.debug("%s raising %s (delivered=%s)",
                                op, type(e).__name__, e.delivered,
                                event="raise", op=op, hop=e.hop,
-                               delivered=e.delivered, duration_ms=duration)
+                               delivered=e.delivered, duration_ms=duration, **route)
                 if audited:
                     _audit.info("%s %s failed (delivered=%s)",
                                 self.node.id or self.node.path, op, e.delivered,
@@ -659,7 +674,8 @@ class Driver:
                                        "path": self.node.path, "op": op,
                                        "outcome": "error", "delivered": e.delivered,
                                        "duration_ms": duration, "attempt": attempt,
-                                       **dropped, "txn": _log.current_txn.get()})
+                                       **dropped, **route,
+                                       "txn": _log.current_txn.get()})
                 raise
             except _ShalError as e:
                 # the device said no (#198): a shal.Error from the driver BODY —
@@ -670,13 +686,16 @@ class Driver:
                 # messages are secret-free by rule (context.md non-negotiables).
                 if audited and in_body:
                     duration = round((time.perf_counter() - t0) * 1000, 1)
+                    if routed:  # the route that carried the reply
+                        route = {"via": carried[-1] if carried else None}
                     _audit.info("%s %s device-error: %s",
                                 self.node.id or self.node.path, op, e,
                                 extra={"event": "audit", "id": self.node.id or "",
                                        "path": self.node.path, "op": op,
                                        "outcome": "device-error",
                                        "duration_ms": duration, "attempt": attempt,
-                                       **dropped, "txn": _log.current_txn.get()})
+                                       **dropped, **route,
+                                       "txn": _log.current_txn.get()})
                 raise
             finally:
                 if route_token is not None:
@@ -722,7 +741,8 @@ def _refuse_policy_change(driver, op: str, snap: _PolicySnap, *, txn: str | None
 
 
 def _approve_or_raise(driver, op: str, side_effect: str, sig, args, kwargs,
-                      gated: frozenset[str], approver, source: str) -> None:
+                      gated: frozenset[str], approver, source: str,
+                      route: dict | None = None) -> None:
     """Consult the active Approver for one gated call — an op whose side_effect is
     in its Hal's effective gated set (``gated``), decided by ``approver`` (whose
     ``source`` is ``hal:<path>``, ``host`` or ``default``, #217) — all
@@ -730,7 +750,10 @@ def _approve_or_raise(driver, op: str, side_effect: str, sig, args, kwargs,
     audits the decision — a gated op is never a read, so it is audited whether
     or not it is @idempotent — and raises ApprovalDenied (pre-I/O, nothing sent)
     on refusal (issue #14). Called ONCE per call: an idempotent retry after a
-    delivered="no" drop is covered by this same decision (#194)."""
+    delivered="no" drop is covered by this same decision (#194), and so is a
+    routed op's move to another route before delivery (RFC-001 3a). ``route`` is
+    ``{"via": <planned route>}`` on a node with routes (#236), else empty."""
+    route = route or {}
     from .approval import ApprovalRequest, ConsoleApprover
     from .errors import ApprovalDenied
     bound = sig.bind(driver, *args, **kwargs)
@@ -740,13 +763,13 @@ def _approve_or_raise(driver, op: str, side_effect: str, sig, args, kwargs,
     txn = _log.current_txn.get()
     allowed = bool(approver.approve(ApprovalRequest(
         op=op, path=node.path, id=node.id or "", side_effect=side_effect,
-        params=params, txn=txn)))
+        params=params, txn=txn, via=route.get("via"))))
     # every approval decision is on the record (deterministic/replayable)
     outcome = "approved" if allowed else "denied"
     _audit.info("%s %s %s by approval", node.id or node.path, op, outcome,
                 extra={"event": "audit", "id": node.id or "",
                        "path": node.path, "op": op, "outcome": outcome,
-                       "side_effect": side_effect, "txn": txn,
+                       "side_effect": side_effect, "txn": txn, **route,
                        # the ACTIVE gated set that decided it, so a narrowing
                        # leaves a trace (ADR-001 addendum 5, D27)
                        "gated": sorted(gated),

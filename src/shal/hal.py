@@ -11,6 +11,7 @@ from .driver import _effective_gated, inferred_side_effect
 from .errors import ApprovalDenied, Error, HopError, LimitError, LoadError
 from .loader import load_tree
 from .node import Node
+from .routes import RouteSet, last_via
 from .transport import Transport
 
 logger = logging.getLogger("shal.loader")
@@ -137,12 +138,20 @@ class Hal:
     def call_tool(self, name: str, arguments: dict | None = None) -> dict:
         """Dispatch a tool call by name. Returns {"ok": True, "result": ...} or,
         on failure, {"ok": False, "error": ..., "delivered": ...} — a
-        delivery-unknown write is reported, never silently retried (decision 6)."""
+        delivery-unknown write is reported, never silently retried (decision 6).
+
+        On a node with ``routes:`` (#236) the result also carries ``via``, the
+        route that carried the call (on failure: the route that failed, ``None``
+        when every route did), and a failed hop carries ``fix`` (RFC-001
+        "Failures the agent must be able to read"). A node without routes has no
+        ``via`` key at all, so its results are unchanged."""
         idx = self._tool_index()
         if name not in idx:
             raise LoadError(f"no tool '{name}' (see tool_schemas())")
         node, opname = idx[name]
         method = getattr(node.driver, opname)
+        routed = isinstance(getattr(node.driver, "bus", None), RouteSet)
+        token = last_via.set(None)
         try:
             result = method(**(arguments or {}))
         except LimitError as e:
@@ -158,9 +167,20 @@ class Hal:
             return {"ok": False, "error": str(e), "rejected": "approval",
                     "op": e.op, "device": node.id or node.path, "reason": e.reason}
         except HopError as e:
-            return {"ok": False, "error": str(e), "delivered": e.delivered}
+            if not routed:
+                return {"ok": False, "error": str(e), "delivered": e.delivered}
+            # every route failed (3e): the RFC text "<path>: no route delivered — …";
+            # else the route that failed is in the text. The fix has its own key
+            error = f"{e.path}: {e._msg}" if e.via is None else e._text(with_fix=False)
+            return {"ok": False, "error": error, "delivered": e.delivered,
+                    "via": e.via, "fix": e.fix}
         except Error as e:
             return {"ok": False, "error": str(e)}
+        finally:
+            via = last_via.get()
+            last_via.reset(token)
+        if routed:
+            return {"ok": True, "result": result, "via": via}
         return {"ok": True, "result": result}
 
     def _by_path(self, path: str) -> Node | None:

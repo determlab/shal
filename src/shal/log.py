@@ -8,7 +8,9 @@ Record schema (rule 5) — stable `extra` fields, uniform across the tree:
     event       stable machine key (connect/txn/run/exchange/select/retry/
                 raise/call/bind/env/ref/teardown/audit) — message TEXT is for
                 humans and free to evolve; `event` is for machines and is not.
-    path, hop, bus_family, addr, txn, attempt, op, duration_ms, delivered
+    path, hop, bus_family, addr, txn, attempt, op, duration_ms, delivered, via
+    `via` (#236) names the route of a node with `routes:`; it is ABSENT on a
+    node without routes, so those records are unchanged.
 Formatters that render these live in shal.logging (opt-in, app-side).
 """
 from __future__ import annotations
@@ -25,6 +27,11 @@ _audit.propagate = False  # silent by default; enable by attaching a handler
 
 # txn correlation: one short id per user-level capability call (rule 6)
 current_txn: contextvars.ContextVar[str] = contextvars.ContextVar("shal_txn", default="----")
+
+# the route a routed node's transport call is on now (#236): set by the RouteSet
+# around each route, so every hop line of that call carries `via`; None elsewhere
+current_via: contextvars.ContextVar[str | None] = contextvars.ContextVar(
+    "shal_via", default=None)
 
 
 def new_txn() -> str:
@@ -70,6 +77,9 @@ class _ShalLogAdapter(logging.LoggerAdapter):
                   if k not in _RESERVED_KWARGS}
         merged = {**self.extra, **extra, **fields}
         merged["txn"] = current_txn.get()
+        via = current_via.get()
+        if via is not None and "via" not in merged:
+            merged["via"] = via
         kwargs["extra"] = merged
         return msg, kwargs
 

@@ -64,6 +64,10 @@ class ApprovalRequest:
     side_effect: str
     params: dict
     txn: str
+    # the route the op is planned to use, on a node with ``routes:`` (#236), so a
+    # person reads "reboot board via ssh"; None on a node without routes. A later
+    # move to another route before delivery (RFC-001 3a) is not asked again.
+    via: str | None = None
 
 
 @runtime_checkable
@@ -140,8 +144,9 @@ class ConsoleApprover:
             return False  # no one to ask -> don't move
         args = ", ".join(f"{k}={v!r}" for k, v in request.params.items())
         who = request.id or request.path
+        via = "" if request.via is None else f" via {request.via}"
         banner = (f"\n  SHAL approval required [{request.side_effect}]\n"
-                  f"    {who}.{request.op}({args})\n"
+                  f"    {who}.{request.op}({args}){via}\n"
                   f"  Allow this actuation? [y/N] ")
         try:
             answer = self._prompt(banner)

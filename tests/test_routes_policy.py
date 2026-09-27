@@ -162,6 +162,8 @@ def test_exit_2_an_actuator_op_with_delivered_unknown_on_r1_stops(rig):
     e = excinfo.value
     assert e.via == "r1" and e.delivered == "unknown"
     assert "via=r1" in str(e)
+    assert e.fix == ('confirm on another route before re-sending: read board back '
+                     'with via="r2"')
     assert rig.sent == {"r1": 1, "r2": 0}      # no retry on r1, no traffic on r2
     assert rig.writes(rig.r2) == 0
 
@@ -238,11 +240,51 @@ def test_all_routes_down_is_one_error_listing_each_route(rig):
     e = excinfo.value
     text = str(e)
     assert e.delivered == "no" and e.path == "/r1/board"
-    assert "all 2 routes failed" in text
-    assert "r1 via /r1: simulated link drop before send (delivered=no)" in text
-    assert "r2 via /r2: simulated link drop before send (delivered=no)" in text
-    assert "pin one with via=<name>" in text
+    # RFC-001 "Failures the agent must be able to read" (#236): no single route to
+    # name, every route and its reason, and a fix
+    assert e.via is None
+    assert text.startswith("/r1/board  no route delivered — r1 via /r1: simulated "
+                           "link drop before send; r2 via /r2: simulated link drop "
+                           "before send")
+    assert e.fix == 'check the wiring sheet for board, or pin a route: via="r1"'
+    assert text.endswith(f"Fix: {e.fix}")
     assert rig.writes(rig.r1) == 0 and rig.writes(rig.r2) == 0
+
+
+# ---- call_tool returns via (#236) ----------------------------------------------------
+
+def test_call_tool_returns_the_route_that_carried_it(rig):
+    rig.r1.fail_next = 2
+    out = rig.hal.call_tool("board__read")
+    assert out["ok"] is True and out["via"] == "r2"
+
+
+def test_call_tool_failure_has_delivered_via_and_fix(rig):
+    rig.r1.fail_delivered_unknown = True
+    out = rig.hal.call_tool("board__fire", {"c": 30})
+    assert out["ok"] is False and out["delivered"] == "unknown" and out["via"] == "r1"
+    assert "via=r1" in out["error"] and "Fix:" not in out["error"]
+    assert out["fix"] == ('confirm on another route before re-sending: read board '
+                          'back with via="r2"')
+
+
+def test_call_tool_all_routes_down_is_the_rfc_shape(rig):
+    rig.r1.fail_next = 2
+    rig.r2.fail_next = 2
+    out = rig.hal.call_tool("board__read")
+    assert out == {
+        "ok": False,
+        "error": "/r1/board: no route delivered — r1 via /r1: simulated link drop "
+                 "before send; r2 via /r2: simulated link drop before send",
+        "delivered": "no", "via": None,
+        "fix": 'check the wiring sheet for board, or pin a route: via="r1"'}
+
+
+def test_call_tool_on_a_node_without_routes_has_no_via_key(rig):
+    assert "via" not in rig.hal.call_tool("r2_twin__read")
+    rig.r2.fail_next = 2
+    out = rig.hal.call_tool("r2_twin__read")
+    assert out["ok"] is False and "via" not in out and "fix" not in out
 
 
 # ---- HopError.via --------------------------------------------------------------------

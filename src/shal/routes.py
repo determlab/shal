@@ -16,8 +16,11 @@ Invariants (RFC-001 §2-§3; DESIGN V2 "Routing"):
 * ``delivered="unknown"`` (3b): an ``@idempotent`` op retries once on the same
   route, then may move. Any other op STOPS — no retry, no move: a ``write`` /
   ``config`` / ``actuator`` op is never re-fired on another route.
-* All routes down (3e): ONE ``HopError`` listing each route and its reason.
+* All routes down (3e): ONE ``HopError`` listing each route and its reason, with
+  ``via=None`` and a ``fix`` (RFC-001 "Failures the agent must be able to read").
 * A pinned call (``via="<name>"``, 3i) never moves; a failure names the route.
+* ``via`` everywhere (#236): every hop line logged inside a route carries it, and
+  a ``retry`` / ``failover`` line names the route tried and the one next.
 * The route set sits BELOW the op wrapper: limits and approval ran once, before
   any I/O, and no route change asks again.
 """
@@ -29,7 +32,7 @@ from contextvars import ContextVar
 from typing import TYPE_CHECKING, Any, NamedTuple
 
 from .errors import Error, HopError
-from .log import current_txn
+from .log import current_txn, current_via
 from .transport import (
     ByteTransport,
     CommandTransport,
@@ -52,15 +55,16 @@ class RouteCall(NamedTuple):
     route_set: RouteSet   # the set this applies to (a nested device has its own)
     idempotent: bool      # may retry / move after delivered="unknown"
     via: str | None       # pinned route name, or None
+    carried: list[str] | None = None  # the wrapper's list: each route that delivered
 
 
 # set by the op wrapper around the driver body; a transport call made outside an
 # op (or through another route set) gets the safe default: not idempotent, no pin
 current_call: ContextVar[RouteCall | None] = ContextVar("shal_route_call", default=None)
 
-# the fix line of an all-routes-down error (3e)
-_ALL_DOWN_FIX = ("check each route's link and bus; pin one with via=<name> "
-                 "to try it alone")
+# the route that carried the last routed op call in this context (#236): the op
+# wrapper sets it on success; Hal.call_tool reads it into the result's `via`
+last_via: ContextVar[str | None] = ContextVar("shal_last_via", default=None)
 
 
 class RouteSet(Transport):
@@ -117,52 +121,76 @@ class RouteSet(Transport):
                 try:
                     result = self._on_route(name, bus_node, addr, call, ctx.idempotent)
                 except HopError as e:
-                    e.with_via(name)
-                    if ctx.via is not None:
-                        raise  # pinned: never moves (3i)
-                    if e.delivered != "no" and not ctx.idempotent:
-                        raise  # 3b: delivery unknown on a changing op — stop
-                    failures.append((name, bus_node, e))
+                    # pinned: never moves (3i); 3b: delivery unknown on a
+                    # changing op — stop. Either way the error names its fix
+                    if ctx.via is not None or (e.delivered != "no"
+                                               and not ctx.idempotent):
+                        e.with_via(name, self._fix(name, e))
+                        raise
+                    failures.append((name, bus_node, e.with_via(name)))
                     if len(failures) < n:
-                        logger.warning("%s: route %s failed (delivered=%s); moving on",
-                                       self.host.path, name, e.delivered,
+                        nxt = self.routes[order[len(failures)]][0]
+                        logger.warning("%s: route %s failed (delivered=%s); next: %s",
+                                       self.host.path, name, e.delivered, nxt,
                                        extra={"event": "failover",
-                                              "path": self.host.path})
+                                              "path": self.host.path,
+                                              "via": name, "next": nxt})
                     continue
                 if ctx.via is None:
                     self._current = i  # sticky: the first route that delivers
+                if ctx.carried is not None:
+                    ctx.carried.append(name)
                 return result
             raise self._all_down(failures)
 
     def _on_route(self, name: str, bus_node: Node, addr: Any,
                   call: Callable[[Transport, Any], Any], idempotent: bool) -> Any:
-        """One route: try, and on a retryable failure revive it once and retry."""
+        """One route: try, and on a retryable failure revive it once and retry.
+        Every hop line logged on the way carries ``via=<name>`` (#236)."""
         bus = bus_node.bus
         if bus is None:  # _check_jumps refused this at load; kept loud
             raise HopError("route has no bus", path=bus_node.path, hop="route",
                            txn=current_txn.get())
+        token = current_via.set(name)
         try:
+            try:
+                return call(bus, addr)
+            except HopError as e:
+                if e.delivered != "no" and not idempotent:
+                    raise  # 3b: no retry
+                logger.warning("%s: route %s failed (delivered=%s); revive and retry "
+                               "on %s (1/1)", self.host.path, name, e.delivered, name,
+                               extra={"event": "retry", "path": self.host.path,
+                                      "via": name, "next": name})
+            bus.close()
+            bus.ensure_ready()
             return call(bus, addr)
-        except HopError as e:
-            if e.delivered != "no" and not idempotent:
-                raise  # 3b: no retry
-            logger.warning("%s: route %s failed (delivered=%s); revive and retry (1/1)",
-                           self.host.path, name, e.delivered,
-                           extra={"event": "retry", "path": self.host.path})
-        bus.close()
-        bus.ensure_ready()
-        return call(bus, addr)
+        finally:
+            current_via.reset(token)
+
+    def _fix(self, name: str, e: HopError) -> str:
+        """The next step for a call that stopped on route ``name`` (3b, 3i)."""
+        who = self.host.id or self.host.path
+        other = next(n for n in self.names if n != name)
+        if e.delivered != "no":
+            return (f'confirm on another route before re-sending: read {who} back '
+                    f'with via="{other}"')
+        return f'route {name} did not deliver; check its link, or pin a route: via="{other}"'
 
     def _all_down(self, failures: list[tuple[str, Node, HopError]]) -> HopError:
-        reasons = "; ".join(f"{name} via {bus_node.path}: {e._msg} "
-                            f"(delivered={e.delivered})"
+        # 3e, in the RFC-001 shape: "<path>: no route delivered — <name> via <bus>:
+        # <reason>; …", no single route to name (via=None), and a fix
+        reasons = "; ".join(f"{name} via {bus_node.path}: {e._msg}"
                             for name, bus_node, e in failures)
         delivered = ("unknown" if any(e.delivered != "no" for *_, e in failures)
                      else "no")
         last = failures[-1][2]
-        return HopError(f"all {len(failures)} routes failed: {reasons}; {_ALL_DOWN_FIX}",
+        who = self.host.id or self.host.path
+        return HopError(f"no route delivered — {reasons}",
                         path=self.host.path, hop=last.hop, txn=current_txn.get(),
-                        delivered=delivered, via=failures[-1][0])
+                        delivered=delivered, via=None,
+                        fix=f'check the wiring sheet for {who}, or pin a route: '
+                            f'via="{self.names[0]}"')
 
     # -- the kind methods (only the mixed-in kinds are offered: kinds()) -----------
     def _own(self, addr: Any) -> None:
