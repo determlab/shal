@@ -2,7 +2,9 @@
 
 Retry policy (DESIGN V2 decision 6): idempotent ops reconnect once / retry once;
 a write is NEVER silently re-fired — HopError(delivered=...) propagates untouched.
-The framework, not the driver, implements the retry machinery.
+The framework, not the driver, implements the retry machinery. A node with
+`routes:` binds a RouteSet (routes.py, #235) that applies the route failure
+policy below the body; this retry is the rule for nodes without routes.
 
 Observability (DESIGN V2 'Logging'): the wrapper is the single instrumentation
 point for capability calls — txn assignment, DEBUG call traces, WARNING on the
@@ -27,6 +29,8 @@ from . import log as _log
 from .errors import Error as _ShalError
 from .errors import HopError
 from .errors import LoadError as _LoadError
+from .routes import RouteCall, RouteSet, route_set_for
+from .routes import current_call as _route_call  # the op running now, for its RouteSet
 
 if TYPE_CHECKING:
     from .node import Node
@@ -391,7 +395,9 @@ class Driver:
 
     def bind(self, node: Node) -> None:
         self.node = node
-        self.bus = node.parent_bus
+        # a node with routes talks through a RouteSet of its kind (#235): one
+        # route at a time, the route's address in place of `addr`
+        self.bus = route_set_for(node, self.kind) if node.routes else node.parent_bus
         self.addr = node.address
         if getattr(self, "log", None) is None:
             # bus classes already bound a shal.bus.<family> logger in __init__;
@@ -545,6 +551,12 @@ class Driver:
         gatable = not isinstance(self, Transport)
         sig = inspect.signature(fn) if gatable else None
         op_var = _op_policy  # captured too: the nested-call check reads only this
+        # routes (#235): a routed node's ops take `via=<route name>` to pin a route;
+        # the RouteSet below the body applies the failure policy per transport call
+        routed = isinstance(self.bus, RouteSet)
+        if routed and "via" in inspect.signature(fn).parameters:
+            raise _LoadError(f"{self.node.path}: op {op} has a parameter named via, "
+                             f"which pins a route on a node with routes; rename it")
 
         @functools.wraps(fn)
         def call(*args, **kwargs):
@@ -553,9 +565,13 @@ class Driver:
             t0 = time.perf_counter()
             attempt = 1  # 2 once the idempotent reconnect-and-retry fires
             dropped: dict = {}  # {"hop": <hop that dropped>} once the retry fires
-            before = op_token = None
+            before = op_token = route_token = None
             in_body = False  # True once the driver body runs (after limits + approval)
+            # a pin is not an op argument: take it off before limits see the call
+            via = kwargs.pop("via", None) if routed else None
             try:
+                if via is not None:  # an unknown name: refused pre-I/O, names listed
+                    self.bus.check_via(via)
                 # the policy is the operator's (ADR-001 addendum 5): an ENCLOSING op
                 # that changed it before calling this one is caught here, pre-I/O
                 outer = op_var.get()
@@ -593,10 +609,15 @@ class Driver:
                     _approve_or_raise(self, op, side_effect, sig, args, kwargs,
                                       gated_now, approver, source)
                 in_body = True
+                if routed:  # the RouteSet reads it: idempotent? pinned? (3a/3b/3i)
+                    route_token = _route_call.set(RouteCall(self.bus, retry, via))
                 try:
                     result = fn(self, *args, **kwargs)
                 except HopError as e:
-                    if retry and e.delivered == "no" and self.bus is not None:
+                    # a routed node's RouteSet already revived and moved (§3):
+                    # nothing to add here; an unrouted node keeps today's rule
+                    if retry and e.delivered == "no" and self.bus is not None \
+                            and not routed:
                         # reconnect once, retry once — the common case stays magic,
                         # but a handled anomaly is WARNED, never silent (rule 4).
                         # Nothing reached the device the first time, so the ONE
@@ -658,6 +679,8 @@ class Driver:
                                        **dropped, "txn": _log.current_txn.get()})
                 raise
             finally:
+                if route_token is not None:
+                    _route_call.reset(route_token)
                 try:
                     if op_token is not None:  # ...and THIS op changing it is caught here
                         op_var.reset(op_token)

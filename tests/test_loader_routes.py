@@ -53,7 +53,7 @@ def test_two_route_node_loads_with_one_id(tmp_path):
         assert main == ("bus", node.parent, 0x48)
         assert (jump[1].path, jump[2]) == ("/bus2", 0x49)
         assert node.parent.routes == []  # an unrouted node holds none
-        # binds on its main route only (part 2 adds failover)
+        # reads on its main route (the failure policy: test_routes_policy.py)
         assert isinstance(hal.get_device("board").read_celsius(), float)
 
 
@@ -125,6 +125,13 @@ def test_jump_to_a_bus_of_the_wrong_kind_is_refused(tmp_path):
              'msg: {driver: "shal,sim-msg", address: sim}')
     assert refused(p) == ("/bus/board: route msg via /msg offers MessageTransport, "
                           "driver shal,sim-sensor needs ByteTransport")
+
+
+def test_jump_address_outside_the_bus_grammar_is_refused_at_load(tmp_path):
+    # the same grammar check the main route gets at bind (CTO ruling on PR #242)
+    p = topo(tmp_path, "- {via: /bus2, address: 0x99}")
+    assert refused(p) == ("/bus/board: route bus2 via /bus2: sim-i2c: invalid 7-bit "
+                          "I2C address '153' (grammar: 0x03-0x77)")
 
 
 def test_routes_without_address_stays_invalid(tmp_path):

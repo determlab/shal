@@ -371,8 +371,8 @@ def _no_main_bus(node: Node) -> LoadError:
 def _resolve_routes(node: Node, jumps: list, by_path: Mapping[str, Node]) -> None:
     """Store `[main, jump1, ...]` as (name, bus node, address) on the node. The
     main route is the node's place in the tree: its parent, named after it. A
-    jump's name defaults to the last segment of its `via`. Until failover lands
-    the node binds on its main route only; `_check_jumps` checks the rest."""
+    jump's name defaults to the last segment of its `via`. The driver binds a
+    RouteSet over all of them (#235); `_check_jumps` checks the jumps."""
     assert node.parent is not None  # _build refused a routed root
     routes: list[tuple[str, Node, Any]] = [(node.parent.name, node.parent, node.address)]
     for r in jumps:
@@ -533,13 +533,14 @@ def _bind_all(roots: list[Node], opened: list[tuple[Node, Transport]]) -> None:
 
 def _check_jumps(roots: list[Node]) -> None:
     """Each jump's `via` must be a bus that offers the driver's transport kind
-    (`kinds()`, never hasattr). The main route was checked at bind."""
+    (`kinds()`, never hasattr), and its address must pass that bus's grammar —
+    the same checks the main route gets at bind, at load, never at first use."""
     for root in roots:
         for node in root.walk():
             if node.driver is None:
                 continue
             need = getattr(type(node.driver), "kind", None)
-            for name, target, _addr in node.routes[1:]:
+            for name, target, addr in node.routes[1:]:
                 bus = target.bus
                 if bus is None:
                     raise LoadError(f"{node.path}: route {name}: no bus at {target.path}")
@@ -548,3 +549,9 @@ def _check_jumps(roots: list[Node]) -> None:
                         f"{node.path}: route {name} via {target.path} offers "
                         f"{', '.join(sorted(k.__name__ for k in bus.kinds()))}, driver "
                         f"{node.spec.get('driver')} needs {need.__name__}")
+                if need is not None:  # grammar at load, decision 2 (CTO, PR #242)
+                    try:
+                        bus.validate_address(addr)
+                    except LoadError as e:  # the bus's message states its grammar
+                        raise LoadError(f"{node.path}: route {name} via "
+                                        f"{target.path}: {e}") from e

@@ -14,6 +14,25 @@ All notable changes to this project are documented here. The format follows
 ## [Unreleased]
 
 ### Added
+- **Route failover: the route set and its failure policy** (#235, routes M1 part 2).
+  A node with `routes:` binds a `RouteSet` (`shal/routes.py`) in place of its
+  parent bus: a transport of the driver's kind that talks through one route at a
+  time (its own lock, then the bus lock) and puts the route's address in place of
+  `self.addr`. The active route is the first that delivers and stays active until
+  it fails; `close()` / `ensure_ready()` go back to the main route. On
+  `delivered="no"` any op revives the route once, then moves to the next; on
+  `delivered="unknown"` an `@idempotent` op retries once on the same route, then
+  may move, and any other op stops — a `write` / `config` / `actuator` op is never
+  re-fired on another route. Limits and approval still run once, before any I/O.
+  All routes down is one `HopError` listing each route and its reason. Python pins
+  a route by name, `dev.op(..., via="console")` (not gated; a pinned call never
+  moves; an unknown name lists the valid ones). An op parameter named `via` on a
+  routed node fails the load. Nodes without routes keep the retry rule unchanged.
+  The loader now also checks each jump's address against its bus's grammar and
+  fails the load naming the route (CTO ruling on PR #242).
+- **`HopError.via`** (#235, public API): the route that failed, `None` on a node
+  without routes; the text gains `, via=<name>` only when it is set, so an
+  unrouted node's error text is unchanged. `HopError.with_via(name)` sets it.
 - **The loader accepts `routes:`** (#231, routes M1 part 1). A routed node has
   both `address:` (its main route: its place in the tree, named after the parent)
   and `routes:` (named jumps `{via, address, name?}`; `name` defaults to the last

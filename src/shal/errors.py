@@ -24,7 +24,11 @@ class LoadError(Error):
 
 
 class HopError(Error):
-    """A hop in the recursion failed. Identity: (path, hop, txn)."""
+    """A hop in the recursion failed. Identity: (path, hop, txn).
+
+    ``via`` names the route that failed when the node has ``routes:`` (#235),
+    in the object and in the text (``via=<name>``); ``None`` on an unrouted node,
+    whose text is unchanged."""
 
     def __init__(
         self,
@@ -34,12 +38,27 @@ class HopError(Error):
         hop: str = "?",
         txn: str = "----",
         delivered: Delivered = "no",
+        via: str | None = None,
     ) -> None:
-        super().__init__(f"{path}  {msg}   (hop: {hop}, txn={txn}, delivered={delivered})")
         self.path = path
         self.hop = hop
         self.txn = txn
         self.delivered: Delivered = delivered
+        self.via = via
+        self._msg = msg
+        super().__init__(self._text())
+
+    def _text(self) -> str:
+        via = "" if self.via is None else f", via={self.via}"
+        return (f"{self.path}  {self._msg}   (hop: {self.hop}, txn={self.txn}, "
+                f"delivered={self.delivered}{via})")
+
+    def with_via(self, via: str) -> HopError:
+        """Name the route this error came through; returns the same error (its
+        type, traceback and ``delivered`` untouched), so a route set re-raises it."""
+        self.via = via
+        self.args = (self._text(),)
+        return self
 
 
 class HopTimeout(HopError):
