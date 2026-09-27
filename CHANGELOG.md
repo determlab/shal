@@ -14,6 +14,12 @@ All notable changes to this project are documented here. The format follows
 ## [Unreleased]
 
 ### Added
+- **Docs: `shal.load(dict)` and where `config:` lives** (#44). The README and the
+  SDK guide (`shal docs --sdk`) show `shal.load()` taking a topology as a Python
+  dict, with a sim example. The SDK guide says in one place (§1) that a node's
+  `config:` is `self.node.spec["config"]`, with `${ENV}` values resolved, and
+  shows a driver reading `self.node.spec.get("config", {})`. A test runs each
+  snippet as written. No code change.
 - **Route failover: the route set and its failure policy** (#235, routes M1 part 2).
   A node with `routes:` binds a `RouteSet` (`shal/routes.py`) in place of its
   parent bus: a transport of the driver's kind that talks through one route at a

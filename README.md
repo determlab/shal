@@ -293,6 +293,35 @@ Your Python does not change.
 
 ---
 
+## Load a topology from a dict
+
+No file needed: `shal.load()` also takes the topology as a Python dict, in the
+same shape as the YAML.
+
+```python
+import shal
+
+topology = {
+    "shal_version": 1,
+    "root": {
+        "bus": {
+            "driver": "shal,sim-i2c",
+            "address": "sim0",
+            "children": {
+                "temp0": {"id": "ambient_temp", "driver": "shal,sim-sensor",
+                          "address": 0x48},
+            },
+        },
+    },
+}
+with shal.load(topology) as hal:
+    print(hal.get_device("ambient_temp").read_celsius())
+```
+
+`use:` and `include:` paths in a dict resolve from the current directory.
+
+---
+
 ## Reuse a board — `use:` and `with:`
 
 A bench description isn't text you paste into the next project. It's a file the
