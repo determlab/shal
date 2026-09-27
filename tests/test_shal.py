@@ -156,10 +156,10 @@ def test_node_with_address_and_other_error_keeps_generic_message(tmp_path):
     assert "needs exactly one of" not in str(excinfo.value)
 
 
-def test_address_and_routes_together_keeps_generic_message(tmp_path):
-    # A node with BOTH address and routes trips the same oneOf as a node with
+def test_address_and_to_together_keeps_generic_message(tmp_path):
+    # A node with BOTH address and to trips the same oneOf as a node with
     # neither — but it's a different mistake and must not get the same
-    # friendly rewrite.
+    # friendly rewrite. (address + routes is a routed node, #231.)
     p = write(tmp_path, """
         shal_version: 1
         root:
@@ -167,15 +167,15 @@ def test_address_and_routes_together_keeps_generic_message(tmp_path):
             id: vac
             driver: "ecovacs,deebot"
             address: "1.2.3.4"
-            routes:
-              - {via: /x, address: 1}
+            to: $other
     """)
     with pytest.raises(shal.LoadError, match="schema violation") as excinfo:
         shal.load(p)
     assert "needs exactly one of" not in str(excinfo.value)
 
 
-def test_routes_fail_honestly(tmp_path):
+def test_routes_without_address_names_the_key(tmp_path):
+    # #231: the main route's address is `address:`; routes alone stays invalid
     p = write(tmp_path, """
         shal_version: 1
         root:
@@ -184,7 +184,7 @@ def test_routes_fail_honestly(tmp_path):
             routes:
               - {via: /x, address: 0x48}
     """)
-    with pytest.raises(shal.LoadError, match="not implemented"):
+    with pytest.raises(shal.LoadError, match="root/a' has routes but no address"):
         shal.load(p)
 
 

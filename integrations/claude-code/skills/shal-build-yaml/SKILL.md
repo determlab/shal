@@ -121,7 +121,13 @@ must name real ops/params of the bound driver (checked at load).
 
 ## Things that fail the load by design
 
-- `routes:` (failover) — parses but rejects: Phase 2.
+- `routes:` that break the declaration rules. A routed node sits under its main
+  bus with `address:` (the main route, named after the parent) and lists jumps as
+  `routes: [{via: /abs/bus, address, name?}]` (name defaults to the last segment of
+  `via`; in a `use:` template `via` must be a parameter, `${rack}/console2`). Refused:
+  no parent bus, a `via` with no bus, two routes with one name, a jump bus without
+  the driver's transport kind. Failover is not built yet: the node binds on its
+  main route only.
 - `insecure: true` missing on a plaintext `http://` or tcp bus.
 - Duplicate `id`, unknown `compatible`, malformed address, unresolved `$ref`,
   unknown node keys (schema is `additionalProperties: false`).

@@ -425,6 +425,21 @@ def test_json_bad_topology_is_a_json_error(lab, cmd):
     assert "Traceback" not in r.stderr and doc["error"] in r.stderr
 
 
+@pytest.mark.parametrize("route, says", [
+    ("{via: /ssh, address: 0x49}", "route ssh: no bus at /ssh"),
+    ("{via: /bus, address: 0x49, name: bus}",
+     "route bus via /bus and route bus via /bus share a name; set name: on one"),
+])
+def test_tools_json_bad_route_names_the_route_and_the_fix(lab, route, says):
+    # #231 agent path: add one jump, run `shal tools --json`, read what to change
+    bad = _SIM_YAML + f"        routes:\n          - {route}\n"
+    (lab / "routes.yaml").write_text(bad, encoding="utf-8")
+    r = _run("tools", "routes.yaml", "--json", cwd=lab)
+    assert r.returncode != 0
+    doc = _doc(r)
+    assert doc["ok"] is False and says in doc["error"]
+
+
 # -- shal tools --json --------------------------------------------------------------
 
 def test_tools_json_shape(lab):
