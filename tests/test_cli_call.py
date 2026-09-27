@@ -315,3 +315,48 @@ def test_refusal_json_how_to_approve_is_the_same_constant_as_the_denial(lab):
     out = json.loads(r.stdout)
     assert out["how_to_approve"] == HOW_TO_APPROVE_LINE
     assert NO_APPROVER_MESSAGE.endswith(out["how_to_approve"])
+
+
+# ---- routes: `via` in the JSON (#236, RFC-001 "Agent path") -------------------------
+
+def _two_route_lab(tmp_path, refusing):
+    """The two-route sim of #235 (r1 on bus sim0, r2 on bus sim1), `board` a
+    shal,sim-sensor; each bus address in `refusing` refuses every connection."""
+    from tests.test_routes_policy import _REFUSING, _TOPO
+    topo = (_TOPO.replace("driver: test,route-probe", "driver: shal,sim-sensor")
+                 .replace('driver: "test,route-probe"', 'driver: "shal,sim-sensor"'))
+    for addr in refusing:
+        topo = topo.replace(f"driver: shal,sim-i2c\n    address: {addr}",
+                            f"driver: test,refusing-i2c\n    address: {addr}")
+    (tmp_path / "refusing.py").write_text(_REFUSING, encoding="utf-8")
+    (tmp_path / "t.yaml").write_text(topo, encoding="utf-8")
+    return tmp_path
+
+
+def test_agent_path_json_says_r2_carried_it_when_r1_refuses(tmp_path):
+    lab = _two_route_lab(tmp_path, ["sim0"])
+    r = _shal("call", "t.yaml", "board", "read_celsius", "--json",
+              "--drivers", "refusing.py", cwd=lab)
+    assert r.returncode == 0, r.stderr
+    out = json.loads(r.stdout)
+    assert out["ok"] is True and isinstance(out["result"], float)
+    assert out["via"] == "r2" and out["side_effect"] == "none"
+
+
+def test_agent_path_json_when_every_route_refuses_has_delivered_via_and_fix(tmp_path):
+    lab = _two_route_lab(tmp_path, ["sim0", "sim1"])
+    r = _shal("call", "t.yaml", "board", "read_celsius", "--json",
+              "--drivers", "refusing.py", cwd=lab)
+    assert r.returncode == 1, r.stderr
+    out = json.loads(r.stdout)
+    assert out["ok"] is False and out["delivered"] == "no" and out["via"] is None
+    assert out["error"] == ("/r1/board: no route delivered — r1 via /r1: simulated "
+                            "link drop before send; r2 via /r2: simulated link drop "
+                            "before send")
+    assert out["fix"] == 'check the wiring sheet for board, or pin a route: via="r1"'
+
+
+def test_json_of_a_node_without_routes_has_no_via_key(lab):
+    r = _shal("call", "sim.yaml", "ambient_temp", "read_celsius", "--json", cwd=lab)
+    assert r.returncode == 0, r.stderr
+    assert "via" not in json.loads(r.stdout)

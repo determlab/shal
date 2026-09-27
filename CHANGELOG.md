@@ -14,6 +14,19 @@ All notable changes to this project are documented here. The format follows
 ## [Unreleased]
 
 ### Added
+- **`via` everywhere** (#236, routes M1 part 3, public API). A node with `routes:`
+  names the route on every line: `via` joins the stable log fields (every hop
+  line inside a route has it; `retry` / `failover` lines also carry `next`, the
+  route tried next), the `shal.audit` lines, `ApprovalRequest.via` (the planned
+  route, so a person reads "reboot board via ssh"; a move to another route before
+  delivery is not asked again, and the audit `ok` line shows the route that
+  delivered) and the result of `Hal.call_tool()` / `shal call --json` (`via` on
+  success and on failure; a failed hop also has `fix`). `HopError.fix` (new,
+  `None` unless a route set sets it) is the next step, shown as `Fix: …` in the
+  text. All routes down now reads as RFC-001 says:
+  `"<path>: no route delivered — <name> via <bus>: <reason>; …"`, with
+  `via: null` and a `fix`. A node without routes has no `via` key anywhere, so
+  its output is unchanged.
 - **Docs: `shal.load(dict)` and where `config:` lives** (#44). The README and the
   SDK guide (`shal docs --sdk`) show `shal.load()` taking a topology as a Python
   dict, with a sim example. The SDK guide says in one place (§1) that a node's

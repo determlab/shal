@@ -1943,3 +1943,53 @@ def test_posix_has_person_is_still_isatty(monkeypatch):
     monkeypatch.setattr(shal.approval, "_is_windows_console",
                         lambda fd: pytest.fail("no console check off Windows"))
     assert shal.ConsoleApprover(stream=_FdStream(7)).has_person() is True
+
+
+# ---- via: the planned route of a routed node (#236, RFC-001 §2 "Approval") --------
+
+@pytest.fixture
+def routed(tmp_path):
+    from tests.test_routes_policy import _TOPO, _Rig  # the two-route sim (#235)
+    p = tmp_path / "t.yaml"
+    p.write_text(_TOPO, encoding="utf-8")
+    with shal.load(p) as h:
+        yield _Rig(h)
+
+
+def test_request_via_is_the_planned_route(routed):
+    spy = Spy(allow=True)
+    with shal.approver(spy):
+        routed.board.fire(30)
+        routed.board.fire(31, via="r2")        # a pin is the planned route
+    assert [r.via for r in spy.seen] == ["r1", "r2"]
+
+
+def test_a_3a_move_is_not_approved_twice_and_the_audit_shows_the_delivering_route(
+        routed, audit_records):
+    spy = Spy(allow=True)
+    routed.r1.fail_next = 2                    # r1 refuses: nothing reached the device
+    with shal.approver(spy):
+        routed.board.fire(30)
+    assert [r.via for r in spy.seen] == ["r1"]  # asked once, for the planned route
+    assert routed.writes(routed.r2) == 1        # ...and r2 delivered
+    rows = [(r.outcome, r.via) for r in audit_records if r.op == "fire"]
+    assert rows == [("approved", "r1"), ("ok", "r2")]
+
+
+def test_request_via_is_none_without_routes(hal):
+    spy = Spy(allow=True)
+    with shal.approver(spy):
+        hal.get_device("rig").move(1)
+    assert spy.seen[0].via is None
+
+
+def test_console_approver_names_the_route():
+    class TTY(io.StringIO):
+        def isatty(self):
+            return True
+    shown = []
+    approver = shal.ConsoleApprover(stream=TTY(), prompt=lambda b: shown.append(b) or "y")
+    req = shal.ApprovalRequest(op="reboot", path="/b", id="board", side_effect="actuator",
+                               params={}, txn="----", via="ssh")
+    assert approver.approve(req) is True
+    assert "board.reboot() via ssh" in shown[0]

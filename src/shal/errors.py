@@ -28,7 +28,9 @@ class HopError(Error):
 
     ``via`` names the route that failed when the node has ``routes:`` (#235),
     in the object and in the text (``via=<name>``); ``None`` on an unrouted node,
-    whose text is unchanged."""
+    whose text is unchanged. ``fix`` (#236) is the next step a route set names
+    when it gives up (RFC-001 "Failures the agent must be able to read"); ``None``
+    otherwise, and then the text is unchanged too."""
 
     def __init__(
         self,
@@ -39,24 +41,30 @@ class HopError(Error):
         txn: str = "----",
         delivered: Delivered = "no",
         via: str | None = None,
+        fix: str | None = None,
     ) -> None:
         self.path = path
         self.hop = hop
         self.txn = txn
         self.delivered: Delivered = delivered
         self.via = via
+        self.fix = fix
         self._msg = msg
         super().__init__(self._text())
 
-    def _text(self) -> str:
+    def _text(self, with_fix: bool = True) -> str:
         via = "" if self.via is None else f", via={self.via}"
+        fix = "" if self.fix is None or not with_fix else f" Fix: {self.fix}"
         return (f"{self.path}  {self._msg}   (hop: {self.hop}, txn={self.txn}, "
-                f"delivered={self.delivered}{via})")
+                f"delivered={self.delivered}{via}){fix}")
 
-    def with_via(self, via: str) -> HopError:
-        """Name the route this error came through; returns the same error (its
-        type, traceback and ``delivered`` untouched), so a route set re-raises it."""
+    def with_via(self, via: str, fix: str | None = None) -> HopError:
+        """Name the route this error came through (and, when given, the fix);
+        returns the same error (its type, traceback and ``delivered`` untouched),
+        so a route set re-raises it."""
         self.via = via
+        if fix is not None:
+            self.fix = fix
         self.args = (self._text(),)
         return self
 

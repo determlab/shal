@@ -186,3 +186,45 @@ def test_bus_helpers_are_not_audited(audit_records):
         hal.get_node("bench").driver.model_for(0x48)  # bus helper, not a device op
     # the load's one `policy` event (ADR-001 addendum 5) is not a call record
     assert [r for r in audit_records if r.event != "policy"] == []
+
+
+# ---- via on every line of a routed node (#236, RFC-001 §4) ------------------------
+
+@pytest.fixture
+def routed(tmp_path):
+    from tests.test_routes_policy import _TOPO, _Rig  # the two-route sim (#235)
+    p = tmp_path / "t.yaml"
+    p.write_text(_TOPO, encoding="utf-8")
+    with shal.load(p) as hal:
+        yield _Rig(hal)
+
+
+def test_exit_6_every_log_line_of_a_routed_node_has_via(routed, caplog):
+    routed.r1.fail_next = 2                    # r1 refuses: the call moves to r2
+    with caplog.at_level(logging.DEBUG, logger="shal"):
+        routed.board.read()
+    lines = [r for r in caplog.records if r.name != "shal.audit"]
+    assert lines and all(hasattr(r, "via") for r in lines), \
+        [(r.name, r.getMessage()) for r in lines if not hasattr(r, "via")]
+    [call] = [r for r in lines if getattr(r, "event", "") == "call"]
+    assert call.via == "r2"                    # the route that really delivered
+    # a retry line says which route was tried and which is next
+    [retry] = [r for r in lines if getattr(r, "event", "") == "retry"]
+    assert (retry.via, retry.next) == ("r1", "r1")
+    [move] = [r for r in lines if getattr(r, "event", "") == "failover"]
+    assert (move.via, move.next) == ("r1", "r2")
+    assert "next: r2" in move.getMessage()
+
+
+def test_the_audit_line_of_a_routed_node_has_via(routed, audit_records):
+    routed.r1.fail_next = 2
+    routed.board.fire(30)                      # conftest seats AutoApprove
+    by = {r.outcome: r for r in audit_records if r.event == "audit"}
+    assert by["approved"].via == "r1"          # the planned route
+    assert by["ok"].via == "r2"                # the route that delivered
+
+
+def test_an_unrouted_node_has_no_via_on_any_line(motor_hal, caplog, audit_records):
+    with caplog.at_level(logging.DEBUG, logger="shal"):
+        motor_hal.get_device("m").spin(250)
+    assert not any(hasattr(r, "via") for r in [*caplog.records, *audit_records])
