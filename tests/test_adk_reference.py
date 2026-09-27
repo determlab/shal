@@ -15,6 +15,7 @@ from pathlib import Path
 import pytest
 
 from shal import cli
+from shal.adk.reference.kvstore.driver import DbmStore
 from shal.adk.reference.mcp23017.driver import Mcp23017
 from shal.adk.reference.order_service.driver import OrderService
 from shal.adk.reference.rigol_dp832.driver import RigolDp832
@@ -25,9 +26,10 @@ from shal.conformance import check_driver
 
 REFS = {"tmp102": Tmp102, "mcp23017": Mcp23017, "rigol_dp832": RigolDp832,
         "sonos": SonosSpeaker, "order_service": OrderService,
-        "sqlite": SqliteDatabase}
-#: references whose twin is the node address, not a sim.py (sqlite: ":memory:")
-ADDRESS_TWIN = {"sqlite"}
+        "sqlite": SqliteDatabase, "kvstore": DbmStore}
+#: references whose twin is the node address, not a sim.py (sqlite: ":memory:";
+#: kvstore: "sim", the real dbm.dumb in a throwaway folder)
+ADDRESS_TWIN = {"sqlite", "kvstore"}
 
 
 def _ref_dir(name: str) -> Path:
@@ -105,6 +107,31 @@ def test_docs_example_sqlite_prints_three_files_and_no_sim(capsys):
     assert "shal probe topology.yaml --drivers driver.py\n" in out
     assert "sim.py" not in out.split("# ==== ")[0]
     assert 'address: ":memory:"' in out
+
+
+def test_docs_example_kvstore_prints_three_files_and_no_sim(capsys):
+    # #23: the short wrap-a-library recipe — a root driver (no kind) over stdlib dbm
+    assert cli.main(["docs", "--example", "kvstore"]) == 0
+    out = capsys.readouterr().out
+    heads = [ln.split()[2] for ln in out.splitlines() if ln.startswith("# ==== ")]
+    assert heads == ["driver.py", "test_kvstore.py", "topology.yaml"]
+    assert "shal probe topology.yaml --drivers driver.py\n" in out
+    assert "kind = None" in out and "address: sim" in out
+
+
+def test_the_guide_and_the_skills_send_a_library_to_the_recipe():
+    # #23: `shal docs` (pip-reachable) teaches the recipe and names its example;
+    # both authoring skills point at it, and Rule 3 is no longer an absolute
+    guide = (files("shal") / "AGENT_GUIDE.md").read_text(encoding="utf-8")
+    recipe = guide.split("## Wrap a library: the recipe", 1)[1].split("\n## ", 1)[0]
+    for must in ("kind = None", "cls()", "cls(node)", "shal.drivers",
+                 "shal docs --example kvstore", "shal check", "Wrap a library or build a bus"):
+        assert must in recipe, must
+    skills = Path(__file__).resolve().parents[1] / "integrations" / "claude-code" / "skills"
+    build = (skills / "shal-build-driver" / "SKILL.md").read_text(encoding="utf-8")
+    gen = (skills / "shal-generate-driver" / "SKILL.md").read_text(encoding="utf-8")
+    assert "shal docs --example kvstore" in build and "shal docs --example kvstore" in gen
+    assert "If you need a new way to reach hardware, that's a bus" not in build
 
 
 def test_docs_example_unknown_name_exits_2(capsys):

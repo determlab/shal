@@ -15,7 +15,13 @@ SDK guide is insufficient, that's a finding to report, not a reason to peek.
 Read the documentation and write down (as comments or a scratch table):
 
 1. **Identity**: vendor, part → `compatible = "vendor,part"` (lowercase).
-2. **Transport**: I²C registers → `kind = ByteTransport`; SCPI commands →
+2. **Transport**: does a Python library or vendor SDK already talk to the
+   device (the doc names a client package, or `pip install` finds one)? Then
+   **wrap it as a root driver** — `kind = None`, no bus, the library owns the
+   transport — and do not hand-roll its protocol or auth as a bus. Follow the
+   recipe in the shipped guide (`shal docs`, "Wrap a library: the recipe") and
+   start from `shal docs --example kvstore`. Otherwise the doc's wire protocol
+   picks the kind: I²C registers → `kind = ByteTransport`; SCPI commands →
    `MessageTransport` (scpi dialect); REST/JSON → `MessageTransport`.
 3. **Ops**: every read/measurement and every command worth exposing. For each:
    the wire exchange (register + bytes / SCPI string / message shape), the
@@ -125,7 +131,11 @@ registry-ladder `tested` level is reserved for registry CI.
 
 ## Generating a BUS instead (device on a new transport)
 
-When the device needs a transport no bundled bus covers, follow
+First rule out a library: if a Python client library or vendor SDK already
+reaches the device, wrap it as a root driver (Step 0.2, `shal docs --example
+kvstore`) — a bus that re-implements the library's auth and transport is the
+wrong artifact. Only when you would write the wire protocol yourself, and the
+device needs a transport no bundled bus covers, follow
 [shal-build-bus](../shal-build-bus/SKILL.md) with the protocol documentation as
 your wire spec. Same rules: SDK + skills only, no SHAL internals; deliver
 `bus.py` + a fake far-side for tests + the same NOTES.md.

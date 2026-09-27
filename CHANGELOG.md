@@ -14,6 +14,20 @@ All notable changes to this project are documented here. The format follows
 ## [Unreleased]
 
 ### Added
+- **The wrap-a-library recipe, and ADK reference `kvstore` (`python,dbm`)** (#23).
+  `shal docs` gains "Wrap a library: the recipe": a rule for when to wrap a
+  Python library as a root driver and when to build a bus, and five steps —
+  declare no `kind` (the loader asks for a parent bus only when `kind` is set),
+  no constructor arguments (a device driver is built as `cls()`, a bus as
+  `cls(node)`), connect lazily, register (`@register` or a `shal.drivers` entry
+  point), and pass `shal check`. `shal docs --example kvstore` prints the worked
+  example: a short root driver over the stdlib `dbm.dumb` (nothing to install;
+  `address: sim` is the same library in a throwaway folder), its test and its
+  topology. It is unregistered guide material like the other references; CI's
+  `references` job runs `shal check` on it. `SDK.md` and the `shal-build-driver`,
+  `shal-generate-driver` and `shal-build-bus` skills point at the recipe, and
+  `shal-build-driver` Rule 3 no longer says every new way to reach a device is
+  a bus.
 - **Samples: `shal docs --samples`, `--sample <name>` and `--sample <name> --to DIR`**
   (#206). A sample is a small program for a person deciding whether SHAL does
   their job; the ADK references stay the cold agent's (`--list` / `--example`
