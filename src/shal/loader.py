@@ -141,11 +141,13 @@ def load_tree(
     roots: list[Node] = []
     ids: dict[str, Node] = {}
     refs: list[tuple[Node, str]] = []
+    routed: list[tuple[Node, list]] = []
     ctx = _IncludeCtx(top_root=base_dir, base_dir=base_dir, seen=seen)
 
     merged = _merge_includes(doc, src_label, ctx)
     for name, (spec, node_ctx, _origin) in merged.items():
-        roots.append(_build(name, spec, parent=None, ids=ids, refs=refs, ctx=node_ctx))
+        roots.append(_build(name, spec, parent=None, ids=ids, refs=refs,
+                            routed=routed, ctx=node_ctx))
 
     # $ref: loader links instead of recursing, so load terminates
     for node, ref in refs:
@@ -155,6 +157,12 @@ def load_tree(
         node.ref_target = target
         logger.debug("linked %s -> %s", ref, target.path,
                      extra={"event": "ref", "path": node.path})
+
+    # routes: `via` resolves against the whole tree, like `to:`, so it may point forward
+    if routed:
+        by_path = {n.path: n for r in roots for n in r.walk()}
+        for node, jumps in routed:
+            _resolve_routes(node, jumps, by_path)
 
     _bind_drivers(roots)
     n_nodes = sum(1 for r in roots for _ in r.walk())
@@ -202,7 +210,7 @@ def _validate_schema(doc: Any, *, source: str) -> None:
         instance = first.instance
         # #95: a node with NONE of address/routes/to (the common "forgot the
         # address on a cloud/config-only device" slip) trips this same oneOf as
-        # a node that has e.g. BOTH address and routes — jsonschema's rendering
+        # a node that has e.g. BOTH address and to — jsonschema's rendering
         # can't tell the two apart ("is not valid under any of the given
         # schemas"). Disambiguate on the instance itself: only a node missing
         # all three (and not a `use:` node, which legitimately has none —
@@ -219,6 +227,12 @@ def _validate_schema(doc: Any, *, source: str) -> None:
                 and not any(k in instance for k in _ADDRESS_ROUTES_TO)):
             raise LoadError(f"{source}: node '{where}' needs exactly one of "
                             f"address | routes | to")
+        # a routed node keeps its main route in `address:` (under its parent bus)
+        if (_is_address_routes_to_oneof(first) and isinstance(instance, dict)
+                and "use" not in instance and "routes" in instance
+                and "address" not in instance and "to" not in instance):
+            raise LoadError(f"{source}: node '{where}' has routes but no address; "
+                            f"add address: for its main route, under its parent bus")
         raise LoadError(f"{source}: schema violation at {where}: {first.message}"
                         + (f" (+{len(errors) - 1} more)" if len(errors) > 1 else ""))
 
@@ -315,7 +329,7 @@ def _no_policy(doc: Mapping, target: Path) -> None:
 
 
 def _build(name: str, spec: Mapping, *, parent: Node | None,
-           ids: dict[str, Node], refs: list, ctx: _IncludeCtx) -> Node:
+           ids: dict[str, Node], refs: list, routed: list, ctx: _IncludeCtx) -> Node:
     # `use:` splices an external template subtree in place of this node's body
     # (device-tree /include/). Happens BEFORE env resolution so `${param}` from
     # `with:` is consumed first; leftover ${VAR} still resolve from the environment.
@@ -333,8 +347,9 @@ def _build(name: str, spec: Mapping, *, parent: Node | None,
         ids[node.id] = node
 
     if "routes" in spec:
-        raise LoadError(f"{node.path}: routes/failover not implemented in this "
-                        f"version (DECISIONS v2.1 #6)")
+        if parent is None:  # the main route is the node's place in the tree
+            raise _no_main_bus(node)
+        routed.append((node, list(spec["routes"])))
     if "to" in spec:
         refs.append((node, spec["to"]))
 
@@ -343,9 +358,36 @@ def _build(name: str, spec: Mapping, *, parent: Node | None,
         node.spec["config"] = {k: _resolve_env(v)
                                for k, v in node.spec["config"].items()}
     for cname, cspec in (spec.get("children") or {}).items():
-        node.children[cname] = _build(cname, cspec, parent=node,
-                                      ids=ids, refs=refs, ctx=ctx)
+        node.children[cname] = _build(cname, cspec, parent=node, ids=ids,
+                                      refs=refs, routed=routed, ctx=ctx)
     return node
+
+
+def _no_main_bus(node: Node) -> LoadError:
+    return LoadError(f"{node.path}: a node with routes must sit under its main bus; "
+                     f"put it there and list the other channels as routes")
+
+
+def _resolve_routes(node: Node, jumps: list, by_path: Mapping[str, Node]) -> None:
+    """Store `[main, jump1, ...]` as (name, bus node, address) on the node. The
+    main route is the node's place in the tree: its parent, named after it. A
+    jump's name defaults to the last segment of its `via`. Until failover lands
+    the node binds on its main route only; `_check_jumps` checks the rest."""
+    assert node.parent is not None  # _build refused a routed root
+    routes: list[tuple[str, Node, Any]] = [(node.parent.name, node.parent, node.address)]
+    for r in jumps:
+        via = r["via"]
+        name = r.get("name") or via.rsplit("/", 1)[-1]
+        for other, bus, _ in routes:
+            if other == name:
+                raise LoadError(
+                    f"{node.path}: route {name} via {bus.path} and route {name} "
+                    f"via {via} share a name; set name: on one of them")
+        target = by_path.get(via)
+        if target is None:
+            raise LoadError(f"{node.path}: route {name}: no bus at {via}")
+        routes.append((name, target, _resolve_env(r["address"])))
+    node.routes = routes
 
 
 def _expand_use(name: str, spec: Mapping, ctx: _IncludeCtx) -> tuple[dict, _IncludeCtx]:
@@ -365,6 +407,13 @@ def _expand_use(name: str, spec: Mapping, ctx: _IncludeCtx) -> tuple[dict, _Incl
     if not isinstance(doc, Mapping) or "template" not in doc:
         raise LoadError(f"{target}: a `use:` target must define a top-level "
                         f"`template:` node")
+    # a template is reused across the tree, so a jump's bus comes from `with:`
+    for rname, via in _template_vias(doc["template"]):
+        if not via.startswith("${"):
+            raise LoadError(
+                f"node '{name}': use '{rel}': route {rname} via {via} is a literal "
+                f"path; a via inside a template must be a parameter "
+                f"(e.g. ${{rack}}/console2, set from with:)")
     # substitute `with:` params first, THEN validate — so ${param} placeholders
     # (which would violate strict id/address grammars) are already resolved.
     doc = {**doc, "template": _apply_params(doc["template"],
@@ -374,6 +423,18 @@ def _expand_use(name: str, spec: Mapping, ctx: _IncludeCtx) -> tuple[dict, _Incl
     base = doc["template"]
     merged = {**base, **{k: v for k, v in spec.items() if k not in ("use", "with")}}
     return merged, ctx.descend(target)
+
+
+def _template_vias(spec: Any):
+    """(route name, via) for every jump in a raw template subtree, before `with:`."""
+    if not isinstance(spec, Mapping):
+        return
+    for r in spec.get("routes") or []:
+        if isinstance(r, Mapping) and isinstance(r.get("via"), str):
+            yield r.get("name") or r["via"].rsplit("/", 1)[-1], r["via"]
+    children = spec.get("children")
+    for child in (children.values() if isinstance(children, Mapping) else ()):
+        yield from _template_vias(child)
 
 
 def _apply_params(value: Any, params: Mapping[str, Any], src: Path, name: str) -> Any:
@@ -418,6 +479,7 @@ def _bind_drivers(roots: list[Node]) -> None:
     opened: list[tuple[Node, Transport]] = []
     try:
         _bind_all(roots, opened)
+        _check_jumps(roots)  # after every bus is bound: a jump may point forward
     except BaseException:
         for node, t in reversed(opened):
             try:
@@ -442,6 +504,8 @@ def _bind_all(roots: list[Node], opened: list[tuple[Node, Transport]]) -> None:
             node.driver = drv
 
             bus = node.parent_bus
+            if node.routes and bus is None:  # the parent is not a bus
+                raise _no_main_bus(node)
             need = getattr(cls, "kind", None)
             if need is not None:
                 if bus is None:
@@ -465,3 +529,22 @@ def _bind_all(roots: list[Node], opened: list[tuple[Node, Transport]]) -> None:
                 if child_bus is not None:
                     child.exposed_bus = child_bus
                     opened.append((child, child_bus))
+
+
+def _check_jumps(roots: list[Node]) -> None:
+    """Each jump's `via` must be a bus that offers the driver's transport kind
+    (`kinds()`, never hasattr). The main route was checked at bind."""
+    for root in roots:
+        for node in root.walk():
+            if node.driver is None:
+                continue
+            need = getattr(type(node.driver), "kind", None)
+            for name, target, _addr in node.routes[1:]:
+                bus = target.bus
+                if bus is None:
+                    raise LoadError(f"{node.path}: route {name}: no bus at {target.path}")
+                if need is not None and need not in bus.kinds():
+                    raise LoadError(
+                        f"{node.path}: route {name} via {target.path} offers "
+                        f"{', '.join(sorted(k.__name__ for k in bus.kinds()))}, driver "
+                        f"{node.spec.get('driver')} needs {need.__name__}")

@@ -72,7 +72,8 @@
       "additionalProperties": false,
       "properties": {
         "via": { "$ref": "#/$defs/path" },
-        "address": { "$ref": "#/$defs/address" }
+        "address": { "$ref": "#/$defs/address" },
+        "name": { "$ref": "#/$defs/nodeName" }
       }
     },
     "node": {
@@ -150,12 +151,12 @@
       },
       "allOf": [
         {
-          "comment": "A use: node draws address/routes/to from its template, so it is exempt from the one-of-those constraint that ordinary nodes obey.",
+          "comment": "A use: node draws address/routes/to from its template, so it is exempt from the one-of-those constraint that ordinary nodes obey. A routed node has both address (its main route, under its parent bus) and routes (the jumps); routes without address is invalid.",
           "if": { "not": { "required": ["use"] } },
           "then": {
             "oneOf": [
               { "required": ["address"], "not": { "anyOf": [{ "required": ["routes"] }, { "required": ["to"] }] } },
-              { "required": ["routes"], "not": { "anyOf": [{ "required": ["address"] }, { "required": ["to"] }] } },
+              { "required": ["routes"], "allOf": [{ "required": ["address"] }], "not": { "required": ["to"] } },
               { "required": ["to"], "not": { "anyOf": [{ "required": ["address"] }, { "required": ["routes"] }, { "required": ["children"] }] } }
             ]
           }

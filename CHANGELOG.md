@@ -14,6 +14,17 @@ All notable changes to this project are documented here. The format follows
 ## [Unreleased]
 
 ### Added
+- **The loader accepts `routes:`** (#231, routes M1 part 1). A routed node has
+  both `address:` (its main route: its place in the tree, named after the parent)
+  and `routes:` (named jumps `{via, address, name?}`; `name` defaults to the last
+  segment of `via`, and is new in the schema). `via` resolves against the whole
+  tree, like `to:`. The node keeps one id and holds `node.routes`, the ordered
+  `(name, bus node, address)` list `[main, jump1, ...]`; until failover lands it
+  binds on its main route only. Four load refusals name the route and the fix: no
+  parent bus, a `via` with no bus, a duplicate route name, and a jump bus that
+  does not offer the driver's transport kind. In a `use:` template a `via` must
+  be a parameter (`${rack}/console2`). `routes:` without `address:` stays a schema
+  error, now with a message naming the key. `Node.bus` is the bus a node provides.
 - **The wrap-a-library recipe, and ADK reference `kvstore` (`python,dbm`)** (#23).
   `shal docs` gains "Wrap a library: the recipe": a rule for when to wrap a
   Python library as a root driver and when to build a bus, and five steps —

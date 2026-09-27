@@ -26,6 +26,9 @@ class Node:
         self.driver: Driver | None = None
         self.spec: dict[str, Any] = {}  # schema-validated keys; set by the loader
         self.ref_target: Node | None = None  # $ref: name pointer, never routed through
+        self.routes: list[tuple[str, Node, Any]] = []  # `routes:` -> ordered
+        # (name, bus node, address): [main, jump1, ...]; main is (parent.name,
+        # parent, address). Empty for an unrouted node. Set by the loader.
         self.exposed_bus: Transport | None = None  # set when parent provides a
         # per-child bus (mux channels); otherwise parent's driver is the bus
         self.hal: Hal | None = None  # the Hal that loaded it (set by shal.load) —
@@ -53,12 +56,15 @@ class Node:
     @property
     def parent_bus(self) -> Transport | None:
         """Bus exposed by the parent node; None at root. One relation, used everywhere."""
+        return None if self.parent is None else self.parent.bus
+
+    @property
+    def bus(self) -> Transport | None:
+        """Bus this node provides to its children; None if it provides none."""
         from .transport import Transport
-        if self.parent is None:
-            return None
-        if self.parent.exposed_bus is not None:  # mux channel etc.
-            return self.parent.exposed_bus
-        d = self.parent.driver
+        if self.exposed_bus is not None:  # mux channel etc.
+            return self.exposed_bus
+        d = self.driver
         return d if isinstance(d, Transport) else None
 
     def walk(self, _seen: set[int] | None = None):
