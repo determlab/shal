@@ -173,6 +173,16 @@ All notable changes to this project are documented here. The format follows
 - **The `jig` sample writes `calls=None`** (#222). Its loop does not collect
   SHAL calls, so each record now says "not collected" and the record file has
   no `calls` key, instead of `calls: []` ("collected, and there were none").
+- **SDK.md states the device-driver lifecycle** (#24). A new §1 "Lifecycle"
+  section (`shal docs --sdk`) says when a device driver is built (`cls()`, no
+  arguments), bound (`bind(node)`: parse the address after `super().bind(node)`,
+  or before it when `op_limits()` needs the parsed value), when its bus opens
+  (the first op; `shal mcp` at serve start) and when it closes (`hal.close()` or
+  the end of `with`, and on a load refused after binding). It carries one
+  runnable example, and `tests/test_sdk_lifecycle.py` runs it from the printed
+  guide. §11 warns against `def __init__(self, node)` on a device driver (a
+  `TypeError` at load). The "never read the source" line now says the guide aims
+  for that, and asks for a report naming the files read when it falls short.
 
 ### Fixed
 - **A load refused after binding now closes the bound tree** (#229). When
