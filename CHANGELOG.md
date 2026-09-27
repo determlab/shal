@@ -13,6 +13,32 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+## [0.3.0] - 2026-09-28
+
+**Upgrading from 0.2.x — two breaking changes:**
+
+- **Vendor driver ids no longer resolve on a bare install** (#149). `ti,tmp102`,
+  `microchip,mcp23017`, `rigol,dp832` and the other `vendor,part` drivers are now
+  guide material, not registered drivers: load them with `--drivers` (or copy one
+  with `shal docs --example <name>`). Only `shal,*` compatibles ship.
+- **An `@op` with no `side_effect` is now always gated and audited** (#194), even
+  when it is `@idempotent`. Label every read `side_effect="none"`; `shal check`
+  warns on any unlabelled op.
+
+**New:** `shal,sim-sensor` so the Quick Start works on a bare install (#156);
+`shal call` — run an op from the CLI, gated ops refused (#160); `shal check
+--json` (#148); `--json` on `shal probe`, `shal tools`, `shal docs --list` (#185);
+the ADK reference set and `shal docs --list` / `--example` (#149, #152, #157); the
+`shal,http` request envelope (#104); a headless no-approver denial that says how
+to approve, with `reason: "no-approver"` (#186); topology `include:` (#134);
+`AGENTS.md` (#146); the gated set as operator policy — `shal.set_gated_effects`
+and a topology's `policy: {gated: [...]}`, default unchanged (#114); a per-Hal
+approver, `shal.load(path, approver=a)` (#217); samples, `shal docs --samples` /
+`--sample <name> --to DIR` (`hello`, `limits`, `jig`) (#206, #207, #209);
+`shal.record`, with `runner: script` and `read(store, newer="skip")` (#141, #214,
+#227); a device refusal leaves an audit record (#198); the wrap-a-library recipe
+and the `kvstore` reference (#23).
+
 ### Added
 - **The wrap-a-library recipe, and ADK reference `kvstore` (`python,dbm`)** (#23).
   `shal docs` gains "Wrap a library: the recipe": a rule for when to wrap a
@@ -151,97 +177,6 @@ All notable changes to this project are documented here. The format follows
   skipped; a malformed one still raises `RecordError`. The default is unchanged:
   `read(store)` (`newer="refuse"`) returns a list and refuses the whole read for
   one newer record (#223). Any other value of `newer` is a `ValueError`.
-
-### Changed
-- **`Record.calls` is optional: `None` means "not collected"** (#218). A producer
-  that does not collect SHAL calls now writes a record with no `calls` key, in
-  the YAML audit copy and in the db's JSON, and `read()` gives back
-  `calls is None`. `calls=()` still means "collected, and there were none": it
-  is written `calls: []` and reads back `()`. Records already written with
-  `calls: []` read back unchanged; no migration. A `calls` that is not a list
-  is still a `RecordError`.
-- **`record_version` is 2** (#223). #218 made `calls` optional, and a version-1
-  reader cannot read a record without it, so a new record is written
-  `record_version: 2`. The reader reads versions 1 and 2: a version-1 record,
-  `calls: []` included, reads back unchanged (`calls == ()`). A record newer
-  than the reader is refused in one sentence that names both versions and no
-  key: "this record is version 3, newer than this SHAL reads (up to 2) —
-  upgrade pyshal". The check runs before any key is read, so a newer record
-  that lacks a key is not reported as a missing key. `read()` over a store
-  that holds one newer record refuses the whole read; it does not skip it. A
-  `record_version` below 1 is a `RecordError`.
-- **The `jig` sample writes `calls=None`** (#222). Its loop does not collect
-  SHAL calls, so each record now says "not collected" and the record file has
-  no `calls` key, instead of `calls: []` ("collected, and there were none").
-
-### Fixed
-- **A load refused after binding now closes the bound tree** (#229). When
-  `shal.load` refuses a load after `load_tree` succeeded (a driver changed the
-  approval policy at `bind()`, or `policy.gated` is bad), the bound tree was left
-  open until garbage collection. Now any error between a bound tree and a built
-  Hal closes it once (last root first, each subtree leaf->root) and re-raises the
-  original exception unchanged; the refusal is still restored and audited as
-  before. Each node's close is guarded on its own: one that raises is logged
-  (`event="load_cleanup_failed"`, type and that node's path only), every other
-  node still closes, and the original is never replaced. #217's fill-error
-  cleanup uses the same path, so nothing closes twice.
-- **A `bind()` that raises during a load now closes what was already bound**
-  (#220). `loader.load_tree` closes each Transport driver and child bus it had
-  bound, in reverse order, exactly once, then re-raises the original exception
-  object unchanged (a `LoadError` or any other). A close that raises during this
-  cleanup is logged (`event="bind_cleanup_failed"`, type and path only) and never
-  replaces the original. No Hal is built, so #217's fill cleanup does not close
-  them a second time.
-- **On Windows, a NUL stdin is no person** (#210). `NUL` (`subprocess.DEVNULL`,
-  `< NUL`) is a character device, so `isatty()` says True. `ConsoleApprover`
-  thought a person was there, prompted, read EOF and denied with the generic
-  reason. On Windows `has_person()` now also needs stdin to be a real console
-  (`GetConsoleMode` on its handle, stdlib `ctypes` only), so a gated op run with
-  a NUL stdin is denied with the "no approver is set and stdin is not a
-  terminal" text and `reason="no-approver"`, and nothing is asked. Any error in
-  the check counts as no person. Other systems, an empty pipe, a real terminal,
-  the default approver, the policy and the audit order are unchanged.
-- **A device refusal now leaves an outcome audit record** (#198). When the body of
-  an audited op (not `side_effect="none"`, on a device driver) raises a
-  `shal.Error` — the device said no — `shal.audit` gets one outcome record,
-  `outcome="device-error"`, with the error text in the message, `attempt` (and the
-  dropped `hop` if the retry fired). The caller still gets the same error object,
-  unchanged. A `HopError` keeps its own `outcome="error"` record (never both), a
-  limit rejection or approval denial is not also a device error, and a read still
-  writes nothing. Before, this was the one outcome with no trail.
-- **`shal probe --json` run_with guards a path that starts with `-`** (#197).
-  Before, `shal call -x.yaml ...` read the path as a flag (and PowerShell 5.1
-  split a bare `-x.yaml` into `-x` and `.yaml`). A topology or `--drivers`
-  path that starts with `-` is now written `./-x.yaml`, which bash, cmd and
-  PowerShell all pass as one path. Not `--`: PowerShell still splits after it.
-- **`delete_row` and `insert` in the sqlite reference driver read `sqlite_temp_master` first** (#180).
-  A TEMP object wins SQLite name resolution, so a TEMP view with an INSTEAD OF
-  DELETE trigger could shadow a table name: the check saw the `main` table, and
-  the DELETE ran the trigger instead. The name must now be a plain rowid table
-  in every schema that has it (temp and main); anything else is refused and the
-  transaction rolls back, so nothing changes.
-
-## [0.3.0] - 2026-09-27
-
-**Upgrading from 0.2.x — two breaking changes:**
-
-- **Vendor driver ids no longer resolve on a bare install** (#149). `ti,tmp102`,
-  `microchip,mcp23017`, `rigol,dp832` and the other `vendor,part` drivers are now
-  guide material, not registered drivers: load them with `--drivers` (or copy one
-  with `shal docs --example <name>`). Only `shal,*` compatibles ship.
-- **An `@op` with no `side_effect` is now always gated and audited** (#194), even
-  when it is `@idempotent`. Label every read `side_effect="none"`; `shal check`
-  warns on any unlabelled op.
-
-**New:** `shal,sim-sensor` so the Quick Start works on a bare install (#156);
-`shal call` — run an op from the CLI, gated ops refused (#160); `shal check
---json` (#148); `--json` on `shal probe`, `shal tools`, `shal docs --list` (#185);
-the ADK reference set and `shal docs --list` / `--example` (#149, #152, #157); the
-`shal,http` request envelope (#104); a headless no-approver denial that says how
-to approve, with `reason: "no-approver"` (#186); topology `include:` (#134);
-`AGENTS.md` (#146).
-
-### Added
 - **`--json` on `shal probe`, `shal tools` and `shal docs --list`** (#185) — each
   prints one JSON document on stdout, its shape shown in the command's `--help`.
   `probe`: `{ok, topology, reads: [{tool, device, op, ok, value|error, unit}],
@@ -456,6 +391,51 @@ to approve, with `reason: "no-approver"` (#186); topology `include:` (#134);
   that — it's a static metadata check and needs no venv of its own.
 
 ### Fixed
+- **A load refused after binding now closes the bound tree** (#229). When
+  `shal.load` refuses a load after `load_tree` succeeded (a driver changed the
+  approval policy at `bind()`, or `policy.gated` is bad), the bound tree was left
+  open until garbage collection. Now any error between a bound tree and a built
+  Hal closes it once (last root first, each subtree leaf->root) and re-raises the
+  original exception unchanged; the refusal is still restored and audited as
+  before. Each node's close is guarded on its own: one that raises is logged
+  (`event="load_cleanup_failed"`, type and that node's path only), every other
+  node still closes, and the original is never replaced. #217's fill-error
+  cleanup uses the same path, so nothing closes twice.
+- **A `bind()` that raises during a load now closes what was already bound**
+  (#220). `loader.load_tree` closes each Transport driver and child bus it had
+  bound, in reverse order, exactly once, then re-raises the original exception
+  object unchanged (a `LoadError` or any other). A close that raises during this
+  cleanup is logged (`event="bind_cleanup_failed"`, type and path only) and never
+  replaces the original. No Hal is built, so #217's fill cleanup does not close
+  them a second time.
+- **On Windows, a NUL stdin is no person** (#210). `NUL` (`subprocess.DEVNULL`,
+  `< NUL`) is a character device, so `isatty()` says True. `ConsoleApprover`
+  thought a person was there, prompted, read EOF and denied with the generic
+  reason. On Windows `has_person()` now also needs stdin to be a real console
+  (`GetConsoleMode` on its handle, stdlib `ctypes` only), so a gated op run with
+  a NUL stdin is denied with the "no approver is set and stdin is not a
+  terminal" text and `reason="no-approver"`, and nothing is asked. Any error in
+  the check counts as no person. Other systems, an empty pipe, a real terminal,
+  the default approver, the policy and the audit order are unchanged.
+- **A device refusal now leaves an outcome audit record** (#198). When the body of
+  an audited op (not `side_effect="none"`, on a device driver) raises a
+  `shal.Error` — the device said no — `shal.audit` gets one outcome record,
+  `outcome="device-error"`, with the error text in the message, `attempt` (and the
+  dropped `hop` if the retry fired). The caller still gets the same error object,
+  unchanged. A `HopError` keeps its own `outcome="error"` record (never both), a
+  limit rejection or approval denial is not also a device error, and a read still
+  writes nothing. Before, this was the one outcome with no trail.
+- **`shal probe --json` run_with guards a path that starts with `-`** (#197).
+  Before, `shal call -x.yaml ...` read the path as a flag (and PowerShell 5.1
+  split a bare `-x.yaml` into `-x` and `.yaml`). A topology or `--drivers`
+  path that starts with `-` is now written `./-x.yaml`, which bash, cmd and
+  PowerShell all pass as one path. Not `--`: PowerShell still splits after it.
+- **`delete_row` and `insert` in the sqlite reference driver read `sqlite_temp_master` first** (#180).
+  A TEMP object wins SQLite name resolution, so a TEMP view with an INSTEAD OF
+  DELETE trigger could shadow a table name: the check saw the `main` table, and
+  the DELETE ran the trigger instead. The name must now be a plain rowid table
+  in every schema that has it (temp and main); anything else is refused and the
+  transaction rolls back, so nothing changes.
 - **`shal probe` no longer points at a `--probe` flag it does not have** (#166) —
   the footer that lists the writes now reads ``# writes — not run by `shal probe`;
   use `shal call` (gated ops are refused until approved): <tools>``. The legacy
@@ -534,6 +514,26 @@ to approve, with `reason: "no-approver"` (#186); topology `include:` (#134);
   route the echoed address through `redact_url`. Clean addresses still echo verbatim.
 
 ### Changed
+- **`Record.calls` is optional: `None` means "not collected"** (#218). A producer
+  that does not collect SHAL calls now writes a record with no `calls` key, in
+  the YAML audit copy and in the db's JSON, and `read()` gives back
+  `calls is None`. `calls=()` still means "collected, and there were none": it
+  is written `calls: []` and reads back `()`. Records already written with
+  `calls: []` read back unchanged; no migration. A `calls` that is not a list
+  is still a `RecordError`.
+- **`record_version` is 2** (#223). #218 made `calls` optional, and a version-1
+  reader cannot read a record without it, so a new record is written
+  `record_version: 2`. The reader reads versions 1 and 2: a version-1 record,
+  `calls: []` included, reads back unchanged (`calls == ()`). A record newer
+  than the reader is refused in one sentence that names both versions and no
+  key: "this record is version 3, newer than this SHAL reads (up to 2) —
+  upgrade pyshal". The check runs before any key is read, so a newer record
+  that lacks a key is not reported as a missing key. `read()` over a store
+  that holds one newer record refuses the whole read; it does not skip it. A
+  `record_version` below 1 is a `RecordError`.
+- **The `jig` sample writes `calls=None`** (#222). Its loop does not collect
+  SHAL calls, so each record now says "not collected" and the record file has
+  no `calls` key, instead of `calls: []` ("collected, and there were none").
 - **BREAKING: one decorator, one meaning — `@idempotent` is only about retry**
   (#194, ADR-001 addendum 4). The `side_effect` label alone decides the gate and
   the audit. (1) **Audit follows the label:** every op whose effective
