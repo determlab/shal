@@ -145,6 +145,7 @@ def test_sdk_states_device_driver_lifecycle(tmp_path):
     anatomy = text.split("## 1. Driver anatomy", 1)[1].split("## 1b.", 1)[0]
     assert "`cls()`" in anatomy and "bind(node)" in anatomy
     assert "super().bind(node)" in anatomy
+    assert "op_limits()" in anatomy  # the parse-before-super() exception
     for attr in ("self.bus", "self.addr", "self.node", "self.log"):
         assert f"`{attr}`" in anatomy
     donts = text.split("## 11. Don'ts", 1)[1]

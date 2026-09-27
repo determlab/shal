@@ -101,6 +101,24 @@ def bind(self, node):
 
 Raise `shal.LoadError` with the node path for a malformed address.
 
+**Exception — `op_limits()` reads the parsed value: parse *before*
+`super().bind(node)`.** `super().bind()` compiles the limit guards, and it calls
+your `op_limits()` to do so (§4). If `op_limits()` reads `self.ch`, set `self.ch`
+first or the load fails with `AttributeError`. `self.addr` is not set yet at
+that point, so read `node.address`:
+
+```python
+def bind(self, node):
+    try:
+        self.ch = int(node.address)          # op_limits() needs self.ch
+    except (TypeError, ValueError):
+        raise shal.LoadError(f"{node.path}: address must be a channel number, "
+                             f"got {node.address!r}") from None
+    super().bind(node)                       # calls op_limits()
+```
+
+`shal docs --example rigol_dp832` ships this pattern.
+
 **Public method = capability op.** Every public method is wrapped by the
 framework (txn id, retry policy, audit, limits, tool surface). Prefix helpers
 with `_` to keep them private. ~40–80 lines is a normal driver; >200 means
