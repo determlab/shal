@@ -568,6 +568,41 @@ def test_bind_log_redacts_credentials_in_address(tmp_path):
     assert binds[0].addr == "https://device.local/v1"  # endpoint kept, creds gone
 
 
+@pytest.mark.parametrize("address, secret, expected", [
+    ("http://user:s3cret@host/", "s3cret", "http://host/"),               # userinfo
+    ("https://host/v1?token=t0kVAL9x", "t0kVAL9x", "https://host/v1"),   # query token
+])
+def test_bind_log_never_carries_secret_caplog(tmp_path, caplog, address, secret, expected):
+    # #142 (test half of #117): the "secrets never in logs" non-negotiable
+    # (docs/agents/context.md). Load under pytest's caplog at DEBUG and assert the
+    # secret is in no record at any level — message, args, or any extra field.
+    # `insecure: true` only so the plaintext http:// case is allowed to bind.
+    p = write(tmp_path, f"""
+        shal_version: 1
+        root:
+          api: {{driver: "shal,http", address: "{address}", insecure: true}}
+    """)
+    caplog.set_level(logging.DEBUG, logger="shal")
+    # shal.audit has propagate=False, so the root-level caplog handler would miss
+    # it — attach the handler there too, so "every record" really means every one
+    audit = logging.getLogger("shal.audit")
+    audit.addHandler(caplog.handler)
+    try:
+        shal.load(p).close()
+    finally:
+        audit.removeHandler(caplog.handler)
+    binds = [r for r in caplog.records
+             if r.name == "shal.loader" and getattr(r, "event", "") == "bind"]
+    assert binds, "no shal.loader bind record captured — test would pass vacuously"
+    for r in caplog.records:
+        assert secret not in r.getMessage()
+        assert secret not in str(r.msg) and secret not in repr(r.args)
+        for key, value in vars(r).items():
+            assert secret not in repr(value), f"{secret!r} leaked via {r.name}.{key}"
+    assert secret not in caplog.text
+    assert binds[0].addr == expected  # endpoint kept, secret gone
+
+
 @pytest.mark.parametrize("address, expected", [
     ("https://device.local/v1", "https://device.local/v1"),   # clean URL
     ("sim0", "sim0"),                                          # opaque label
