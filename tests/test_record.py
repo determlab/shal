@@ -306,6 +306,69 @@ def test_read_refuses_the_whole_store_when_one_record_is_newer(tmp_path):
     _write_doc(tmp_path, doc)
     with pytest.raises(RecordError, match=re.escape(_NEWER)):
         read(tmp_path)
+    with pytest.raises(RecordError, match=re.escape(_NEWER)):
+        read(tmp_path, newer="refuse")          # the default, spelled out
+
+
+# --------------------------------------------------------------------------- #
+# #227: read(store, newer="skip") — an explicit opt-in that says what it skipped
+# --------------------------------------------------------------------------- #
+
+def test_read_skip_returns_every_readable_record_and_the_skipped_list(tmp_path):
+    write(MINIMAL, tmp_path)
+    write(FULL, tmp_path)
+    doc = _with(record="rec-20260909T160000-v3v3v3").to_mapping()
+    doc["record_version"] = 3
+    del doc["unit"]                             # a v3 record may well lack a v2 key
+    _write_doc(tmp_path, doc)
+
+    records, skipped = read(tmp_path, newer="skip")
+    assert records == [MINIMAL, FULL]           # ordered by started, as ever
+    assert skipped == [("rec-20260909T160000-v3v3v3", 3)]
+
+
+def test_read_skip_takes_the_id_from_the_store_not_from_the_record(tmp_path):
+    # A newer version may rename or drop the `record` field; the id a caller can
+    # act on is the one the store files it under.
+    doc = FULL.to_mapping()
+    doc["record_version"] = 3
+    _write_doc(tmp_path, doc)
+    del doc["record"]
+    yaml_path(tmp_path, FULL.record).write_text(yaml.safe_dump(doc, sort_keys=False),
+                                                encoding="utf-8", newline="\n")
+    assert read(tmp_path, newer="skip") == ([], [(FULL.record, 3)])
+
+
+def test_read_skip_lists_a_newer_db_only_record_and_ignores_the_filters(tmp_path):
+    write(FULL, tmp_path)
+    doc = FULL.to_mapping()
+    doc["record_version"] = 4
+    with sqlite3.connect(db_path(tmp_path)) as conn:
+        conn.execute("UPDATE records SET record_json = ?", (json.dumps(doc),))
+    yaml_path(tmp_path, FULL.record).unlink()
+    # A newer record cannot be filtered, so it is listed whatever the filter.
+    assert read(tmp_path, unit="nobody", newer="skip") == ([], [(FULL.record, 4)])
+
+
+def test_read_skip_on_a_store_with_nothing_newer_has_an_empty_skipped_list(tmp_path):
+    write(FULL, tmp_path)
+    assert read(tmp_path, newer="skip") == ([FULL], [])
+
+
+def test_read_skip_still_raises_on_a_malformed_record(tmp_path):
+    write(FULL, tmp_path)
+    doc = MINIMAL.to_mapping()
+    del doc["unit"]                             # malformed, not newer
+    _write_doc(tmp_path, doc)
+    with pytest.raises(RecordError, match="missing required key 'unit'"):
+        read(tmp_path, newer="skip")
+
+
+@pytest.mark.parametrize("bad", ["Skip", "ignore", "", None, True])
+def test_read_refuses_any_other_value_of_newer(tmp_path, bad):
+    write(FULL, tmp_path)
+    with pytest.raises(ValueError, match="newer must be 'refuse' or 'skip'"):
+        read(tmp_path, newer=bad)
 
 
 @pytest.mark.parametrize("version", [0, -1])

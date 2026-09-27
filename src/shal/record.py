@@ -30,7 +30,11 @@ Invariants this file enforces — they are the contract, and the tests check the
     older reader cannot read (a required key made optional, as #218 did to
     `calls`) bumps it; this reader reads every version from 1 up to its own.
     A record written by a *newer* version is refused, not half-read, in one
-    sentence that names both versions and never a key (#223).
+    sentence that names both versions and never a key (#223). `read(store)`
+    refuses the whole read for one newer record; `read(store, newer="skip")` is
+    the explicit opt-in that returns the readable records **and** the list of
+    `(id, record_version)` it skipped — loud, never silent, never the default
+    (#227).
 
 Determinism: `started`/`ended` are ISO-8601 UTC **strings**, not `datetime` —
 PyYAML would parse a bare timestamp back into a `datetime` while JSON would hand
@@ -53,7 +57,7 @@ import sqlite3
 from collections.abc import Iterator
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Literal
+from typing import Any, Literal, overload
 
 import yaml
 
@@ -98,6 +102,20 @@ class RecordError(Error):
     never the offending value: a record carries whatever a driver returned in
     `calls[].result`, so a value could be a credential and must not be echoed.
     """
+
+
+class _NewerRecordError(RecordError):
+    """A record written by a newer `record_version` — the one `RecordError` that
+    `read(store, newer="skip")` may skip (#227). Private: a caller catches
+    `RecordError`, and the message is the same one sentence either way.
+    """
+
+    def __init__(self, version: int, message: str) -> None:
+        super().__init__(message)
+        self.version = version
+
+    def __reduce__(self) -> tuple[Any, ...]:  # picklable despite the extra argument
+        return (type(self), (self.version, str(self)))
 
 
 # --------------------------------------------------------------------------- #
@@ -239,7 +257,8 @@ class Record:
         # Checked before any other key: a newer record may lack a key this
         # reader requires, and that is not what is wrong with it (#223).
         if version > RECORD_VERSION:
-            raise RecordError(
+            raise _NewerRecordError(
+                version,
                 f"{source}: this record is version {version}, newer than this SHAL "
                 f"reads (up to {RECORD_VERSION}) — upgrade pyshal"
             )
@@ -543,6 +562,30 @@ def write(record: Record, store: StoreLike) -> None:
         )
 
 
+@overload
+def read(
+    store: StoreLike,
+    *,
+    unit: str | None = ...,
+    station: str | None = ...,
+    sequence: str | None = ...,
+    verdict: str | None = ...,
+    newer: Literal["refuse"] = ...,
+) -> list[Record]: ...
+
+
+@overload
+def read(
+    store: StoreLike,
+    *,
+    unit: str | None = ...,
+    station: str | None = ...,
+    sequence: str | None = ...,
+    verdict: str | None = ...,
+    newer: Literal["skip"],
+) -> tuple[list[Record], list[tuple[str, int]]]: ...
+
+
 def read(
     store: StoreLike,
     *,
@@ -550,7 +593,8 @@ def read(
     station: str | None = None,
     sequence: str | None = None,
     verdict: str | None = None,
-) -> list[Record]:
+    newer: Literal["refuse", "skip"] = "refuse",
+) -> list[Record] | tuple[list[Record], list[tuple[str, int]]]:
     """Every record under `store`, newest last, filtered (`record.md` §6 R1).
 
     **The YAML wins.** Ids come from the union of the db and the `records/`
@@ -560,14 +604,42 @@ def read(
     back, which is what "if they disagree, the YAML wins" has to mean if it is to
     mean anything. A record with no YAML copy falls back to the db's JSON, so an
     index entry is never silently dropped.
+
+    **A newer record** (`record_version` above `RECORD_VERSION`):
+
+    - `newer="refuse"`, the default: the whole read raises `RecordError` (#223).
+      Evidence is never silently partial.
+    - `newer="skip"`, an explicit opt-in (#227) for a store shared with a station
+      that upgraded first: returns a tuple `(records, skipped)` — the readable
+      records, filtered and ordered as above, and `skipped`, a list of
+      `(id, record_version)` for every newer record, sorted by id. The id is the
+      one the store files it under (the YAML file name or the db key), not a
+      field inside the record, which a newer version may have changed. A newer
+      record cannot be filtered, so every one is listed whatever the filters.
+      Only a newer record is skipped: a malformed one still raises.
+
+    Any other value of `newer` raises `ValueError`.
     """
-    records = [_load(store, rid) for rid in _ids(store)]
+    if newer not in ("refuse", "skip"):
+        raise ValueError(f"newer must be 'refuse' or 'skip', got {newer!r}")
+    records: list[Record] = []
+    skipped: list[tuple[str, int]] = []
+    for rid in _ids(store):
+        try:
+            records.append(_load(store, rid))
+        except _NewerRecordError as err:
+            if newer != "skip":
+                raise
+            skipped.append((rid, err.version))
     wanted = {"unit": unit, "station": station, "sequence": sequence, "verdict": verdict}
-    out = [
-        r for r in records
-        if all(v is None or getattr(r, k) == v for k, v in wanted.items())
-    ]
-    return sorted(out, key=lambda r: (r.started, r.record))
+    out = sorted(
+        (r for r in records
+         if all(v is None or getattr(r, k) == v for k, v in wanted.items())),
+        key=lambda r: (r.started, r.record),
+    )
+    if newer == "skip":
+        return out, skipped
+    return out
 
 
 def _ids(store: StoreLike) -> list[str]:

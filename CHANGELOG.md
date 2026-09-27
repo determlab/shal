@@ -127,6 +127,16 @@ All notable changes to this project are documented here. The format follows
   load's `policy` event. The addendum 5c residual is unchanged: driver code that
   reaches into the framework's own objects (a closure cell) can defeat it; the
   boundary against that is a process boundary.
+- **`record.read(store, newer="skip")`** (#227). An explicit opt-in for two
+  stations sharing a store when one upgraded first: it returns a tuple
+  `(records, skipped)` — every readable record, filtered and ordered as
+  `read()` does, and `skipped`, a list of `(id, record_version)` for each record
+  newer than this SHAL reads. The id is the one the store files the record
+  under (YAML file name or db key), not a field inside it. A newer record cannot
+  be filtered, so it is listed whatever the filters. Only a newer record is
+  skipped; a malformed one still raises `RecordError`. The default is unchanged:
+  `read(store)` (`newer="refuse"`) returns a list and refuses the whole read for
+  one newer record (#223). Any other value of `newer` is a `ValueError`.
 
 ### Changed
 - **`Record.calls` is optional: `None` means "not collected"** (#218). A producer
