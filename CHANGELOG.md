@@ -149,6 +149,13 @@ All notable changes to this project are documented here. The format follows
 - **The `jig` sample writes `calls=None`** (#222). Its loop does not collect
   SHAL calls, so each record now says "not collected" and the record file has
   no `calls` key, instead of `calls: []` ("collected, and there were none").
+- **SDK.md states the device-driver lifecycle** (#24). §1 says the loader builds
+  a device driver with `cls()` (no arguments) and then calls `bind(node)`; the
+  address is parsed in an overridden `bind` after `super().bind(node)`, and
+  `self.bus` / `self.addr` / `self.node` / `self.log` exist only after bind. §11
+  warns against `def __init__(self, node)` on a device driver (a `TypeError` at
+  load). The "never read the source" line now says the guide aims for that, and
+  asks for a report naming the files read when it falls short.
 
 ### Fixed
 - **A load refused after binding now closes the bound tree** (#229). When

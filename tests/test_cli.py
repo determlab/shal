@@ -135,6 +135,36 @@ def test_agent_guide_is_bundled_in_the_package():
     assert "shal probe" in text
 
 
+def test_sdk_states_device_driver_lifecycle(tmp_path):
+    # #24: the shipped SDK says a device driver is built cls() then bind(node),
+    # never __init__(self, node) — and the loader really does that.
+    from importlib.resources import files
+
+    import shal
+    text = (files("shal") / "SDK.md").read_text(encoding="utf-8")
+    anatomy = text.split("## 1. Driver anatomy", 1)[1].split("## 1b.", 1)[0]
+    assert "`cls()`" in anatomy and "bind(node)" in anatomy
+    assert "super().bind(node)" in anatomy
+    for attr in ("self.bus", "self.addr", "self.node", "self.log"):
+        assert f"`{attr}`" in anatomy
+    donts = text.split("## 11. Don'ts", 1)[1]
+    assert "def __init__(self, node)" in donts
+
+    @shal.register
+    class NodeCtor(shal.Driver):
+        compatible = "test,node-ctor-24"
+        kind = None
+
+        def __init__(self, node):  # the mistake the SDK warns against
+            self.node = node
+
+    p = tmp_path / "t.yaml"
+    p.write_text("shal_version: 1\nroot:\n  d: {id: d, driver: 'test,node-ctor-24',"
+                 " address: 1}\n", encoding="utf-8")
+    with pytest.raises(TypeError):
+        shal.load(p)
+
+
 def test_guide_adk_states_authoring_order_and_software_labels():
     # #147: the ADK section gives the order (declare, check, implement) and the
     # software side-effect rule (the four labels; not sure -> gated).

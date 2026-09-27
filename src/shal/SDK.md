@@ -10,8 +10,9 @@ reviewed: 2026-06-23
 The complete authoring contract. **Everything you need to write a working
 driver or bus is on this page plus the step-by-step skills**
 (`integrations/claude-code/skills/shal-build-driver`, `shal-build-bus`, `shal-build-yaml`,
-`shal-generate-driver`). You never need to read SHAL's source — if you do,
-that's a bug in this guide: report it.
+`shal-generate-driver`). This guide aims to make reading SHAL's source
+unnecessary — if you had to read it to get a driver working, that's a gap in
+this guide: report it, naming the files you read and what you were looking for.
 
 > **Prereq.** SHAL core runs on Python 3.10+, but a device's own library may need newer —
 > async/cloud clients using `asyncio.TaskGroup` (e.g. `deebot-client`) need **3.11+**. On
@@ -64,7 +65,15 @@ class Sht31(Driver, shal.TemperatureSensor):
                                   "additionalProperties": False}}
 ```
 
-**Framework-injected attributes** (available after bind, i.e. in every method):
+**Lifecycle: `cls()`, then `bind(node)`.** The loader builds a device driver
+with **no arguments** — `cls()` — and then calls `drv.bind(node)`. So a device
+driver **never defines `__init__(self, node)`**: the loader does not pass a node,
+and the load fails with a `TypeError`. Most drivers need no `__init__` at all;
+anything that depends on the node (the address, `config:`) goes in `bind`.
+(Buses are the exception — they take the node in `__init__`; see §9.)
+
+**Framework-injected attributes** — set by `Driver.bind(node)`, so they exist
+only after bind (never in `__init__`), i.e. in every op method:
 
 | Attr | What |
 |---|---|
@@ -76,9 +85,21 @@ class Sht31(Driver, shal.TemperatureSensor):
 **Class attributes you set:** `compatible` (required), `kind` (required unless
 the driver sits at root), `llm_ready = True` (required for device drivers).
 
-**Override `bind(self, node)`** (call `super().bind(node)` first) only when you
-must parse the address once — e.g. `self.ch = int(node.address)`. Raise
-`shal.LoadError` with the node path for a malformed address.
+**Override `bind(self, node)`** when you must parse the address (or read
+`node.spec.get("config", {})`) once. Call `super().bind(node)` **first** — it
+sets the attributes above and wraps your ops — then parse:
+
+```python
+def bind(self, node):
+    super().bind(node)
+    try:
+        self.ch = int(node.address)
+    except (TypeError, ValueError):
+        raise shal.LoadError(f"{node.path}: address must be a channel number, "
+                             f"got {node.address!r}") from None
+```
+
+Raise `shal.LoadError` with the node path for a malformed address.
 
 **Public method = capability op.** Every public method is wrapped by the
 framework (txn id, retry policy, audit, limits, tool surface). Prefix helpers
@@ -482,7 +503,10 @@ the op, not just what it does.
 
 ## 11. Don'ts
 
-- Don't read SHAL source — this page + skills are the contract.
+- Don't read SHAL source — this page + skills are the contract; if you had to,
+  report the gap (see the top of this page).
+- Don't write `def __init__(self, node)` on a device driver — the loader builds
+  it with `cls()` (no arguments); override `bind(self, node)` instead (§1).
 - Don't catch/retry transport errors; don't sleep/poll around failures.
 - Don't validate limit params in the body (declare in `params=`); DO validate
   cross-parameter envelopes imperatively.
