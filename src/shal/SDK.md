@@ -85,6 +85,38 @@ setup in `bind()`, and open the library lazily on the first op. The recipe, with
 the wrap-a-library-or-build-a-bus rule: `shal docs`, "Wrap a library: the
 recipe"; a complete example: `shal docs --example kvstore`.
 
+**A node's `config:` lives in `self.node.spec["config"]`.** The loader keeps
+every key of the node in `node.spec`; there is no `node.config`. Each `config:`
+value written as `${NAME}` is already resolved from the environment (or the
+topology's `.env`) when your code sees it. Read it with
+`self.node.spec.get("config", {})` — a node may have no `config:`. A device
+driver reads it after bind (in an op, or in `bind()`); a bus reads
+`node.spec.get("config", {})` in `__init__`, where it gets the node.
+
+```python
+import os
+import shal
+from shal import Driver, op
+
+@shal.register
+class Greeter(Driver):
+    compatible = "example,greeter"
+    llm_ready = True
+
+    @op("Say which site this node was configured for.", side_effect="none")
+    def greeting(self) -> str:
+        config = self.node.spec.get("config", {})
+        return f"hello from {config.get('site', 'nowhere')}"
+
+os.environ["SITE"] = "lab-3"          # usually set by your shell or a .env file
+topology = {"shal_version": 1,
+            "root": {"greeter": {"id": "greeter", "driver": "example,greeter",
+                                 "address": "local",
+                                 "config": {"site": "${SITE}"}}}}
+with shal.load(topology) as hal:
+    print(hal.get_device("greeter").greeting())   # hello from lab-3
+```
+
 **Override `bind(self, node)`** (call `super().bind(node)` first) only when you
 must parse the address once — e.g. `self.ch = int(node.address)`. Raise
 `shal.LoadError` with the node path for a malformed address.
@@ -225,6 +257,30 @@ with shal.load("tests/sim.yaml") as hal:
     dev.read_celsius()                   # first call opens the path on demand
     # agent surface for the same tree:
     hal.tool_schemas(); hal.tool_catalog(); hal.call_tool("dut__read_celsius", {})
+```
+
+**A topology can be a dict.** `shal.load()` also takes the parsed document as a
+Python mapping — the same shape as the YAML, no file needed. `use:` and
+`include:` paths in a dict resolve from the current directory.
+
+```python
+import shal
+
+topology = {
+    "shal_version": 1,
+    "root": {
+        "bus": {
+            "driver": "shal,sim-i2c",
+            "address": "sim0",
+            "children": {
+                "temp0": {"id": "ambient_temp", "driver": "shal,sim-sensor",
+                          "address": 0x48},
+            },
+        },
+    },
+}
+with shal.load(topology) as hal:
+    print(hal.get_device("ambient_temp").read_celsius())
 ```
 
 | `Hal` method | Returns |
@@ -474,8 +530,8 @@ which gives you these attributes:
 | `self._active` | connection-state flag (`is_active()` reads it; flip it in `activate()`/`close()`) |
 | `self.upstream` | the parent bus when this bus is nested (e.g. renders argv onto a `CommandTransport`); `None` at root |
 
-Config/secrets: read `node.spec.get("config", {})` in `__init__` — the loader
-has already resolved any `${ENV_VAR}` references. A leaf network bus (opens its
+Config/secrets: read `node.spec.get("config", {})` in `__init__` — where
+`config:` lives and how `${ENV_VAR}` is resolved: §1. A leaf network bus (opens its
 own socket) sets `kind = None`; a bus that renders onto a parent sets `kind` to
 the parent kind it needs.
 
