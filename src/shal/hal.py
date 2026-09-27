@@ -237,34 +237,48 @@ class Hal:
             pass
 
 
-def _close_subtree(node: Node, seen: set[int]) -> None:
-    """Teardown leaf->root of one subtree."""
+def _close_subtree(node: Node, seen: set[int], on_error=None) -> None:
+    """Teardown leaf->root of one subtree. With ``on_error(node, exc)`` given,
+    each close that raises an ``Exception`` is handed to it and the walk goes on
+    (#229); without it (``Hal.close``) the first such error propagates."""
     if id(node) in seen:  # visited-set guard, every walk
         return
     seen.add(id(node))
     for child in node.children.values():
-        _close_subtree(child, seen)
+        _close_subtree(child, seen, on_error)
+    closers = []
     if node.exposed_bus is not None:
-        node.exposed_bus.close()
+        closers.append(node.exposed_bus.close)
     if isinstance(node.driver, Transport):
-        node.driver.close()
+        closers.append(node.driver.close)
+    for close in closers:
+        if on_error is None:
+            close()
+            continue
+        try:
+            close()
+        except Exception as e:  # noqa: BLE001 — the caller decides
+            on_error(node, e)
+    if isinstance(node.driver, Transport):
         logger.debug("closed %s", node.path,
                      extra={"event": "teardown", "path": node.path})
 
 
+def _log_cleanup_failure(node: Node, e: Exception) -> None:
+    # the type only: a close message may carry an address (rule 7)
+    logger.warning("close after a refused load raised %s at %s",
+                   type(e).__name__, node.path,
+                   extra={"event": "load_cleanup_failed", "path": node.path})
+
+
 def _close_unowned(roots: list[Node]) -> None:
     """Close a bound tree that no Hal owns (#229): last root first, each subtree
-    leaf->root, once. A close that raises is logged and the next root still
-    closes — it never replaces the error that brought us here."""
+    leaf->root, every node once. A close that raises is logged with that node's
+    path and every other node still closes — it never replaces the error that
+    brought us here."""
+    seen: set[int] = set()
     for root in reversed(roots):
-        try:
-            _close_subtree(root, set())
-        except Exception as e:  # noqa: BLE001 — never mask the original
-            # the type only: a close message may carry an address (rule 7)
-            logger.warning("close after a refused load raised %s under %s",
-                           type(e).__name__, root.path,
-                           extra={"event": "load_cleanup_failed",
-                                  "path": root.path})
+        _close_subtree(root, seen, _log_cleanup_failure)
 
 
 def load(source, *, approver=None) -> Hal:

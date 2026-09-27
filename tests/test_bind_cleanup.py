@@ -102,9 +102,9 @@ def test_through_shal_load_a_bind_failure_closes_once_no_hal_fill_close(
     fill_closes: list[str] = []
     real = shal.hal._close_subtree
 
-    def spy(node, seen):
+    def spy(node, seen, *rest):
         fill_closes.append(node.path)
-        return real(node, seen)
+        return real(node, seen, *rest)
     monkeypatch.setattr(shal.hal, "_close_subtree", spy)
     with pytest.raises(_BindBoom) as ei:
         shal.load(_topo())
@@ -177,3 +177,35 @@ def test_the_happy_path_through_shal_load_closes_at_close_only(closes):
     del hal
     gc.collect()
     assert sorted(closes) == ["/a", "/b", "/c"]
+
+
+def test_a_child_close_that_raises_still_closes_its_siblings_and_parent(
+        monkeypatch, caplog):
+    """Round 2 (#229): cleanup catches per NODE — one failed close in a nested
+    subtree leaks nothing, and the warning names the node that failed."""
+    closed: list[str] = []
+
+    def close(self):
+        closed.append(self.host.path)
+        if self.host.path == "/a/m1":
+            raise RuntimeError("close failed at sim-secret-address")
+    monkeypatch.setattr(SimI2cBus, "close", close)
+    topo = _topo(third="test,bind-cleanup-policy-tamper")
+    topo["root"]["a"]["children"] = {
+        m: {"driver": "shal,sim-i2c", "address": f"sim-{m}"}
+        for m in ("m1", "m2", "m3")}
+    with caplog.at_level(logging.WARNING, logger="shal.loader"):
+        with pytest.raises(shal.LoadError,
+                           match="changed the approval policy while loading") as ei:
+            shal.load(topo)
+    assert type(ei.value) is shal.LoadError and ei.value.__context__ is None
+    expected = ["/b", "/a/m1", "/a/m2", "/a/m3", "/a"]   # once each, leaf->root
+    assert closed == expected
+    (rec,) = [r for r in caplog.records
+              if getattr(r, "event", None) == "load_cleanup_failed"]
+    assert rec.path == "/a/m1" and rec.levelno == logging.WARNING
+    assert "RuntimeError" in rec.getMessage()
+    assert "sim-secret-address" not in rec.getMessage()   # type only
+    del ei
+    gc.collect()
+    assert closed == expected                             # and never again

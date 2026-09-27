@@ -157,8 +157,9 @@ All notable changes to this project are documented here. The format follows
   open until garbage collection. Now any error between a bound tree and a built
   Hal closes it once (last root first, each subtree leaf->root) and re-raises the
   original exception unchanged; the refusal is still restored and audited as
-  before. A close that raises here is logged (`event="load_cleanup_failed"`,
-  type and root path only) and never replaces the original. #217's fill-error
+  before. Each node's close is guarded on its own: one that raises is logged
+  (`event="load_cleanup_failed"`, type and that node's path only), every other
+  node still closes, and the original is never replaced. #217's fill-error
   cleanup uses the same path, so nothing closes twice.
 - **A `bind()` that raises during a load now closes what was already bound**
   (#220). `loader.load_tree` closes each Transport driver and child bus it had
