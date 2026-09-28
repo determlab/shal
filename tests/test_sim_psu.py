@@ -104,6 +104,71 @@ def test_load_ohms_defaults_when_omitted(tmp_path):
             assert dev.measure_current() == pytest.approx(0.5)   # default 10 ohm
 
 
+# ---- config: current_limit (constant-current mode, #261) ------------------------------
+
+_NO_LIMIT = object()
+
+
+def _limit_yaml(current_limit) -> str:
+    limit = "" if current_limit is _NO_LIMIT else f"current_limit: {current_limit}"
+    return textwrap.dedent(f"""\
+        shal_version: 1
+        root:
+          rack:
+            driver: shal,sim-scpi
+            address: sim0
+            children:
+              psu0:
+                id: psu
+                driver: shal,sim-psu
+                address: psu0
+                config:
+                  load_ohms: 10
+                  {limit}
+        """)
+
+
+def test_current_limit_puts_the_output_in_cc_mode(tmp_path):
+    p = tmp_path / "sim.yaml"
+    p.write_text(_limit_yaml(0.3), encoding="utf-8")
+    with shal.approver(shal.AutoApprove()):
+        with shal.load(p) as hal:
+            dev = hal.get_device("psu")
+            dev.set_voltage(5)
+            assert dev.measure_voltage() == 3.0
+            assert dev.measure_current() == 0.3
+
+
+def test_without_current_limit_nothing_changes(tmp_path):
+    p = tmp_path / "sim.yaml"
+    p.write_text(_limit_yaml(_NO_LIMIT), encoding="utf-8")
+    with shal.approver(shal.AutoApprove()):
+        with shal.load(p) as hal:
+            dev = hal.get_device("psu")
+            dev.set_voltage(5)
+            assert dev.measure_voltage() == 5.0
+            assert dev.measure_current() == 0.5
+
+
+def test_below_the_current_limit_the_output_is_not_limited(tmp_path):
+    p = tmp_path / "sim.yaml"
+    p.write_text(_limit_yaml(0.3), encoding="utf-8")
+    with shal.approver(shal.AutoApprove()):
+        with shal.load(p) as hal:
+            dev = hal.get_device("psu")
+            dev.set_voltage(2)
+            assert dev.measure_voltage() == 2.0
+            assert dev.measure_current() == pytest.approx(0.2)
+
+
+@pytest.mark.parametrize("bad", [0, -0.3, "big", True])
+def test_a_bad_current_limit_fails_the_load(tmp_path, bad):
+    p = tmp_path / "sim.yaml"
+    p.write_text(_limit_yaml(bad), encoding="utf-8")
+    with pytest.raises(shal.LoadError, match="current_limit must be a positive number"):
+        shal.load(p)
+
+
 # ---- the write: actuator, gated ---------------------------------------------------------
 
 def test_set_voltage_is_labelled_actuator():
