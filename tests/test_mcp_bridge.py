@@ -283,3 +283,58 @@ def test_advertised_gated_set_equals_enforced(hal, tmp_path, policy, expected):
             enforced = b.call(name, _ARGS[name]).get("status") == "approval_required"
             assert advertised is want, f"{name}: advertised {advertised}, want {want}"
             assert enforced is want, f"{name}: enforced {enforced}, want {want}"
+
+
+# ---- routes: `via` on the MCP surface (#237) -------------------------------------------
+
+@pytest.fixture
+def routed(tmp_path):
+    """The two-route rig of #235: `board` on r1 (main) and r2, traffic counted."""
+    from tests.test_routes_policy import _TOPO, _Rig
+    p = tmp_path / "t.yaml"
+    p.write_text(_TOPO, encoding="utf-8")
+    with shal.load(p) as h:
+        yield _Rig(h)
+
+
+def test_a_routed_node_takes_an_optional_via_enum_of_its_routes(routed):
+    defs = {d["name"]: d for d in Bridge(routed.hal).tool_defs()}
+    for op in ("read", "peek", "fire"):
+        schema = defs[f"board__{op}"]["input_schema"]
+        assert schema["properties"]["via"]["enum"] == ["r1", "r2"]
+        assert "via" not in schema.get("required", [])
+    # the twin under r2 has no routes: no via
+    assert all("via" not in d["input_schema"].get("properties", {})
+               for n, d in defs.items() if not n.startswith("board__"))
+
+
+def test_a_node_without_routes_has_its_schema_unchanged(hal):
+    defs = {d["name"]: d for d in Bridge(hal).tool_defs()}
+    for op in ("read", "move", "set_reg"):
+        bound = hal.get_device("rig")._op_schemas[op]
+        assert defs[f"rig__{op}"]["input_schema"] == bound
+        assert "via" not in bound.get("properties", {})
+
+
+def test_mcp_via_pins_the_route(routed):
+    out = Bridge(routed.hal).call("board__read", {"via": "r2"})
+    assert out["ok"] is True and out["via"] == "r2"
+    assert routed.sent == {"r1": 0, "r2": 1}
+
+
+def test_mcp_unknown_via_is_an_error_that_lists_the_valid_names(routed):
+    out = Bridge(routed.hal).call("board__read", {"via": "r9"})
+    assert out["ok"] is False and out["routes"] == ["r1", "r2"]
+    assert out["error"] == "/r1/board: no route named 'r9'; routes: r1, r2"
+    assert routed.sent == {"r1": 0, "r2": 0}  # refused before any I/O
+
+
+def test_mcp_ticket_keeps_the_pin_through_approval(routed):
+    b = Bridge(routed.hal)
+    ticket = b.call("board__fire", {"c": 1.5, "via": "r2"})
+    assert ticket["status"] == "approval_required"
+    assert ticket["arguments"] == {"c": 1.5, "via": "r2"}
+    assert routed.sent == {"r1": 0, "r2": 0}
+    out = b.call(APPROVE_TOOL, {"approval_id": ticket["approval_id"]})
+    assert out["ok"] is True and out["via"] == "r2"
+    assert routed.sent == {"r1": 0, "r2": 1}

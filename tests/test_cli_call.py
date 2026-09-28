@@ -360,3 +360,47 @@ def test_json_of_a_node_without_routes_has_no_via_key(lab):
     r = _shal("call", "sim.yaml", "ambient_temp", "read_celsius", "--json", cwd=lab)
     assert r.returncode == 0, r.stderr
     assert "via" not in json.loads(r.stdout)
+
+
+# ---- --via pins a route for one call (#237) --------------------------------------------
+
+def test_via_pins_r2_when_r1_would_carry_it(tmp_path):
+    lab = _two_route_lab(tmp_path, [])
+    r = _shal("call", "t.yaml", "board", "read_celsius", "--via", "r2", "--json",
+              "--drivers", "refusing.py", cwd=lab)
+    assert r.returncode == 0, r.stderr
+    out = json.loads(r.stdout)
+    assert out["ok"] is True and out["via"] == "r2"
+
+
+def test_via_r2_down_fails_on_r2_and_never_tries_r1(tmp_path):
+    # #237 exit test 3: r1 is healthy, so a call that moved to it would succeed
+    lab = _two_route_lab(tmp_path, ["sim1"])
+    r = _shal("call", "t.yaml", "board", "read_celsius", "--via", "r2", "--json",
+              "--drivers", "refusing.py", cwd=lab)
+    assert r.returncode == 1, r.stderr
+    out = json.loads(r.stdout)
+    assert out["ok"] is False and out["via"] == "r2" and out["delivered"] == "no"
+    assert "via=r2" in out["error"]
+
+
+def test_unknown_via_exits_3_and_lists_the_valid_names(tmp_path):
+    lab = _two_route_lab(tmp_path, [])
+    r = _shal("call", "t.yaml", "board", "read_celsius", "--via", "r9", "--json",
+              "--drivers", "refusing.py", cwd=lab)
+    assert r.returncode == 3, r.stderr
+    out = json.loads(r.stdout)
+    assert out["ok"] is False and out["routes"] == ["r1", "r2"]
+    assert out["error"] == "/r1/board: no route named 'r9'; routes: r1, r2"
+    assert out["error"] in r.stderr and "Traceback" not in r.stderr
+
+
+def test_via_on_a_node_without_routes_takes_only_its_main_route(lab):
+    r = _shal("call", "sim.yaml", "ambient_temp", "read_celsius", "--via", "bus",
+              "--json", cwd=lab)
+    assert r.returncode == 0, r.stderr
+    assert "via" not in json.loads(r.stdout)  # unchanged: nothing to pin
+    r = _shal("call", "sim.yaml", "ambient_temp", "read_celsius", "--via", "ssh",
+              "--json", cwd=lab)
+    assert r.returncode == 3, r.stderr
+    assert json.loads(r.stdout)["routes"] == ["bus"]

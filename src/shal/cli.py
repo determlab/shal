@@ -8,6 +8,8 @@ adapter — not the front door.
     shal probe lab.yaml dev__get_state   # read one named tool
     shal tools lab.yaml                  # list the device tools (read / gated)
     shal call lab.yaml dev read_celsius --json   # run one op; a gated op is refused (exit 2)
+    shal call lab.yaml board hostname --via ssh  # pin one route of a node with routes
+    shal routes lab.yaml board --json    # the routes a node declares, in order
     shal mcp   lab.yaml                  # serve to an MCP host (the adapter)
     shal probe lab.yaml --drivers ./drivers/   # load local/unpackaged drivers
     shal check shal,sim-sensor --json    # driver conformance as a JSON report
@@ -212,7 +214,9 @@ def _tools_json(args) -> int:
                           "gated": bool(ann.get("destructiveHint")),
                           "idempotent": f["idempotent"], "unit": f.get("unit"),
                           "description": d["description"],
-                          "input_schema": d["input_schema"]})
+                          "input_schema": d["input_schema"],
+                          # a node with routes: its route names, in order (#237)
+                          **({"routes": f["routes"]} if "routes" in f else {})})
     finally:
         hal.close()
     _json_out({"ok": True, "topology": args.topology, "tools": tools})
@@ -350,7 +354,13 @@ _CALL_CANNOT_RUN = 3
 
 
 class _CallCannotRun(Exception):
-    """A `shal call` mistake: printed on stderr, exit 3, never a traceback."""
+    """A `shal call` mistake: printed on stderr, exit 3, never a traceback. An
+    unknown route name (#237) also carries the valid ``routes``: with --json they
+    are on stdout, so an agent reads the names for its next call."""
+
+    def __init__(self, msg: str, routes: list[str] | None = None) -> None:
+        super().__init__(msg)
+        self.routes = routes
 
 
 def _call_usage_error(parser: argparse.ArgumentParser):
@@ -377,6 +387,18 @@ def _find_call_tool(hal, node_key: str, op: str) -> tuple[str, object, object]:
             return name, node, type(node.driver).capability_ops()[op]
     ops = sorted({idx[name][1] for name, _ in hits})
     raise _CallCannotRun(f"device '{node_key}' has no op '{op}' (ops: {', '.join(ops)})")
+
+
+def _call_pin(node, via: str) -> dict:
+    """The ``via`` argument for ``shal call --via <name>`` (#237): the pin on a node
+    with routes; nothing on a node without, whose one route is its main one. Any
+    other name is a mistake, refused before any I/O, with the valid names."""
+    from .hal import declared_routes, route_names
+    names = [r["name"] for r in declared_routes(node)]
+    if via not in names:
+        raise _CallCannotRun(f"{node.path}: no route named {via!r}; routes: "
+                             f"{', '.join(names) or 'none'}", routes=names)
+    return {"via": via} if route_names(node) else {}
 
 
 def _coerce(value: str, prop: dict, pname: str):
@@ -471,6 +493,7 @@ def _cmd_call(args) -> int:
     try:
         name, node, fn = _find_call_tool(hal, args.node, args.op)
         device = node.id or node.path
+        pin = _call_pin(node, args.via) if args.via is not None else {}
         side_effect = inferred_side_effect(fn)
         if side_effect in _node_gated(node):  # from the label: never invoked
             msg = (f"refused: {device}.{args.op} is labelled '{side_effect}'. A "
@@ -494,9 +517,11 @@ def _cmd_call(args) -> int:
         schema = next(s["input_schema"] for s in hal.tool_schemas() if s["name"] == name)
         arguments = _call_arguments(fn, schema, args.args)
         with approver(DenyAll()):
-            out = hal.call_tool(name, arguments)
+            out = hal.call_tool(name, {**arguments, **pin})
     except _CallCannotRun as e:
         print(f"shal call: {e}", file=sys.stderr)
+        if e.routes is not None:  # a bad --via: the valid names, for the next call
+            emit({"ok": False, "error": str(e), "routes": e.routes})
         return _CALL_CANNOT_RUN
     except Exception as e:  # noqa: BLE001 - the op raised past call_tool: no traceback
         print(f"shal call: {args.node}.{args.op} failed: {type(e).__name__}: {e}",
@@ -514,6 +539,57 @@ def _cmd_call(args) -> int:
         emit(payload)
     else:
         print("ok" if out["result"] is None else json.dumps(out["result"], default=str))
+    return 0
+
+
+def _find_node(hal, key: str):
+    """The device node for ``shal routes``: its id, its /path, or its tool handle
+    (`shal tools`). None when there is no such device."""
+    if key.startswith("/"):
+        node = hal._by_path(key)
+    else:
+        node = hal._ids.get(key)
+    if node is not None and node.driver is not None:
+        return node
+    return next((n for name, (n, _) in hal._tool_index().items()
+                 if name.rsplit("__", 1)[0] == key), None)
+
+
+def _cmd_routes(args) -> int:
+    """``shal routes <topology> <node>`` (#237, RFC-001 §7): the routes the file
+    declares for one node, in order — each route's name, the bus it goes via and
+    its address. A node without routes shows its one main route. No up/down
+    state: v1 shows the declaration only."""
+    from .hal import declared_routes
+    from .mcp.server import _import_drivers, _resolve_hal
+    if args.json:
+        hal = _json_load(args, "routes")
+        if isinstance(hal, int):
+            return hal
+    else:
+        _import_drivers(args.drivers)
+        hal = _resolve_hal(args.topology)
+    try:
+        node = _find_node(hal, args.node)
+        if node is None:
+            handles = sorted({n.rsplit("__", 1)[0] for n in hal._tool_index()})
+            msg = (f"shal routes: no device '{args.node}' on this topology "
+                   f"(devices: {', '.join(handles) or 'none'})")
+            if args.json:
+                return _json_error(msg)
+            print(msg, file=sys.stderr)
+            return 1
+        routes = declared_routes(node)
+    finally:
+        hal.close()
+    if args.json:
+        _json_out({"ok": True, "topology": args.topology,
+                   "device": node.id or node.path, "path": node.path,
+                   "routes": routes})
+        return 0
+    print(f"{node.id or node.path} ({node.path})")
+    for r in routes:
+        print(f"  {r['name']:<14} via {r['via']}  address {r['address']}")
     return 0
 
 
@@ -824,6 +900,9 @@ def main(argv: list[str] | None = None) -> int:
                '              "input_schema": {<JSON Schema of the arguments>}}]}\n'
                "  Device ops only: the shal_approve / shal_deny tools that `shal mcp`\n"
                "  adds for a host are not in the list. The description is not cut.\n"
+               '  A node with routes: each of its tools also has "routes": ["r1",\n'
+               '  "r2"] (in order), and its input_schema an optional "via" (an enum\n'
+               "  of those names) that pins one route: `shal call ... --via r2`.\n"
                "\n"
                "exit: 0 listed; 1 the topology does not load. The message is on\n"
                '  stderr; with --json, stdout also holds {"ok": false, "error": ...}.')
@@ -928,6 +1007,14 @@ def main(argv: list[str] | None = None) -> int:
                "  ops. Put `--` before a value that starts with '-' (a negative\n"
                "  number works without it).\n"
                "\n"
+               "routes:\n"
+               "  --via NAME pins one route of a node with routes for this call: no\n"
+               "  failover, and a failure names that route. `shal routes <topology>\n"
+               "  <device>` lists the names. An unknown name is exit 3, nothing sent;\n"
+               '  with --json, stdout holds {"ok": false, "error": ..., "routes":\n'
+               '  [<the valid names>]}. A routed call\'s JSON has "via", the route\n'
+               "  that carried it (on failure: the route that failed).\n"
+               "\n"
                "approval:\n"
                "  There is NO --approve flag. The agent that runs a command cannot\n"
                "  approve its own call. A config or actuator op is approved in a host:\n"
@@ -936,8 +1023,8 @@ def main(argv: list[str] | None = None) -> int:
                "\n"
                "exit: 0 ran, 1 the op ran and failed (device error or limits),\n"
                "      2 refused by the gate (config/actuator; nothing sent),\n"
-               "      3 could not run (usage error, unknown device or op, bad value,\n"
-               "        topology does not load) — not 2, so a refusal is never\n"
+               "      3 could not run (usage error, unknown device, op or route, bad\n"
+               "        value, topology does not load) — not 2, so a refusal is never\n"
                "        mistaken for a mistake")
     k.error = _call_usage_error(k)  # 2 is the gate's code, not argparse's
     k.add_argument("topology", help="path to the topology YAML")
@@ -947,8 +1034,36 @@ def main(argv: list[str] | None = None) -> int:
                    help="op arguments: values in parameter order, or name=value")
     k.add_argument("--json", action="store_true",
                    help="print the result (or the refusal) as JSON on stdout")
+    k.add_argument("--via", metavar="NAME", default=None,
+                   help="pin one route of a node with routes (see `shal routes`)")
     _add_drivers_arg(k)
     k.set_defaults(func=_cmd_call)
+
+    r = sub.add_parser(
+        "routes", help="list the routes a node declares, in order",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        description="Print the routes the topology declares for one device, in "
+                    "order: each route's name, the bus it goes via and its address. "
+                    "A device without routes shows its one main route. This is the "
+                    "declaration only, not whether a route is up. A URL or "
+                    "user@host address is shown without its credentials.",
+        epilog="--json prints one JSON document on stdout:\n"
+               '  {"ok": true, "topology": "t.yaml", "device": "board",\n'
+               '   "path": "/console/board",\n'
+               '   "routes": [{"name": "console", "via": "/console", "address": 72},\n'
+               '              {"name": "ssh", "via": "/ssh", "address": "10.0.0.5"}]}\n'
+               "  The first route is the main one. Pin a route for one call:\n"
+               "    shal call t.yaml board <op> --via ssh\n"
+               "\n"
+               "exit: 0 listed; 1 no such device, or the topology does not load. The\n"
+               "  message is on stderr; with --json, stdout also holds\n"
+               '  {"ok": false, "error": ...}.')
+    r.add_argument("topology", help="path to the topology YAML")
+    r.add_argument("node", help="the device: its id, its /path, or its handle in `shal tools`")
+    _add_drivers_arg(r)
+    r.add_argument("--json", action="store_true",
+                   help="print the routes as JSON on stdout")
+    r.set_defaults(func=_cmd_routes)
 
     args, extra = ap.parse_known_args(argv)
     if extra:  # parse_args would exit 2 here — for `call`, 2 is the gate's code
