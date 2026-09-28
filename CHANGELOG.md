@@ -14,6 +14,11 @@ All notable changes to this project are documented here. The format follows
 ## [Unreleased]
 
 ### Added
+- **`shal,sim-psu`** (#252, ops#117 CTO ruling 1, prerequisite C7). A second sim
+  device — a simulated bench PSU on `shal,sim-scpi` with `set_voltage` (gated
+  `actuator`) and free `measure_voltage`/`measure_current` reads, the latter
+  following Ohm's law from the set voltage and the node's configurable
+  `load_ohms` — so a failing unit can be simulated with no hardware.
 - **`shal records` — read the record store from the CLI** (#251, public API).
   `shal records [DIR] [--unit] [--station] [--sequence] [--verdict] [--last N]
   [--json] [--skip-newer]` reads `record.read()` over `DIR/records.db` (default
