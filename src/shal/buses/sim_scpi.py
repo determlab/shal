@@ -9,14 +9,22 @@ touch the real supply).
 A model is a class registered with ``@scpi_sim_model("vendor,part")`` exposing
 ``scpi(cmd: str) -> str`` (return "" for writes). One model instance per child
 node, keyed by the child's address.
+
+It also ships the sim family's second device, ``shal,sim-psu`` (ops#117 CTO
+ruling 1, prerequisite C7, #252): a programmable bench supply with a
+configurable resistive load, so the v1 story (``psu.set_voltage``) has a device
+to run on with no hardware. Like ``shal,sim-sensor``, it wraps no part, so it
+binds only under a ``shal,sim-scpi`` bus — the framework's own object.
 """
 from __future__ import annotations
 
 import logging
+import re
 from collections.abc import Mapping
 from typing import Any
 
-from ..driver import Driver
+from ..driver import Driver, idempotent
+from ..driver import op as _op  # `op` is the loop name in the model below
 from ..errors import HopError, LoadError
 from ..log import bus_logger, current_txn, redact_url
 from ..node import Node
@@ -104,6 +112,100 @@ class SimScpiBus(Driver, Transport, MessageTransport):
             return {"reply": reply}
 
 
+# -- the sim device: shal,sim-psu -----------------------------------------------------
+
+@scpi_sim_model("shal,sim-psu")
+class SimPsuModel:
+    """Behavioural model of a programmable bench supply's output: a ``VOLT <v>``
+    sets the output volts, and ``MEAS:VOLT?`` reads back exactly what was last
+    set — a sim twin has no drift or accuracy error, so the live value IS this
+    state (rule 3, same as ``SimSensorModel``). The load and the Ohm's-law
+    current derived from it live on the driver (the node's own config), not
+    here: the model only answers what a real instrument's firmware would."""
+
+    _SET_V = re.compile(r"^VOLT\s+([0-9.eE+-]+)$")
+
+    def __init__(self) -> None:
+        self.voltage = 0.0
+        self.set_count = 0   # test hook: set_voltage writes that reached the model
+
+    def scpi(self, cmd: str) -> str:
+        cmd = cmd.strip()
+        if m := self._SET_V.match(cmd):
+            self.voltage = float(m.group(1))
+            self.set_count += 1
+            return ""
+        if cmd == "MEAS:VOLT?":
+            return f"{self.voltage:.6f}"
+        return ""
+
+
+class SimPsu(Driver):
+    """Simulated bench PSU that ships with SHAL (ops#117 CTO ruling 1, #252):
+    ``set_voltage`` energizes the (simulated) output now, so it is gated as
+    ``actuator``; ``measure_current`` follows Ohm's law from the set voltage
+    and this node's configured ``load_ohms``."""
+
+    compatible = "shal,sim-psu"
+    kind = MessageTransport
+    llm_ready = True
+
+    DEFAULT_LOAD_OHMS = 10.0
+
+    def bind(self, node: Node) -> None:
+        # it wraps no part: on a real bus it would talk to whatever instrument
+        # answers at this address, so only a shal,sim-scpi ancestor may carry it
+        parent = node.parent
+        while parent is not None and not isinstance(parent.driver, SimScpiBus):
+            parent = parent.parent
+        if parent is None:
+            raise LoadError(f"{node.path}: shal,sim-psu is a simulated device — "
+                            f"put it under a shal,sim-scpi bus")
+        super().bind(node)
+        config = node.spec.get("config", {}) or {}
+        load_ohms = config.get("load_ohms", self.DEFAULT_LOAD_OHMS)
+        if isinstance(load_ohms, bool) or not isinstance(load_ohms, (int, float)) \
+                or load_ohms <= 0:
+            raise LoadError(f"{node.path}: config.load_ohms must be a positive "
+                            f"number, got {load_ohms!r}")
+        self.load_ohms = float(load_ohms)
+
+    @idempotent  # an absolute setpoint: re-asserting the same volts is safe
+    @_op("Set the PSU's output voltage (absolute setpoint). This energizes the "
+        "(simulated) output now, so it needs approval.", unit="volt",
+        side_effect="actuator", params={"volts": {"minimum": 0.0, "maximum": 30.0}})
+    def set_voltage(self, volts: float) -> None:
+        self.bus.exchange(self.addr, {"scpi": f"VOLT {volts}"})
+
+    @idempotent  # a read: safe to auto-retry across transient drops
+    @_op("Read the measured output voltage now.", unit="volt", side_effect="none")
+    def measure_voltage(self) -> float:
+        reply = self.bus.exchange(self.addr, {"scpi": "MEAS:VOLT?", "query": True})
+        return float(reply["reply"])
+
+    @idempotent
+    @_op("Read the measured output current now (Ohm's law: the set voltage "
+        "divided by this node's configured load).", unit="ampere",
+        side_effect="none")
+    def measure_current(self) -> float:
+        return self.measure_voltage() / self.load_ohms
+
+    @classmethod
+    def authoring_meta(cls) -> dict:  # shal.catalog() detail (issue #1)
+        return {
+            "address_schema": {"type": "string", "minLength": 1,
+                               "description": "instrument/channel label on the "
+                                              "sim SCPI bus",
+                               "examples": ["psu0"]},
+            "config_schema": {"type": "object", "properties": {
+                "load_ohms": {"type": "number", "exclusiveMinimum": 0,
+                              "description": "resistive load across the output, "
+                                             "in ohms"}},
+                              "additionalProperties": False},
+        }
+
+
 from .. import registry  # noqa: E402
 
 registry.register(SimScpiBus)
+registry.register(SimPsu)
