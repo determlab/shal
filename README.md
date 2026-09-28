@@ -189,13 +189,6 @@ venv on 3.11+. Dependencies: `pyyaml`, `jsonschema`.
 pip install pyshal
 ```
 
-> ⚠️ **Until 0.3.0 is published, install from source instead:**
-> `pip install "git+https://github.com/determlab/shal"`
->
-> PyPI's latest is 0.2.2, and it does not have the `shal,sim-sensor` device this
-> page reads — so on 0.2.2 the next command fails with *no driver installed for
-> compatible 'shal,sim-sensor'*. **Delete this note when 0.3.0 ships (#184).**
-
 Save this as `sim.yaml`. It is the whole setup: a bus, and one device on it.
 
 ```yaml
