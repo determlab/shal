@@ -524,6 +524,7 @@ def _cmd_call(args) -> int:
 _NO_STORE_FIX = ("run a test with pytest-shal or the jig sample "
                  "('shal docs --sample jig --to DIR'), or pass the directory "
                  "that holds records.db")
+_NEWER_RECORD_FIX = "re-run with --skip-newer, or upgrade pyshal"
 
 
 def _cmd_records(args) -> int:
@@ -536,7 +537,7 @@ def _cmd_records(args) -> int:
     own one-sentence message) unless `--skip-newer`, which returns the readable
     records and lists the ones it skipped instead of blocking on them.
     """
-    from .record import RecordError, db_path, read
+    from .record import RecordError, _NewerRecordError, db_path, read
 
     store = db_path(args.dir)
     if not store.exists():
@@ -559,7 +560,13 @@ def _cmd_records(args) -> int:
     except RecordError as e:
         print(f"shal records: {e}", file=sys.stderr)
         if args.json:
-            _json_out({"ok": False, "error": str(e)})
+            # A newer record_version names its own fix, same shape as NoStore
+            # (product guideline 3: an error names the fix); any other
+            # RecordError (a malformed record) is not fixed by --skip-newer,
+            # so it keeps the plain message instead of a misleading one.
+            error = ({"type": "NewerRecord", "message": str(e), "fix": _NEWER_RECORD_FIX}
+                     if isinstance(e, _NewerRecordError) else str(e))
+            _json_out({"ok": False, "error": error})
         return 1
 
     newest_first = list(reversed(records))
@@ -1034,7 +1041,12 @@ def main(argv: list[str] | None = None) -> int:
                "\n"
                "a record written by a newer record_version refuses the whole read\n"
                "  (one sentence, exit 1) unless --skip-newer, which returns the\n"
-               "  readable records and lists the ones it skipped instead.\n"
+               "  readable records and lists the ones it skipped instead. --json\n"
+               '  prints {"ok": false, "error": {"type": "NewerRecord",\n'
+               '    "message": "<the one sentence>",\n'
+               '    "fix": "re-run with --skip-newer, or upgrade pyshal"}}\n'
+               "  (any other malformed-record error keeps a plain string message,\n"
+               "  since --skip-newer would not fix it).\n"
                "\n"
                "exit: 0 read (even zero records); 1 no store, or a newer record\n"
                "  refused without --skip-newer; 2 a usage error.")

@@ -10,8 +10,9 @@ import subprocess
 import sys
 
 import pytest
+import yaml
 
-from shal.record import Record, Step, write
+from shal.record import Record, Step, write, yaml_path
 
 
 def _shal(*argv: str, cwd) -> subprocess.CompletedProcess:
@@ -173,7 +174,9 @@ def test_a_newer_record_refuses_in_json_too(store_with_newer):
     assert r.returncode == 1
     payload = json.loads(r.stdout)
     assert payload["ok"] is False
-    assert "newer than this SHAL reads" in payload["error"]
+    assert "newer than this SHAL reads" in payload["error"]["message"]
+    assert payload["error"]["type"] == "NewerRecord"
+    assert payload["error"]["fix"] == "re-run with --skip-newer, or upgrade pyshal"
 
 
 def test_skip_newer_returns_the_readable_records_and_lists_the_skipped_one(
@@ -192,3 +195,22 @@ def test_skip_newer_text_mode_prints_the_skipped_id(store_with_newer):
     assert r.returncode == 0, r.stderr
     assert "rec-old" in r.stdout
     assert "rec-newer-version" in r.stderr
+
+
+# A malformed (not newer) record is a different RecordError — --skip-newer would
+# not fix it, so its JSON error stays a plain string rather than the misleading
+# {"type": "NewerRecord", ...} shape (PR #255 review).
+def test_a_malformed_non_newer_record_keeps_a_plain_string_error(tmp_path):
+    write(_OLD, tmp_path)
+    doc = _record("rec-malformed", unit="unit-z", started="2026-09-28T13:00:00Z").to_mapping()
+    del doc["unit"]                              # malformed, not newer
+    path = yaml_path(tmp_path, doc["record"])
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(yaml.safe_dump(doc, sort_keys=False), encoding="utf-8", newline="\n")
+
+    r = _shal("records", str(tmp_path), "--json", cwd=tmp_path)
+    assert r.returncode == 1
+    payload = json.loads(r.stdout)
+    assert payload["ok"] is False
+    assert isinstance(payload["error"], str)
+    assert "newer than this SHAL reads" not in payload["error"]
