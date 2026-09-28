@@ -14,6 +14,11 @@ All notable changes to this project are documented here. The format follows
 ## [Unreleased]
 
 ### Added
+- **`shal,sim-psu`** (#252, ops#117 CTO ruling 1, prerequisite C7). A second sim
+  device — a simulated bench PSU on `shal,sim-scpi` with `set_voltage` (gated
+  `actuator`) and free `measure_voltage`/`measure_current` reads, the latter
+  following Ohm's law from the set voltage and the node's configurable
+  `load_ohms` — so a failing unit can be simulated with no hardware.
 - **`via` everywhere** (#236, routes M1 part 3, public API). A node with `routes:`
   names the route on every line: `via` joins the stable log fields (every hop
   line inside a route has it; `retry` / `failover` lines also carry `next`, the
