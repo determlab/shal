@@ -13,6 +13,8 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+## [0.4.0] - 2026-09-29
+
 ### Added
 - **`shal,sim-psu`** (#252, ops#117 CTO ruling 1, prerequisite C7). A second sim
   device — a simulated bench PSU on `shal,sim-scpi` with `set_voltage` (gated
