@@ -178,6 +178,10 @@ class SimPsu(Driver):
                             f"0 or remove it for an unlimited supply")
         self.current_limit = None if current_limit is None else float(current_limit)
 
+    def _set_volts(self) -> float:
+        reply = self.bus.exchange(self.addr, {"scpi": "MEAS:VOLT?", "query": True})
+        return float(reply["reply"])
+
     def _in_cc_mode(self, volts: float) -> bool:
         return (self.current_limit is not None
                 and volts / self.load_ohms > self.current_limit)
@@ -192,8 +196,7 @@ class SimPsu(Driver):
     @idempotent  # a read: safe to auto-retry across transient drops
     @_op("Read the measured output voltage now.", unit="volt", side_effect="none")
     def measure_voltage(self) -> float:
-        reply = self.bus.exchange(self.addr, {"scpi": "MEAS:VOLT?", "query": True})
-        volts = float(reply["reply"])
+        volts = self._set_volts()
         if self._in_cc_mode(volts):   # constant-current: the output sags to I*R
             return self.current_limit * self.load_ohms
         return volts
@@ -203,8 +206,7 @@ class SimPsu(Driver):
         "divided by this node's configured load, capped at its current_limit).",
         unit="ampere", side_effect="none")
     def measure_current(self) -> float:
-        reply = self.bus.exchange(self.addr, {"scpi": "MEAS:VOLT?", "query": True})
-        volts = float(reply["reply"])
+        volts = self._set_volts()
         if self._in_cc_mode(volts):
             return self.current_limit
         return volts / self.load_ohms

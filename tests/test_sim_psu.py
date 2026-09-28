@@ -110,8 +110,8 @@ _NO_LIMIT = object()
 
 
 def _limit_yaml(current_limit) -> str:
-    extra = "" if current_limit is _NO_LIMIT else f"\n      current_limit: {current_limit}"
-    return textwrap.dedent("""\
+    limit = "" if current_limit is _NO_LIMIT else f"current_limit: {current_limit}"
+    return textwrap.dedent(f"""\
         shal_version: 1
         root:
           rack:
@@ -123,7 +123,9 @@ def _limit_yaml(current_limit) -> str:
                 driver: shal,sim-psu
                 address: psu0
                 config:
-                  load_ohms: 10""") + extra.replace("\n      ", "\n                  ") + "\n"
+                  load_ohms: 10
+                  {limit}
+        """)
 
 
 def test_current_limit_puts_the_output_in_cc_mode(tmp_path):
