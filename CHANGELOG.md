@@ -13,6 +13,8 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+## [0.4.0] - 2026-09-29
+
 ### Added
 - **Routes on the agent surface** (#237, routes M1 part 4, public API). A tool of
   a node with `routes:` takes an optional `via` argument, an enum of its route
