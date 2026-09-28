@@ -10,6 +10,7 @@ from . import limits
 from .driver import _effective_gated, inferred_side_effect
 from .errors import ApprovalDenied, Error, HopError, LimitError, LoadError
 from .loader import load_tree
+from .log import redact_url
 from .node import Node
 from .routes import RouteSet, last_via
 from .transport import Transport
@@ -424,14 +425,17 @@ def declared_routes(node: Node) -> list[dict]:
     """What the file declares for ``node``'s routes, in order: each route's
     ``name``, ``via`` (its bus path) and ``address``. A node without routes has
     its one main route (its parent bus); a root node has none. No up/down state
-    (RFC-001: that is M3)."""
+    (RFC-001: that is M3). A string address goes through ``redact_url``: it is
+    ${ENV}-resolved, so it may carry userinfo or a query token (#20)."""
+    def shown(addr):
+        return redact_url(addr) if isinstance(addr, str) else addr
     if node.routes:
-        return [{"name": name, "via": bus.path, "address": addr}
+        return [{"name": name, "via": bus.path, "address": shown(addr)}
                 for name, bus, addr in node.routes]
     if node.parent is None:
         return []
     return [{"name": node.parent.name, "via": node.parent.path,
-             "address": node.address}]
+             "address": shown(node.address)}]
 
 
 # -- LLM tool-schema helpers ----------------------------------------------------

@@ -1045,7 +1045,8 @@ def main(argv: list[str] | None = None) -> int:
         description="Print the routes the topology declares for one device, in "
                     "order: each route's name, the bus it goes via and its address. "
                     "A device without routes shows its one main route. This is the "
-                    "declaration only, not whether a route is up.",
+                    "declaration only, not whether a route is up. A URL or "
+                    "user@host address is shown without its credentials.",
         epilog="--json prints one JSON document on stdout:\n"
                '  {"ok": true, "topology": "t.yaml", "device": "board",\n'
                '   "path": "/console/board",\n'

@@ -53,8 +53,9 @@ _ENV = {**os.environ,
         "PYTHONPATH": os.pathsep.join(p for p in (_SRC, os.environ.get("PYTHONPATH")) if p)}
 
 
-def _shal(*argv: str, cwd) -> subprocess.CompletedProcess:
-    return subprocess.run([sys.executable, "-m", "shal.cli", *argv], cwd=cwd, env=_ENV,
+def _shal(*argv: str, cwd, env=None) -> subprocess.CompletedProcess:
+    return subprocess.run([sys.executable, "-m", "shal.cli", *argv], cwd=cwd,
+                          env=env or _ENV,
                           capture_output=True, text=True, encoding="utf-8", timeout=60)
 
 
@@ -97,6 +98,53 @@ def test_routes_text_lists_one_line_per_route(lab):
     assert lines[0] == "board (/console/board)"
     assert lines[1].split() == ["console", "via", "/console", "address", "72"]
     assert lines[2].split() == ["ssh", "via", "/net", "address", "73"]
+
+
+_CRED_DRIVER = textwrap.dedent("""\
+    import shal
+
+    @shal.register
+    class Svc(shal.Driver):
+        compatible = "test,routes-cred"
+        kind = shal.MessageTransport
+    """)
+
+_CRED_TOPO = textwrap.dedent("""\
+    shal_version: 1
+    root:
+      svc:
+        driver: shal,sim-msg
+        address: sim0
+        children:
+          api:
+            id: api
+            driver: test,routes-cred
+            address: "${SHAL_TEST_SVC_URL}"
+            routes:
+              - {via: /cloud, address: "${SHAL_TEST_SVC_URL}", name: cloud}
+      cloud: {driver: "shal,sim-msg", address: sim1}
+    """)
+
+
+def test_routes_never_prints_a_credential_from_an_env_address(tmp_path, monkeypatch):
+    # route addresses are ${ENV}-resolved: userinfo and a query token must not
+    # reach stdout, in JSON or text (redact_url, #20)
+    (tmp_path / "c.yaml").write_text(_CRED_TOPO, encoding="utf-8")
+    (tmp_path / "drv.py").write_text(_CRED_DRIVER, encoding="utf-8")
+    monkeypatch.setenv("SHAL_TEST_SVC_URL",
+                       "https://bob:hunter2@api.example.com:8443/v1?token=s3cret")
+    env = {**os.environ, "PYTHONPATH": _ENV["PYTHONPATH"]}
+    r = _shal("routes", "c.yaml", "api", "--drivers", "drv.py", "--json",
+              cwd=tmp_path, env=env)
+    assert r.returncode == 0, r.stderr
+    assert [x["address"] for x in json.loads(r.stdout)["routes"]] == [
+        "https://api.example.com:8443/v1"] * 2
+    t = _shal("routes", "c.yaml", "api", "--drivers", "drv.py", cwd=tmp_path, env=env)
+    assert t.returncode == 0, t.stderr
+    assert "address https://api.example.com:8443/v1" in t.stdout
+    for out in (r.stdout, t.stdout):
+        for secret in ("bob", "hunter2", "token", "s3cret"):
+            assert secret not in out
 
 
 def test_routes_unknown_device_is_exit_1_and_lists_the_devices(lab):

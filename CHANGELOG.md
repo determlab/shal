@@ -21,7 +21,9 @@ All notable changes to this project are documented here. The format follows
   `shal tools --json` give such a tool `routes` (the names, in order); the node is
   listed once. `shal call ... --via <name>` pins a route for one call. New
   `shal routes <topology> <node> [--json]` prints what the file declares: each
-  route's name, `via` bus path and address, in order (a node without routes shows
+  route's name, `via` bus path and address, in order (a string address goes
+  through `redact_url`, so no userinfo or query token from `${ENV}` reaches
+  stdout; a node without routes shows
   its one main route; no up/down state). An unknown route name is refused before
   any I/O with the valid names: `Hal.call_tool()` / MCP return
   `{"ok": false, "error": ..., "routes": [...]}`, and `shal call --via` exits 3
