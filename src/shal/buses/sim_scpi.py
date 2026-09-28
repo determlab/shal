@@ -169,6 +169,18 @@ class SimPsu(Driver):
             raise LoadError(f"{node.path}: config.load_ohms must be a positive "
                             f"number, got {load_ohms!r}")
         self.load_ohms = float(load_ohms)
+        current_limit = config.get("current_limit")
+        if current_limit is not None and (
+                isinstance(current_limit, bool)
+                or not isinstance(current_limit, (int, float)) or current_limit <= 0):
+            raise LoadError(f"{node.path}: config.current_limit must be a positive "
+                            f"number of amperes, got {current_limit!r}; set it above "
+                            f"0 or remove it for an unlimited supply")
+        self.current_limit = None if current_limit is None else float(current_limit)
+
+    def _in_cc_mode(self, volts: float) -> bool:
+        return (self.current_limit is not None
+                and volts / self.load_ohms > self.current_limit)
 
     @idempotent  # an absolute setpoint: re-asserting the same volts is safe
     @_op("Set the PSU's output voltage (absolute setpoint). This energizes the "
@@ -181,14 +193,21 @@ class SimPsu(Driver):
     @_op("Read the measured output voltage now.", unit="volt", side_effect="none")
     def measure_voltage(self) -> float:
         reply = self.bus.exchange(self.addr, {"scpi": "MEAS:VOLT?", "query": True})
-        return float(reply["reply"])
+        volts = float(reply["reply"])
+        if self._in_cc_mode(volts):   # constant-current: the output sags to I*R
+            return self.current_limit * self.load_ohms
+        return volts
 
     @idempotent
     @_op("Read the measured output current now (Ohm's law: the set voltage "
-        "divided by this node's configured load).", unit="ampere",
-        side_effect="none")
+        "divided by this node's configured load, capped at its current_limit).",
+        unit="ampere", side_effect="none")
     def measure_current(self) -> float:
-        return self.measure_voltage() / self.load_ohms
+        reply = self.bus.exchange(self.addr, {"scpi": "MEAS:VOLT?", "query": True})
+        volts = float(reply["reply"])
+        if self._in_cc_mode(volts):
+            return self.current_limit
+        return volts / self.load_ohms
 
     @classmethod
     def authoring_meta(cls) -> dict:  # shal.catalog() detail (issue #1)
@@ -200,7 +219,11 @@ class SimPsu(Driver):
             "config_schema": {"type": "object", "properties": {
                 "load_ohms": {"type": "number", "exclusiveMinimum": 0,
                               "description": "resistive load across the output, "
-                                             "in ohms"}},
+                                             "in ohms"},
+                "current_limit": {"type": "number", "exclusiveMinimum": 0,
+                                  "description": "optional current limit in amperes; "
+                                                 "above it the output is constant-"
+                                                 "current and the voltage sags"}},
                               "additionalProperties": False},
         }
 
