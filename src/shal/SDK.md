@@ -634,8 +634,10 @@ the node's YAML `description:` + the merged `input_schema` (with your limits as
 schema constraints). `hal.tool_catalog()` adds `side_effect`/`idempotent`/MCP
 hints for gating. `hal.call_tool(name, args)` dispatches; a limit violation
 returns `{"ok": False, "rejected": "limits", "violations": [...]}` — nothing
-was sent. `shal.catalog("vendor,part")` is the authoring manifest: ops, units,
-schemas, your `authoring_meta`. Write descriptions that say **when** to call
+was sent. On a node with `routes:` each tool also takes an optional `via` (an
+enum of its route names; the catalog lists them as `routes`) that pins one route —
+so don't name an op parameter `via`. `shal.catalog("vendor,part")` is the
+authoring manifest: ops, units, schemas, your `authoring_meta`. Write descriptions that say **when** to call
 the op, not just what it does.
 
 ## 11. Don'ts

@@ -14,6 +14,21 @@ All notable changes to this project are documented here. The format follows
 ## [Unreleased]
 
 ### Added
+- **Routes on the agent surface** (#237, routes M1 part 4, public API). A tool of
+  a node with `routes:` takes an optional `via` argument, an enum of its route
+  names in order, in `Hal.tool_schemas()`, `shal tools --json` and the MCP tool
+  schema; it pins that route (RFC-001 §2). `Hal.tool_catalog()` and
+  `shal tools --json` give such a tool `routes` (the names, in order); the node is
+  listed once. `shal call ... --via <name>` pins a route for one call. New
+  `shal routes <topology> <node> [--json]` prints what the file declares: each
+  route's name, `via` bus path and address, in order (a string address goes
+  through `redact_url`, so no userinfo or query token from `${ENV}` reaches
+  stdout; a node without routes shows
+  its one main route; no up/down state). An unknown route name is refused before
+  any I/O with the valid names: `Hal.call_tool()` / MCP return
+  `{"ok": false, "error": ..., "routes": [...]}`, and `shal call --via` exits 3
+  with the same JSON. A node without routes has no `via` argument and no `routes`
+  key, so its schemas are unchanged.
 - **`shal,sim-psu`** (#252, ops#117 CTO ruling 1, prerequisite C7). A second sim
   device — a simulated bench PSU on `shal,sim-scpi` with `set_voltage` (gated
   `actuator`) and free `measure_voltage`/`measure_current` reads, the latter

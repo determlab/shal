@@ -10,6 +10,7 @@ from . import limits
 from .driver import _effective_gated, inferred_side_effect
 from .errors import ApprovalDenied, Error, HopError, LimitError, LoadError
 from .loader import load_tree
+from .log import redact_url
 from .node import Node
 from .routes import RouteSet, last_via
 from .transport import Transport
@@ -109,30 +110,46 @@ class Hal:
 
     def tool_schemas(self) -> list[dict]:
         """Anthropic tool-use definitions ({name, description, input_schema}) for
-        every capability op on every device — drive a SHAL tree from an LLM."""
+        every capability op on every device — drive a SHAL tree from an LLM.
+
+        Each tool of a node with ``routes:`` (#237) also takes ``via``: optional, an
+        enum of its route names in order, the pin of RFC-001 §2. A node without
+        routes has no ``via`` property, so its schemas are unchanged."""
         out = []
         for name, (node, opname) in self._tool_index().items():
             fn = type(node.driver).capability_ops()[opname]
             # the BOUND effective schema (class ⊕ op_limits ⊕ config.limits) when
             # available — advertised == enforced, per node (issue #10)
             bound = getattr(node.driver, "_op_schemas", {}).get(opname)
+            schema = bound or _params_schema(fn)
+            names = route_names(node)
+            if names:  # a copy: the bound schema is what limits enforce, untouched
+                schema = {**schema, "properties": {
+                    **schema.get("properties", {}),
+                    "via": {"type": "string", "enum": names,
+                            "description": "Pin one route for this call (default: "
+                                           "the active route, failover in order)."}}}
             out.append({
                 "name": name,
                 "description": _describe(node, opname, fn),
-                "input_schema": bound or _params_schema(fn),
+                "input_schema": schema,
             })
         return out
 
     def tool_catalog(self) -> list[dict]:
         """Richer per-tool facts for policy/gating: side_effect + idempotency.
-        Pair with tool_schemas() — the harness gates writes/actuators, not reads."""
+        Pair with tool_schemas() — the harness gates writes/actuators, not reads.
+        A tool of a node with ``routes:`` also has ``routes``, its route names in
+        order (#237); a node without routes has no ``routes`` key."""
         out = []
         for name, (node, opname) in self._tool_index().items():
             fn = type(node.driver).capability_ops()[opname]
             eff = _effect(fn)
+            names = route_names(node)
             out.append({"name": name, "device": node.id or node.path,
                         "op": opname, **eff,
-                        "annotations": _annotations(eff, _node_gated(node))})
+                        "annotations": _annotations(eff, _node_gated(node)),
+                        **({"routes": names} if names else {})})
         return out
 
     def call_tool(self, name: str, arguments: dict | None = None) -> dict:
@@ -144,7 +161,9 @@ class Hal:
         route that carried the call (on failure: the route that failed, ``None``
         when every route did), and a failed hop carries ``fix`` (RFC-001
         "Failures the agent must be able to read"). A node without routes has no
-        ``via`` key at all, so its results are unchanged."""
+        ``via`` key at all, so its results are unchanged. ``arguments["via"]`` pins
+        a route (#237); an unknown name is ``{"ok": False, "error": ..., "routes":
+        [<the valid names>]}``, refused before any I/O."""
         idx = self._tool_index()
         if name not in idx:
             raise LoadError(f"no tool '{name}' (see tool_schemas())")
@@ -175,6 +194,10 @@ class Hal:
             return {"ok": False, "error": error, "delivered": e.delivered,
                     "via": e.via, "fix": e.fix}
         except Error as e:
+            pin = (arguments or {}).get("via")
+            if routed and pin is not None and pin not in route_names(node):
+                # an unknown route name (#237): the valid names, for the next call
+                return {"ok": False, "error": str(e), "routes": route_names(node)}
             return {"ok": False, "error": str(e)}
         finally:
             via = last_via.get()
@@ -388,6 +411,31 @@ def _refuse_load_change(before, *, raising: bool = True) -> None:
     if raising:
         raise LoadError("a driver changed the approval policy while loading "
                         f"({', '.join(changed)}); only the operator sets it")
+
+
+# -- routes (#237: the agent surface of routes M1) ------------------------------
+
+def route_names(node: Node) -> list[str]:
+    """The route names of a node with ``routes:``, in order (the main route first);
+    ``[]`` for a node without routes."""
+    return [name for name, _, _ in node.routes]
+
+
+def declared_routes(node: Node) -> list[dict]:
+    """What the file declares for ``node``'s routes, in order: each route's
+    ``name``, ``via`` (its bus path) and ``address``. A node without routes has
+    its one main route (its parent bus); a root node has none. No up/down state
+    (RFC-001: that is M3). A string address goes through ``redact_url``: it is
+    ${ENV}-resolved, so it may carry userinfo or a query token (#20)."""
+    def shown(addr):
+        return redact_url(addr) if isinstance(addr, str) else addr
+    if node.routes:
+        return [{"name": name, "via": bus.path, "address": shown(addr)}
+                for name, bus, addr in node.routes]
+    if node.parent is None:
+        return []
+    return [{"name": node.parent.name, "via": node.parent.path,
+             "address": shown(node.address)}]
 
 
 # -- LLM tool-schema helpers ----------------------------------------------------
