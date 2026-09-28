@@ -43,6 +43,11 @@ All notable changes to this project are documented here. The format follows
   record written by a newer `record_version` refuses the whole read (one sentence)
   unless `--skip-newer`, which lists what it skipped instead. `side_effect: none`
   throughout — read-only, no topology.
+- **`shal,sim-psu` `config.current_limit`** (#261). Optional, amperes, > 0. While
+  `set_voltage / load_ohms` exceeds it the output is constant-current:
+  `measure_voltage` returns `current_limit * load_ohms` and `measure_current`
+  returns `current_limit`, so a simulated bad unit can fail on voltage. Without it
+  nothing changes; zero or negative is a `LoadError`.
 - **`via` everywhere** (#236, routes M1 part 3, public API). A node with `routes:`
   names the route on every line: `via` joins the stable log fields (every hop
   line inside a route has it; `retry` / `failover` lines also carry `next`, the
