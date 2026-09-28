@@ -198,9 +198,10 @@ def test_skip_newer_text_mode_prints_the_skipped_id(store_with_newer):
 
 
 # A malformed (not newer) record is a different RecordError — --skip-newer would
-# not fix it, so its JSON error stays a plain string rather than the misleading
-# {"type": "NewerRecord", ...} shape (PR #255 review).
-def test_a_malformed_non_newer_record_keeps_a_plain_string_error(tmp_path):
+# not fix it, so it gets its own "BadRecord" type and fix rather than the
+# {"type": "NewerRecord", ...} shape, though every --json error from this
+# command is still {type, message, fix} (PR #255 review).
+def test_a_malformed_non_newer_record_gets_its_own_error_type(tmp_path):
     write(_OLD, tmp_path)
     doc = _record("rec-malformed", unit="unit-z", started="2026-09-28T13:00:00Z").to_mapping()
     del doc["unit"]                              # malformed, not newer
@@ -212,5 +213,6 @@ def test_a_malformed_non_newer_record_keeps_a_plain_string_error(tmp_path):
     assert r.returncode == 1
     payload = json.loads(r.stdout)
     assert payload["ok"] is False
-    assert isinstance(payload["error"], str)
-    assert "newer than this SHAL reads" not in payload["error"]
+    assert payload["error"]["type"] == "BadRecord"
+    assert "newer than this SHAL reads" not in payload["error"]["message"]
+    assert payload["error"]["fix"] == "fix or remove the record file named in the message"

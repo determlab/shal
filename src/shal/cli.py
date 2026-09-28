@@ -525,6 +525,7 @@ _NO_STORE_FIX = ("run a test with pytest-shal or the jig sample "
                  "('shal docs --sample jig --to DIR'), or pass the directory "
                  "that holds records.db")
 _NEWER_RECORD_FIX = "re-run with --skip-newer, or upgrade pyshal"
+_BAD_RECORD_FIX = "fix or remove the record file named in the message"
 
 
 def _cmd_records(args) -> int:
@@ -560,12 +561,14 @@ def _cmd_records(args) -> int:
     except RecordError as e:
         print(f"shal records: {e}", file=sys.stderr)
         if args.json:
-            # A newer record_version names its own fix, same shape as NoStore
-            # (product guideline 3: an error names the fix); any other
-            # RecordError (a malformed record) is not fixed by --skip-newer,
-            # so it keeps the plain message instead of a misleading one.
-            error = ({"type": "NewerRecord", "message": str(e), "fix": _NEWER_RECORD_FIX}
-                     if isinstance(e, _NewerRecordError) else str(e))
+            # One error shape for every `--json` failure ({type, message, fix}):
+            # a newer record_version names --skip-newer as its fix; any other
+            # RecordError (a malformed record, which --skip-newer would not fix)
+            # is "BadRecord" instead, never the same fix text.
+            if isinstance(e, _NewerRecordError):
+                error = {"type": "NewerRecord", "message": str(e), "fix": _NEWER_RECORD_FIX}
+            else:
+                error = {"type": "BadRecord", "message": str(e), "fix": _BAD_RECORD_FIX}
             _json_out({"ok": False, "error": error})
         return 1
 
@@ -1045,8 +1048,12 @@ def main(argv: list[str] | None = None) -> int:
                '  prints {"ok": false, "error": {"type": "NewerRecord",\n'
                '    "message": "<the one sentence>",\n'
                '    "fix": "re-run with --skip-newer, or upgrade pyshal"}}\n'
-               "  (any other malformed-record error keeps a plain string message,\n"
-               "  since --skip-newer would not fix it).\n"
+               "\n"
+               "a malformed record (not newer, e.g. a required key missing) is a\n"
+               '  different failure: --json prints {"ok": false, "error":\n'
+               '    {"type": "BadRecord", "message": "<the one sentence>",\n'
+               '     "fix": "fix or remove the record file named in the message"}}\n'
+               "  — every --json error from this command is {type, message, fix}.\n"
                "\n"
                "exit: 0 read (even zero records); 1 no store, or a newer record\n"
                "  refused without --skip-newer; 2 a usage error.")
