@@ -119,3 +119,6 @@ and a terminal run asks a person.
 - [src/shal/schema/shal-v1.schema.json](src/shal/schema/shal-v1.schema.json) — the
   topology file's schema.
 - Contributing to this repo, not using it: [docs/agents/context.md](docs/agents/context.md).
+- [RELEASING.md](RELEASING.md) — the two release paths: type A (a version-bump +
+  changelog PR, anyone can open) and type B (tag + `gh release create`, founder
+  only — the one step that publishes to PyPI).
