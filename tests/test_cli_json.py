@@ -462,6 +462,41 @@ def test_tools_json_shape(lab):
     assert wr["description"].startswith("Set the temperature the simulated room drifts")
     assert wr["input_schema"]["required"] == ["celsius"]
     assert wr["input_schema"]["properties"]["celsius"]["type"] == "number"
+    # a node without routes: no `routes` key, no `via` argument (#237)
+    assert all("via" not in t["input_schema"]["properties"] for t in doc["tools"])
+
+
+_TWO_ROUTE_YAML = textwrap.dedent("""\
+    shal_version: 1
+    root:
+      console:
+        driver: shal,sim-i2c
+        address: sim0
+        children:
+          board:
+            id: board
+            driver: shal,sim-sensor
+            address: 0x48
+            routes:
+              - {via: /net, address: 0x49, name: ssh}
+      net:
+        driver: shal,sim-i2c
+        address: sim1
+    """)
+
+
+def test_tools_json_lists_a_routed_node_once_with_its_routes_in_order(tmp_path):
+    # #237 exit test 5: one entry per op of `board`, not one per route
+    (tmp_path / "t.yaml").write_text(_TWO_ROUTE_YAML, encoding="utf-8")
+    r = _run("tools", "t.yaml", "--json", cwd=tmp_path)
+    assert r.returncode == 0, r.stderr
+    tools = _doc(r)["tools"]
+    assert [t["tool"] for t in tools] == ["board__read_celsius", "board__set_target"]
+    for t in tools:
+        assert t["device"] == "board" and t["routes"] == ["console", "ssh"]
+        via = t["input_schema"]["properties"]["via"]
+        assert via["type"] == "string" and via["enum"] == ["console", "ssh"]
+        assert "via" not in t["input_schema"].get("required", [])
 
 
 # -- shal docs --list --json --------------------------------------------------------

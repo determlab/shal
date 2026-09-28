@@ -129,7 +129,10 @@ must name real ops/params of the bound driver (checked at load).
   the driver's transport kind, a jump address outside that bus's address grammar.
   At run time the node talks through one route at a time (main first, sticky):
   `delivered="no"` moves any op to the next route; `delivered="unknown"` moves only
-  an `@idempotent` op. Python pins a route with `dev.op(..., via="<name>")`.
+  an `@idempotent` op. Python pins a route with `dev.op(..., via="<name>")`; the
+  CLI with `shal call ... --via <name>`; over MCP each tool of a routed node takes
+  an optional `via` (an enum of its route names). `shal routes t.yaml <node>` prints
+  the declared routes in order.
 - `insecure: true` missing on a plaintext `http://` or tcp bus.
 - Duplicate `id`, unknown `compatible`, malformed address, unresolved `$ref`,
   unknown node keys (schema is `additionalProperties: false`).

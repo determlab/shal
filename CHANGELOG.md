@@ -16,11 +16,40 @@ All notable changes to this project are documented here. The format follows
 ## [0.4.0] - 2026-09-29
 
 ### Added
+- **Routes on the agent surface** (#237, routes M1 part 4, public API). A tool of
+  a node with `routes:` takes an optional `via` argument, an enum of its route
+  names in order, in `Hal.tool_schemas()`, `shal tools --json` and the MCP tool
+  schema; it pins that route (RFC-001 §2). `Hal.tool_catalog()` and
+  `shal tools --json` give such a tool `routes` (the names, in order); the node is
+  listed once. `shal call ... --via <name>` pins a route for one call. New
+  `shal routes <topology> <node> [--json]` prints what the file declares: each
+  route's name, `via` bus path and address, in order (a string address goes
+  through `redact_url`, so no userinfo or query token from `${ENV}` reaches
+  stdout; a node without routes shows
+  its one main route; no up/down state). An unknown route name is refused before
+  any I/O with the valid names: `Hal.call_tool()` / MCP return
+  `{"ok": false, "error": ..., "routes": [...]}`, and `shal call --via` exits 3
+  with the same JSON. A node without routes has no `via` argument and no `routes`
+  key, so its schemas are unchanged.
 - **`shal,sim-psu`** (#252, ops#117 CTO ruling 1, prerequisite C7). A second sim
   device — a simulated bench PSU on `shal,sim-scpi` with `set_voltage` (gated
   `actuator`) and free `measure_voltage`/`measure_current` reads, the latter
   following Ohm's law from the set voltage and the node's configurable
   `load_ohms` — so a failing unit can be simulated with no hardware.
+- **`shal records` — read the record store from the CLI** (#251, public API).
+  `shal records [DIR] [--unit] [--station] [--sequence] [--verdict] [--last N]
+  [--json] [--skip-newer]` reads `record.read()` over `DIR/records.db` (default
+  `.`), filtered, newest first — no more writing Python to see a `pytest-shal` or
+  `jig` sample result. `--json` prints `{"ok": true, "store": ..., "records": [...]}`;
+  a missing store is exit 1 with a structured `NoStore` error naming the fix; a
+  record written by a newer `record_version` refuses the whole read (one sentence)
+  unless `--skip-newer`, which lists what it skipped instead. `side_effect: none`
+  throughout — read-only, no topology.
+- **`shal,sim-psu` `config.current_limit`** (#261). Optional, amperes, > 0. While
+  `set_voltage / load_ohms` exceeds it the output is constant-current:
+  `measure_voltage` returns `current_limit * load_ohms` and `measure_current`
+  returns `current_limit`, so a simulated bad unit can fail on voltage. Without it
+  nothing changes; zero or negative is a `LoadError`.
 - **`via` everywhere** (#236, routes M1 part 3, public API). A node with `routes:`
   names the route on every line: `via` joins the stable log fields (every hop
   line inside a route has it; `retry` / `failover` lines also carry `next`, the
