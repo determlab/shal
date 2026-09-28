@@ -14,6 +14,7 @@ adapter — not the front door.
     shal probe lab.yaml --drivers ./drivers/   # load local/unpackaged drivers
     shal check shal,sim-sensor --json    # driver conformance as a JSON report
     shal check driver:MyThing --topology sim.yaml   # a local class + live sim probes
+    shal records --verdict fail --json   # read the record store (read-only, no topology)
 
 The legacy ``shal-mcp`` command still works (it is ``shal mcp``).
 
@@ -542,6 +543,80 @@ def _cmd_call(args) -> int:
     return 0
 
 
+# `shal records` fix text is one fixed sentence (issue #251): it names the exact
+# command an agent runs next, so it is never reworded per-call the way an error
+# message built from the failing value would be.
+_NO_STORE_FIX = ("run a test with pytest-shal or the jig sample "
+                 "('shal docs --sample jig --to DIR'), or pass the directory "
+                 "that holds records.db")
+_NEWER_RECORD_FIX = "re-run with --skip-newer, or upgrade pyshal"
+_BAD_RECORD_FIX = "fix or remove the record file named in the message"
+
+
+def _cmd_records(args) -> int:
+    """`shal records [DIR]` — read `record.write()`'s store (issue #251).
+
+    Read-only (`side_effect: none`): no topology, no driver I/O, just
+    `record.read()` on `DIR/records.db` and the `records/` YAML beside it. A
+    missing store is a structured `NoStore` error naming the fix; a record
+    written by a newer `record_version` refuses the whole read (`record.read()`'s
+    own one-sentence message) unless `--skip-newer`, which returns the readable
+    records and lists the ones it skipped instead of blocking on them.
+    """
+    from .record import RecordError, _NewerRecordError, db_path, read
+
+    store = db_path(args.dir)
+    if not store.exists():
+        msg = f"no records.db in {args.dir}"
+        print(f"shal records: {msg}. {_NO_STORE_FIX}", file=sys.stderr)
+        if args.json:
+            _json_out({"ok": False,
+                       "error": {"type": "NoStore", "message": msg, "fix": _NO_STORE_FIX}})
+        return 1
+
+    try:
+        if args.skip_newer:
+            records, skipped = read(args.dir, unit=args.unit, station=args.station,
+                                    sequence=args.sequence, verdict=args.verdict,
+                                    newer="skip")
+        else:
+            records = read(args.dir, unit=args.unit, station=args.station,
+                           sequence=args.sequence, verdict=args.verdict)
+            skipped = []
+    except RecordError as e:
+        print(f"shal records: {e}", file=sys.stderr)
+        if args.json:
+            # One error shape for every `--json` failure ({type, message, fix}):
+            # a newer record_version names --skip-newer as its fix; any other
+            # RecordError (a malformed record, which --skip-newer would not fix)
+            # is "BadRecord" instead, never the same fix text.
+            if isinstance(e, _NewerRecordError):
+                error = {"type": "NewerRecord", "message": str(e), "fix": _NEWER_RECORD_FIX}
+            else:
+                error = {"type": "BadRecord", "message": str(e), "fix": _BAD_RECORD_FIX}
+            _json_out({"ok": False, "error": error})
+        return 1
+
+    newest_first = list(reversed(records))
+    if args.last is not None:
+        newest_first = newest_first[:args.last] if args.last > 0 else []
+
+    if args.json:
+        payload = {"ok": True, "store": str(store),
+                   "records": [r.to_mapping() for r in newest_first]}
+        if args.skip_newer:
+            payload["skipped"] = [{"id": rid, "record_version": v} for rid, v in skipped]
+        _json_out(payload)
+        return 0
+
+    for r in newest_first:
+        print(f"{r.started}  {r.unit}  {r.station}  {r.sequence}  {r.verdict}  {r.record}")
+    for rid, version in skipped:
+        print(f"# skipped (record_version {version}, newer than this reads): {rid}",
+              file=sys.stderr)
+    return 0
+
+
 def _find_node(hal, key: str):
     """The device node for ``shal routes``: its id, its /path, or its tool handle
     (`shal tools`). None when there is no such device."""
@@ -1038,6 +1113,55 @@ def main(argv: list[str] | None = None) -> int:
                    help="pin one route of a node with routes (see `shal routes`)")
     _add_drivers_arg(k)
     k.set_defaults(func=_cmd_call)
+
+    rc = sub.add_parser(
+        "records", help="read the record store (read-only, no topology)",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        description="Read `record.write()`'s store under DIR (`DIR/records.db`, and "
+                    "the `records/` YAML audit copy beside it — `record.md` §4 "
+                    "'the YAML wins'), filtered, newest first. side_effect: none.",
+        epilog="--json prints one JSON document on stdout:\n"
+               '  {"ok": true, "store": "DIR/records.db",\n'
+               '   "records": [<record, as record.to_json() decodes it>]}\n'
+               "  --skip-newer also adds:\n"
+               '   "skipped": [{"id": "<record id>", "record_version": <int>}]\n'
+               "\n"
+               "no store (no records.db in DIR): exit 1. The message is on stderr;\n"
+               '  --json also prints {"ok": false,\n'
+               '    "error": {"type": "NoStore", "message": "no records.db in DIR",\n'
+               '              "fix": "<the one command that makes one>"}}\n'
+               "\n"
+               "a record written by a newer record_version refuses the whole read\n"
+               "  (one sentence, exit 1) unless --skip-newer, which returns the\n"
+               "  readable records and lists the ones it skipped instead. --json\n"
+               '  prints {"ok": false, "error": {"type": "NewerRecord",\n'
+               '    "message": "<the one sentence>",\n'
+               '    "fix": "re-run with --skip-newer, or upgrade pyshal"}}\n'
+               "\n"
+               "a malformed record (not newer, e.g. a required key missing) is a\n"
+               '  different failure: --json prints {"ok": false, "error":\n'
+               '    {"type": "BadRecord", "message": "<the one sentence>",\n'
+               '     "fix": "fix or remove the record file named in the message"}}\n'
+               "  — every --json error from this command is {type, message, fix}.\n"
+               "\n"
+               "exit: 0 read (even zero records); 1 no store, or a newer record\n"
+               "  refused without --skip-newer; 2 a usage error.")
+    rc.add_argument("dir", nargs="?", default=".", metavar="DIR",
+                    help="the directory holding records.db (default: .)")
+    rc.add_argument("--unit", default=None, help="filter: exact unit id")
+    rc.add_argument("--station", default=None, help="filter: exact station id")
+    rc.add_argument("--sequence", default=None, help="filter: exact sequence name")
+    rc.add_argument("--verdict", default=None,
+                    choices=["pass", "fail", "error", "aborted"],
+                    help="filter: exact verdict")
+    rc.add_argument("--last", type=int, default=None, metavar="N",
+                    help="keep only the N most recent (after the filters above)")
+    rc.add_argument("--skip-newer", action="store_true", dest="skip_newer",
+                    help="skip records from a newer record_version instead of "
+                         "refusing the whole read (record.read(newer='skip'))")
+    rc.add_argument("--json", action="store_true",
+                    help="print the records as JSON on stdout")
+    rc.set_defaults(func=_cmd_records)
 
     r = sub.add_parser(
         "routes", help="list the routes a node declares, in order",

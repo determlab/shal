@@ -70,6 +70,10 @@ write did not.
   an error that lists the valid ones.
 - `shal check shal,sim-sensor --json` — check a driver against the authoring
   contract. Exit 0 no problems, 1 problems, 2 the check could not run.
+- `shal records [DIR] --verdict fail --json` — read the record store under
+  `DIR` (default `.`; `DIR/records.db`), filtered, newest first. Read-only. A
+  missing store is exit 1 with a `fix`; a newer `record_version` refuses the
+  read unless `--skip-newer`.
 - `shal docs` — the guide to add a device. `shal docs --list` lists the reference
   drivers; `shal docs --example tmp102` prints one (driver, sim twin, test, topology).
   A new driver starts from one of these. [docs/CATALOG.md](docs/CATALOG.md) is where
@@ -83,7 +87,7 @@ write did not.
   `hal.call_tool("ambient_temp__read_celsius", {})` → `{'ok': True, 'result': 26.33}`.
 
 `--json`: `shal probe`, `shal tools`, `shal docs --list`, `shal docs --samples`,
-`shal call`, `shal routes` and `shal check` take it. Each prints one JSON document on stdout; `--help` shows its shape. On an
+`shal call`, `shal routes`, `shal check` and `shal records` take it. Each prints one JSON document on stdout; `--help` shows its shape. On an
 error the exit code is the same, the message is on stderr, and stdout holds
 `{"ok": false, "error": ...}`. `shal probe --json` lists the writes it did not run,
 each with the `shal call` line that runs it.

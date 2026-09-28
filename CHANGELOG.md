@@ -34,6 +34,15 @@ All notable changes to this project are documented here. The format follows
   `actuator`) and free `measure_voltage`/`measure_current` reads, the latter
   following Ohm's law from the set voltage and the node's configurable
   `load_ohms` — so a failing unit can be simulated with no hardware.
+- **`shal records` — read the record store from the CLI** (#251, public API).
+  `shal records [DIR] [--unit] [--station] [--sequence] [--verdict] [--last N]
+  [--json] [--skip-newer]` reads `record.read()` over `DIR/records.db` (default
+  `.`), filtered, newest first — no more writing Python to see a `pytest-shal` or
+  `jig` sample result. `--json` prints `{"ok": true, "store": ..., "records": [...]}`;
+  a missing store is exit 1 with a structured `NoStore` error naming the fix; a
+  record written by a newer `record_version` refuses the whole read (one sentence)
+  unless `--skip-newer`, which lists what it skipped instead. `side_effect: none`
+  throughout — read-only, no topology.
 - **`shal,sim-psu` `config.current_limit`** (#261). Optional, amperes, > 0. While
   `set_voltage / load_ohms` exceeds it the output is constant-current:
   `measure_voltage` returns `current_limit * load_ohms` and `measure_current`
