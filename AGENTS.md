@@ -63,6 +63,11 @@ write did not.
 - `shal call sim.yaml ambient_temp read_celsius --json` — run one op. Reads and
   `write` ops run. Exit codes: 0 ran, 1 the op failed, 2 refused by the gate
   (nothing sent), 3 could not run.
+- `shal routes sim.yaml ambient_temp --json` — the routes a node declares, in order
+  (a node without `routes:` shows its one main route). On a node with routes, each
+  tool in `shal tools --json` has `routes`, and `shal call ... --via <name>` pins one
+  route for the call; over MCP the tool takes an optional `via`. An unknown name is
+  an error that lists the valid ones.
 - `shal check shal,sim-sensor --json` — check a driver against the authoring
   contract. Exit 0 no problems, 1 problems, 2 the check could not run.
 - `shal docs` — the guide to add a device. `shal docs --list` lists the reference
@@ -78,7 +83,7 @@ write did not.
   `hal.call_tool("ambient_temp__read_celsius", {})` → `{'ok': True, 'result': 26.33}`.
 
 `--json`: `shal probe`, `shal tools`, `shal docs --list`, `shal docs --samples`,
-`shal call` and `shal check` take it. Each prints one JSON document on stdout; `--help` shows its shape. On an
+`shal call`, `shal routes` and `shal check` take it. Each prints one JSON document on stdout; `--help` shows its shape. On an
 error the exit code is the same, the message is on stderr, and stdout holds
 `{"ok": false, "error": ...}`. `shal probe --json` lists the writes it did not run,
 each with the `shal call` line that runs it.

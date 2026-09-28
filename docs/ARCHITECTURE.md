@@ -74,6 +74,7 @@ Both are thin views over the same core (the Bridge / API). The CLI is itself an 
   | `probe [tool]` | one-shot read → print + exit | ✅ `shal probe` |
   | `tools` / `catalog` | list the surface | ✅ `shal tools` |
   | `mcp` | run as an MCP server | ✅ `shal mcp` |
+  | `routes <node>` | print a node's declared routes, in order (pin one: `call --via`) | ✅ `shal routes` (#237) |
   | `docs [--sdk]` | print the bundled guide / full SDK | ✅ `shal docs` |
   | `--drivers <path>` | load local drivers | ✅ |
   | `call <tool> [args]` | call a tool → result **or** a ticket | proposed (gated-write over a stateless CLI needs persistent tickets, #56) |
