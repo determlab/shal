@@ -12,6 +12,7 @@ adapter — not the front door.
     shal probe lab.yaml --drivers ./drivers/   # load local/unpackaged drivers
     shal check shal,sim-sensor --json    # driver conformance as a JSON report
     shal check driver:MyThing --topology sim.yaml   # a local class + live sim probes
+    shal records --verdict fail --json   # read the record store (read-only, no topology)
 
 The legacy ``shal-mcp`` command still works (it is ``shal mcp``).
 
@@ -517,6 +518,70 @@ def _cmd_call(args) -> int:
     return 0
 
 
+# `shal records` fix text is one fixed sentence (issue #251): it names the exact
+# command an agent runs next, so it is never reworded per-call the way an error
+# message built from the failing value would be.
+_NO_STORE_FIX = ("run a test with pytest-shal or the jig sample "
+                 "('shal docs --sample jig --to DIR'), or pass the directory "
+                 "that holds records.db")
+
+
+def _cmd_records(args) -> int:
+    """`shal records [DIR]` — read `record.write()`'s store (issue #251).
+
+    Read-only (`side_effect: none`): no topology, no driver I/O, just
+    `record.read()` on `DIR/records.db` and the `records/` YAML beside it. A
+    missing store is a structured `NoStore` error naming the fix; a record
+    written by a newer `record_version` refuses the whole read (`record.read()`'s
+    own one-sentence message) unless `--skip-newer`, which returns the readable
+    records and lists the ones it skipped instead of blocking on them.
+    """
+    from .record import RecordError, db_path, read
+
+    store = db_path(args.dir)
+    if not store.exists():
+        msg = f"no records.db in {args.dir}"
+        print(f"shal records: {msg}. {_NO_STORE_FIX}", file=sys.stderr)
+        if args.json:
+            _json_out({"ok": False,
+                       "error": {"type": "NoStore", "message": msg, "fix": _NO_STORE_FIX}})
+        return 1
+
+    try:
+        if args.skip_newer:
+            records, skipped = read(args.dir, unit=args.unit, station=args.station,
+                                    sequence=args.sequence, verdict=args.verdict,
+                                    newer="skip")
+        else:
+            records = read(args.dir, unit=args.unit, station=args.station,
+                           sequence=args.sequence, verdict=args.verdict)
+            skipped = []
+    except RecordError as e:
+        print(f"shal records: {e}", file=sys.stderr)
+        if args.json:
+            _json_out({"ok": False, "error": str(e)})
+        return 1
+
+    newest_first = list(reversed(records))
+    if args.last is not None:
+        newest_first = newest_first[:args.last] if args.last > 0 else []
+
+    if args.json:
+        payload = {"ok": True, "store": str(store),
+                   "records": [r.to_mapping() for r in newest_first]}
+        if args.skip_newer:
+            payload["skipped"] = [{"id": rid, "record_version": v} for rid, v in skipped]
+        _json_out(payload)
+        return 0
+
+    for r in newest_first:
+        print(f"{r.started}  {r.unit}  {r.station}  {r.sequence}  {r.verdict}  {r.record}")
+    for rid, version in skipped:
+        print(f"# skipped (record_version {version}, newer than this reads): {rid}",
+              file=sys.stderr)
+    return 0
+
+
 def _strip_front_matter(text: str) -> str:
     """Drop a leading `---` front-matter block. Both shipped docs carry the repo's
     doc-standard header (type/owner/reviewed) — that is bookkeeping for the repo, not
@@ -949,6 +1014,46 @@ def main(argv: list[str] | None = None) -> int:
                    help="print the result (or the refusal) as JSON on stdout")
     _add_drivers_arg(k)
     k.set_defaults(func=_cmd_call)
+
+    rc = sub.add_parser(
+        "records", help="read the record store (read-only, no topology)",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        description="Read `record.write()`'s store under DIR (`DIR/records.db`, and "
+                    "the `records/` YAML audit copy beside it — `record.md` §4 "
+                    "'the YAML wins'), filtered, newest first. side_effect: none.",
+        epilog="--json prints one JSON document on stdout:\n"
+               '  {"ok": true, "store": "DIR/records.db",\n'
+               '   "records": [<record, as record.to_json() decodes it>]}\n'
+               "  --skip-newer also adds:\n"
+               '   "skipped": [{"id": "<record id>", "record_version": <int>}]\n'
+               "\n"
+               "no store (no records.db in DIR): exit 1. The message is on stderr;\n"
+               '  --json also prints {"ok": false,\n'
+               '    "error": {"type": "NoStore", "message": "no records.db in DIR",\n'
+               '              "fix": "<the one command that makes one>"}}\n'
+               "\n"
+               "a record written by a newer record_version refuses the whole read\n"
+               "  (one sentence, exit 1) unless --skip-newer, which returns the\n"
+               "  readable records and lists the ones it skipped instead.\n"
+               "\n"
+               "exit: 0 read (even zero records); 1 no store, or a newer record\n"
+               "  refused without --skip-newer; 2 a usage error.")
+    rc.add_argument("dir", nargs="?", default=".", metavar="DIR",
+                    help="the directory holding records.db (default: .)")
+    rc.add_argument("--unit", default=None, help="filter: exact unit id")
+    rc.add_argument("--station", default=None, help="filter: exact station id")
+    rc.add_argument("--sequence", default=None, help="filter: exact sequence name")
+    rc.add_argument("--verdict", default=None,
+                    choices=["pass", "fail", "error", "aborted"],
+                    help="filter: exact verdict")
+    rc.add_argument("--last", type=int, default=None, metavar="N",
+                    help="keep only the N most recent (after the filters above)")
+    rc.add_argument("--skip-newer", action="store_true", dest="skip_newer",
+                    help="skip records from a newer record_version instead of "
+                         "refusing the whole read (record.read(newer='skip'))")
+    rc.add_argument("--json", action="store_true",
+                    help="print the records as JSON on stdout")
+    rc.set_defaults(func=_cmd_records)
 
     args, extra = ap.parse_known_args(argv)
     if extra:  # parse_args would exit 2 here — for `call`, 2 is the gate's code
