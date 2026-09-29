@@ -9,6 +9,7 @@ import shal
 from shal.buses.sim_msg import SimMsgBus, msg_sim_model
 from shal.buses.sim_scpi import SimScpiBus, scpi_sim_model
 from shal.node import Node
+from shal.transport import Write
 
 
 def write(tmp_path, body: str):
@@ -251,3 +252,31 @@ def test_sim_scpi_unknown_instrument_keeps_plain_value(tmp_path):
         with pytest.raises(shal.HopError, match="no instrument at") as ei:
             bus.exchange("ghost-instrument", {"scpi": "*IDN?", "query": True})
     assert "ghost-instrument" in str(ei.value)
+
+
+# ---- the bus contract for routes (#238): "no" only when nothing was sent ------------
+
+_CALLS = {
+    "shal,sim-i2c": lambda b: b.txn(0x48, [Write(b"\x00")]),
+    "shal,sim-scpi": lambda b: b.exchange("x", {"scpi": "*IDN?", "query": True}),
+    "shal,sim-msg": lambda b: b.exchange("x", {"cmd": "status"}),
+}
+
+
+@pytest.mark.parametrize("driver", sorted(_CALLS))
+def test_sim_bus_reports_before_send_as_no_and_after_send_as_unknown(tmp_path, driver):
+    p = write(tmp_path, f"""
+        shal_version: 1
+        root:
+          bus: {{id: bus, driver: "{driver}", address: sim0}}
+    """)
+    with shal.load(p) as hal:
+        bus = hal.get_node("bus").driver
+        bus.fail_next = 1                      # dropped BEFORE the request went out
+        with pytest.raises(shal.HopError) as ei:
+            _CALLS[driver](bus)
+        assert ei.value.delivered == "no"
+        bus.fail_delivered_unknown = True      # lost AFTER the request went out
+        with pytest.raises(shal.HopError) as ei:
+            _CALLS[driver](bus)
+        assert ei.value.delivered == "unknown"

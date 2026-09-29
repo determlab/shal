@@ -101,6 +101,7 @@ class SimI2cBus(Driver, Transport, ByteTransport):
     def __init__(self, node: Node) -> None:
         Transport.__init__(self, node)
         self._models: dict[int, Any] = {}
+        self._unmodeled: dict[int, str] = {}   # declared children with no sim model
         self.fail_next: int = 0          # test hook: fail N next txns (delivered=no)
         self.fail_delivered_unknown = False  # test hook: ambiguous failure
         self.connect_count = 0
@@ -121,15 +122,23 @@ class SimI2cBus(Driver, Transport, ByteTransport):
                 continue
             comp = getattr(node, "spec", {}).get("driver")
             model = SIM_MODELS.get(comp)
-            if model is not None and isinstance(node.address, int):
-                self._models.setdefault(node.address, model())
+            if isinstance(node.address, int):
+                if model is not None:
+                    self._models.setdefault(node.address, model())
+                elif isinstance(comp, str):
+                    self._unmodeled.setdefault(node.address, comp)
         super().activate()
         self.log.debug("connect (%d device models)", len(self._models),
                        event="connect")
 
     def model_for(self, addr: int) -> Any:
         self.ensure_ready()
-        return self._models[addr]
+        try:
+            return self._models[addr]
+        except KeyError:
+            have = ", ".join(f"0x{a:02x}" for a in sorted(self._models)) or "none"
+            raise LookupError(f"sim-i2c: no sim model at {addr!r}; "
+                              f"addresses with models: {have}") from None
 
     def txn(self, addr: int, ops: Sequence[Op]) -> bytes:
         with self.lock:  # check -> activate -> talk, under the bus lock
@@ -146,7 +155,12 @@ class SimI2cBus(Driver, Transport, ByteTransport):
                                hop="sim-i2c", txn=current_txn.get(), delivered="no")
             model = self._models.get(addr)
             if model is None:
-                raise HopError(f"i2c NAK at 0x{addr:02x}", path=self.host.path,
+                hint = ""
+                if addr in self._unmodeled:
+                    comp = self._unmodeled[addr]
+                    hint = (f" — no sim model registered for {comp!r}; "
+                            f"decorate a class with @sim_model({comp!r})")
+                raise HopError(f"i2c NAK at 0x{addr:02x}{hint}", path=self.host.path,
                                hop="sim-i2c", txn=current_txn.get())
             result = model.txn(ops)
             if self.log.isEnabledFor(logging.DEBUG):  # hot path costs nothing when off

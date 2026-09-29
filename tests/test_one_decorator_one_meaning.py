@@ -212,4 +212,4 @@ def test_the_shipped_rigol_set_voltage_is_not_described_as_a_read():
     assert described, out
     for name, d in described.items():
         assert "read" not in d.lower(), (name, d)
-        assert "Side effect (write): safe to re-send" in d, (name, d)
+        assert "Side effect (actuator): safe to re-send" in d, (name, d)

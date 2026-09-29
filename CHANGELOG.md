@@ -13,13 +13,35 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
-### Changed
+### Behaviour change
+- **PSU setpoints are `actuator`** (#276, ruling #274). PSU setpoints in the
+  reference driver are now `actuator`; an approval prompt appears where there was
+  none. The `side_effect` label follows the physical effect, not idempotence;
+  `SDK.md`, the `shal-build-driver` skill and the `examples/driver-creator/scpi-psu`
+  driver say the same.
 - **Behaviour change: chamber `set_temperature` and Sonos playback/volume are now
   `actuator`** (#290, ADR-001 Addendum 6). The http-service chamber example's
   `set_temperature` (drives a heater) and the Sonos reference driver's `play`,
   `pause`, `stop`, `next_track`, `previous_track` and `set_volume` were
   `side_effect="write"` and ran without a prompt; they are now gated like every
   other actuator and ask for approval. Sonos reads stay `none`.
+
+### Added
+- **Routes M1 closes** (#238). The bus contract for routes is written in
+  `SDK.md` and the `shal-build-bus` skill: `delivered="no"` only when nothing was
+  sent, a timeout or a drop after send is `"unknown"`, and a driver must not
+  cache `self.addr` on a routed node. `AGENTS.md` and `AGENT_GUIDE.md` each carry
+  a `routes:` example that runs on the sim; `DESIGN V2.md`'s example now sits
+  the node under its main bus. The M1 exit tests run in CI
+  (`tests/test_routes_m1_exit.py`), and every sim bus is tested for the
+  `"no"` / `"unknown"` split.
+
+### Changed
+- **`model_for` on sim buses raises `LookupError` (was `KeyError`)** (#288).
+
+### Fixed
+- `docs/CATALOG.md` and the README list every shipped `shal,*` compatible, including `shal,sim-psu`; a test fails when one ships without a catalog row; the agent docs' MCP install line is the quoted PyPI form `pip install "pyshal[mcp]"` (#273).
+- `shal call --json` and `shal check --json` print `{"ok": false, "error": ...}` on stdout for every error path (exit 3 / 1 / 2), as AGENTS.md promises; the `shal records` no-store fix now names `shal records jig-records`, the folder the jig sample writes (#272).
 
 ## [0.4.0] - 2026-09-29
 

@@ -394,7 +394,7 @@ and an audit record for rejected attempts. Your method body stays check-free.
 
 ```python
 @op("Set this channel's output voltage (absolute setpoint).",
-    unit="volt", side_effect="write",
+    unit="volt", side_effect="actuator",   # a PSU setpoint changes the energy reaching the world
     params={"volts": {"minimum": 0.0, "maximum": 32.0}})   # from the datasheet
 def set_voltage(self, volts: float) -> None:
     self.bus.exchange(self.addr, {"scpi": f":SOUR{self.ch}:VOLT {volts}"})
@@ -517,7 +517,7 @@ def start_cleaning(self) -> None:
 - **`@idempotent` is about retry, never the label** (#194). The `side_effect`
   label alone decides the gate and the audit: every op that is not `"none"` is
   audited, `@idempotent` or not, so an absolute setpoint like `set_voltage`
-  (`@idempotent`, `side_effect="write"`) is retried on a lost delivery AND lands
+  (`@idempotent`, `side_effect="actuator"`) is retried on a lost delivery AND lands
   in the audit log. A gated op is approved once; the retry after a
   `delivered="no"` drop does not ask again, and its one outcome record carries
   `attempt: 2` and the dropped `hop`. The tool description says the same: only
@@ -532,6 +532,13 @@ def start_cleaning(self) -> None:
   (`txn` optional — pass the current transaction id when you have it):
   `delivered="no"` = certainly not delivered (refused/never sent); `"unknown"` =
   anything after send. Unsure → `"unknown"`.
+  **The bus contract for routes:** report `delivered="no"` only when nothing was
+  sent (connection refused, route not up, login failed). A timeout or a drop
+  after send is `"unknown"`: on a node with `routes:` a `"no"` lets the route set
+  re-send ANY op, even an actuator, on another route.
+- **Do not cache `self.addr` on a routed node.** Each route carries its own
+  address and the route set swaps it in per call; read `self.addr` inside each
+  op, never copy it in `bind()`.
 - `shal.LimitError` is raised by the framework, never by you.
 
 ## 6. Sims — prove it with zero hardware
