@@ -1,3 +1,4 @@
 {"exit": 0,
- "stdout_has": ["records in jig-records/records.db: 5"],
+ "stdout_has": ["records in jig-records/records.db: 5",
+                  "shal records jig-records --unit U002"],
  "stderr_lacks": ["Traceback"]}
