@@ -6,13 +6,13 @@ version: 1
 branch_base: main
 
 # Max CODER<->REVIEWER rounds before the loop gives up and flags a human.
-max_rounds: 4
+max_rounds: 1
 
 # Merge behaviour when the reviewer PASSES.
 #   auto_merge: true  -> arm GitHub auto-merge (merges only when required CI is green)
 #   auto_merge: false -> stop at "ready to merge"; a human merges
 # NOTE: auto-merge is REFUSED unless branch protection has a required status check.
-auto_merge: true
+auto_merge: false
 merge_method: squash        # squash | merge | rebase
 
 # Commands the coder/reviewer run. Detected from pyproject.toml + .github/workflows/ci.yml.
