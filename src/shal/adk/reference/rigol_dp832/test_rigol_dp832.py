@@ -34,7 +34,7 @@ def rack(monkeypatch):
         return real(self, addr, payload)
 
     monkeypatch.setattr(SimScpiBus, "exchange", spy)
-    with shal.load(_TOPO) as hal:
+    with shal.approver(shal.AutoApprove()), shal.load(_TOPO) as hal:
         yield hal, calls
 
 
@@ -68,6 +68,15 @@ def test_tool_schema_advertises_the_per_channel_rating(rack):
     for dev, maximum in (("ch1", 30.0), ("ch2", 30.0), ("ch3", 5.0)):
         volts = tools[f"{dev}__set_voltage"]["input_schema"]["properties"]["volts"]
         assert volts["minimum"] == 0.0 and volts["maximum"] == maximum
+
+
+def test_set_voltage_is_actuator_and_refused_under_the_default_deny(rack):
+    hal, calls = rack
+    eff = {t["name"]: t["side_effect"] for t in hal.tool_catalog()}
+    assert eff["ch1__set_voltage"] == "actuator"
+    with shal.approver(shal.DenyAll()), pytest.raises(shal.ApprovalDenied):
+        hal.get_device("ch1").set_voltage(3.3)
+    assert calls == []                            # refused before any bus I/O
 
 
 def test_check_driver_reports_no_problems_and_no_warnings():
