@@ -532,6 +532,13 @@ def start_cleaning(self) -> None:
   (`txn` optional — pass the current transaction id when you have it):
   `delivered="no"` = certainly not delivered (refused/never sent); `"unknown"` =
   anything after send. Unsure → `"unknown"`.
+  **The bus contract for routes:** report `delivered="no"` only when nothing was
+  sent (connection refused, route not up, login failed). A timeout or a drop
+  after send is `"unknown"`: on a node with `routes:` a `"no"` lets the route set
+  re-send ANY op, even an actuator, on another route.
+- **Do not cache `self.addr` on a routed node.** Each route carries its own
+  address and the route set swaps it in per call; read `self.addr` inside each
+  op, never copy it in `bind()`.
 - `shal.LimitError` is raised by the framework, never by you.
 
 ## 6. Sims — prove it with zero hardware

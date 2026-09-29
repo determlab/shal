@@ -20,6 +20,20 @@ All notable changes to this project are documented here. The format follows
   `SDK.md`, the `shal-build-driver` skill and the `examples/driver-creator/scpi-psu`
   driver say the same.
 
+### Added
+- **Routes M1 closes** (#238). The bus contract for routes is written in
+  `SDK.md` and the `shal-build-bus` skill: `delivered="no"` only when nothing was
+  sent, a timeout or a drop after send is `"unknown"`, and a driver must not
+  cache `self.addr` on a routed node. `AGENTS.md` and `AGENT_GUIDE.md` each carry
+  a `routes:` example that runs on the sim; `DESIGN V2.md`'s example now sits
+  the node under its main bus. The M1 exit tests run in CI
+  (`tests/test_routes_m1_exit.py`), and every sim bus is tested for the
+  `"no"` / `"unknown"` split.
+
+### Fixed
+- `docs/CATALOG.md` and the README list every shipped `shal,*` compatible, including `shal,sim-psu`; a test fails when one ships without a catalog row; the agent docs' MCP install line is the quoted PyPI form `pip install "pyshal[mcp]"` (#273).
+- `shal call --json` and `shal check --json` print `{"ok": false, "error": ...}` on stdout for every error path (exit 3 / 1 / 2), as AGENTS.md promises; the `shal records` no-store fix now names `shal records jig-records`, the folder the jig sample writes (#272).
+
 ## [0.4.0] - 2026-09-29
 
 ### Added

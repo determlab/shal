@@ -16,8 +16,9 @@ the same name. Look your device up, claim its name, then build it from the SDK
 > and its `shal,*` buses; device drivers are written by their users and the
 > community. Only items marked ✅ exist today.
 >
-> **No device driver ships registered** (D1, re-affirmed #110; #149). A ✅ device
-> driver is either an **ADK reference** — shipped inside the Authoring Kit as guide
+> **No vendor device driver ships registered** (D1, re-affirmed #110; #149). The
+> only registered devices are the simulated `shal,sim-sensor` and `shal,sim-psu`.
+> A ✅ vendor device driver is either an **ADK reference** — shipped inside the Authoring Kit as guide
 > material, printed by `shal docs --example <name>` — or a **repo example** under
 > `examples/drivers/`. Either runs by naming its files with `--drivers` (D5).
 
@@ -101,6 +102,7 @@ your_package/
 |---|---|---|---|---|
 | I²C | `shal,i2c-cli` | Byte | ✅ | argv over a CommandTransport |
 | SPI | `shal,spi-cli` | Byte | ✅ | as above |
+| Simulated I²C | `shal,sim-i2c` | Byte | ✅ | simulated bus; no hardware |
 | UART / serial | `shal,serial` | Byte | ○ | pyserial; the most common bringup link |
 | CAN / CAN-FD | `shal,can` | Message | ○ | python-can backends (socketcan, PCAN, Vector) |
 | I3C | `shal,i3c` | Byte | ○ | I²C successor, in-band IRQ |
@@ -141,6 +143,7 @@ your_package/
 | Local / subprocess | `shal,local` | Command | ✅ | run on this machine |
 | SSH | `shal,ssh-host` | Command | ✅ | ControlMaster reuse; argv only |
 | TCP socket | `shal,tcp` | Message | ✅ | TLS by default |
+| Simulated message bus | `shal,sim-msg` | Message | ✅ | simulated; no network |
 | HTTP / HTTPS | `shal,http` | Message | ✅ | REST services — plain JSON POST, or the request envelope (`GET`, query, path; credentials in bus `config.headers`) |
 | MQTT | `shal,mqtt` | Stream | ○ | pub/sub; IoT default |
 | UDP | `shal,udp` | Message | ○ | datagram devices |
@@ -159,6 +162,7 @@ your_package/
 |---|---|---|---|---|
 | VISA (PyVISA) | `shal,visa` | Message | ○ | universal instrument backend |
 | SCPI raw socket | `shal,scpi-raw` | Message | ✅ | TCP :5025; no VISA needed |
+| Simulated SCPI | `shal,sim-scpi` | Message | ✅ | simulated instrument bus; no hardware |
 | GPIB / IEEE-488 | `shal,gpib` | Message | ○ | classic bench bus |
 | USBTMC | `shal,usbtmc` | Message | ○ | USB test-and-measurement |
 | VXI-11 | `shal,vxi11` | Message | ○ | LAN instruments (legacy) |
@@ -212,6 +216,7 @@ your_package/
 
 | Device | `compatible` | Capability | Notes |
 |---|---|---|---|
+| Simulated sensor | `shal,sim-sensor` | TemperatureSensor | ✅ registered; the simulated device the Quick Start reads |
 | TI TMP102 | `ti,tmp102` | TemperatureSensor | ✅ ADK reference (`shal docs --example tmp102`); the canonical first driver |
 | TI TMP117 | `ti,tmp117` | TemperatureSensor | high-accuracy |
 | Maxim DS18B20 | `maxim,ds18b20` | TemperatureSensor | 1-Wire; hobby staple |
@@ -433,6 +438,7 @@ your_package/
 
 | Device | `compatible` | Capability | Notes |
 |---|---|---|---|
+| Simulated PSU | `shal,sim-psu` | PowerSupply | ✅ registered; simulated supply on `shal,sim-scpi` |
 | Keysight E36312A | `keysight,e36312a` | PowerSupply | triple-output bench |
 | Keysight E3631A | `keysight,e3631a` | PowerSupply | classic triple |
 | Rigol DP832 | `rigol,dp832` | PowerSupply | ✅ ADK reference (`shal docs --example rigol_dp832`); popular triple |
