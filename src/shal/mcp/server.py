@@ -89,7 +89,7 @@ def _import_drivers(paths: list[str]) -> None:
     for raw in paths:
         p = Path(raw).resolve()
         if not p.exists():
-            raise SystemExit(f"shal-mcp: --drivers path not found: {p}")
+            raise SystemExit(f"shal: --drivers path not found: {p}")
         if p.is_dir():
             files = [f for f in sorted(p.glob("*.py")) if not f.name.startswith("_")]
             root = p
@@ -106,12 +106,12 @@ def _import_drivers(paths: list[str]) -> None:
             try:
                 importlib.import_module(f.stem)
             except Exception as e:
-                raise SystemExit(f"shal-mcp: failed importing driver '{f}': "
+                raise SystemExit(f"shal: failed importing driver '{f}': "
                                  f"{type(e).__name__}: {e}") from e
             _refuse_import_change(before, f.stem, str(f))  # LoadError if it did
 
 
-def _resolve_hal(topology: str | None):
+def _resolve_hal(topology: str | None, *, one_line: bool = True):
     """Load the Hal from a topology YAML (CLI argument or ``SHAL_TOPOLOGY``).
     Raises SystemExit with a friendly message if none was given, or if a
     compatible can't be resolved (with a pointer to ``--drivers``)."""
@@ -119,17 +119,19 @@ def _resolve_hal(topology: str | None):
 
     if not topology:
         raise SystemExit(
-            "shal-mcp: provide a topology YAML (as an argument or via SHAL_TOPOLOGY). "
-            "See examples/demos/ for ready-to-edit topologies.")
+            "shal: provide a topology YAML (as an argument or via SHAL_TOPOLOGY). "
+            "Run `shal docs --sample hello --to DIR` for a ready-to-edit one.")
     from pathlib import Path
     if not Path(topology).exists():
         # given-but-missing path: friendly, like the None and --drivers cases (#71)
         raise SystemExit(
-            f"shal-mcp: topology file not found: {topology}\n"
-            "  Pass the path to a topology YAML — see examples/demos/ for ready-to-edit ones.")
+            f"shal: topology file not found: {topology} — pass the path to a topology "
+            "YAML, or run `shal docs --sample hello --to DIR` for a ready-to-edit one.")
+    import yaml
+
     try:
         return shal.load(topology)
-    except shal.LoadError as e:
+    except (shal.LoadError, yaml.YAMLError) as e:
         if "no driver installed" in str(e):
             # Signpost the two ways forward — never a dead end (#42).
             raise SystemExit(
@@ -139,7 +141,13 @@ def _resolve_hal(topology: str | None):
                 f"  - Device not supported yet? Most devices have a Python library —\n"
                 f"      wrap it as a driver in a few lines: run  shal docs  for the\n"
                 f"      guide, then load your driver with --drivers.") from e
-        raise
+        if not one_line:
+            raise                            # --json callers shape their own error (#279)
+        detail = " ".join(str(e).split())
+        raise SystemExit(
+            f"shal: cannot load {topology}: {detail} — fix the file, or run "
+            f"`shal docs --sample hello --to DIR` for a working one "
+            f"(`shal docs` is the guide).") from e
 
 
 def _is_read(d: dict) -> bool:

@@ -79,7 +79,7 @@ def _json_load(args, cmd: str):
     from .mcp.server import _import_drivers, _resolve_hal
     try:
         _import_drivers(args.drivers)
-        return _resolve_hal(args.topology)
+        return _resolve_hal(args.topology, one_line=False)
     except SystemExit as e:
         if not isinstance(e.code, str):
             raise
