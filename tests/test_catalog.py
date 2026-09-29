@@ -1,4 +1,6 @@
 """shal.catalog() — the authoring surface for constructing topologies (issue #1)."""
+from pathlib import Path
+
 import pytest
 
 import shal
@@ -36,6 +38,17 @@ def test_catalog_compact_omits_detail():
     cat = shal.catalog()
     entry = next(d for d in cat["drivers"] if d["compatible"] == "ti,tmp102")
     assert "ops" not in entry and "address_schema" not in entry  # progressive disclosure
+
+
+def test_every_shipped_compatible_has_a_catalog_row():
+    text = (Path(__file__).resolve().parent.parent / "docs" / "CATALOG.md").read_text(
+        encoding="utf-8")
+    cat = shal.catalog()
+    shipped = {e["compatible"] for e in cat["buses"] + cat["drivers"]
+               if e["compatible"].startswith("shal,")}
+    assert "shal,sim-psu" in shipped
+    missing = sorted(c for c in shipped if f"`{c}`" not in text)
+    assert not missing, f"no docs/CATALOG.md row for: {missing}"
 
 
 def test_catalog_unknown_compatible_raises():

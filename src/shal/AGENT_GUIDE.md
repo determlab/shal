@@ -11,7 +11,7 @@ reviewed: 2026-09-27
 any agent can follow it — no Claude-specific tooling, no reading SHAL's source.*
 
 > **Install `pyshal`, import `shal`.** The PyPI distribution is `pyshal`
-> (`pip install pyshal[mcp]`); the Python module you import is `shal`
+> (`pip install "pyshal[mcp]"`); the Python module you import is `shal`
 > (`import shal`). There is no module named `pyshal`.
 
 SHAL is a **device-agnostic framework**: it ships the machinery, not devices. To control
