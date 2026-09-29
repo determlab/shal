@@ -13,6 +13,16 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+### Added
+- **Routes M1 closes** (#238). The bus contract for routes is written in
+  `SDK.md` and the `shal-build-bus` skill: `delivered="no"` only when nothing was
+  sent, a timeout or a drop after send is `"unknown"`, and a driver must not
+  cache `self.addr` on a routed node. `AGENTS.md` and `AGENT_GUIDE.md` each carry
+  a `routes:` example that runs on the sim; `DESIGN V2.md`'s example now sits
+  the node under its main bus. The M1 exit tests run in CI
+  (`tests/test_routes_m1_exit.py`), and every sim bus is tested for the
+  `"no"` / `"unknown"` split.
+
 ## [0.4.0] - 2026-09-29
 
 ### Added

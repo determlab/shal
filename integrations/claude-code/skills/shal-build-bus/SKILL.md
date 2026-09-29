@@ -63,8 +63,10 @@ class MyBus(Driver, Transport, MessageTransport):
 6. **Error mapping is the heart of the retry policy.** Wrap every failure in
    `HopError(msg, path=self.host.path, hop="my-bus", txn=current_txn.get(),
    delivered=...)`:
-   - `delivered="no"` — failure certainly BEFORE the request reached the device
-     (connection refused, not connected, local exec missing).
+   - `delivered="no"` — only when NOTHING was sent: the failure is certainly
+     BEFORE the request reached the device (connection refused, route not up,
+     login failed, not connected, local exec missing). A timeout or a drop
+     after send is never "no".
    - `delivered="unknown"` — anything after send (timeout, dropped reply,
      HTTP error response, a `ByteTransport` short/empty read — fewer bytes
      back than the `Read` ops requested; see `spi_cli.py`/`i2c_cli.py`). The
@@ -77,6 +79,10 @@ class MyBus(Driver, Transport, MessageTransport):
      or zeroed value — that is a silent stale default, exactly what D12
      forbids (issue #108).
    - Chain with `raise ... from e`; timeouts use `HopTimeout`.
+   - **Driver authors: do not cache `self.addr` on a routed node.** Each route
+     carries its own address and the route set swaps it in per call; a copy
+     taken in `bind()`/`__init__` goes stale after a move to another route.
+     Read `self.addr` in each op.
 7. **Security defaults**: network buses are encrypted by default; plaintext is
    a per-node `insecure: true` opt-out checked at load. Secrets come from
    `config:`/env (see the loader), never logged — error texts must not contain

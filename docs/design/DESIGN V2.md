@@ -154,19 +154,18 @@ root:
                 address: 1
                 children:
                   dut_b_dac:  { id: dut_b_dac, driver: microchip,mcp4725, address: 0x60 }
+          chamber_temp:                  # sits under its main bus (rack_a/i2c0)
+            id: chamber_temp
+            driver: ti,tmp102
+            address: 0x4a
+            routes:                      # failover: explicit, ordered, per-route address
+              - { via: /rack_b/i2c1, address: 0x49 }
   rack_b:
     id: rack_b
     driver: shal,ssh-host
     address: ${SHAL_RACK_B}
     children:
       i2c1: { driver: shal,i2c-cli, address: /dev/i2c-1 }
-
-  chamber_temp:
-    id: chamber_temp
-    driver: ti,tmp102
-    routes:                              # failover: explicit, ordered, per-route address
-      - { via: /rack_a/i2c0, address: 0x4a }
-      - { via: /rack_b/i2c1, address: 0x49 }
 ```
 
 ```python

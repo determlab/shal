@@ -213,6 +213,29 @@ root:
 Use a stable identifier — a serial number, account id, or the literal `"cloud"` — as
 the address; `config:` alone does not satisfy the rule.
 
+A node sits under its main bus. Extra channels are named jumps in `routes:`. A
+changing op is never re-sent on another route after an unknown delivery.
+```yaml
+shal_version: 1
+root:
+  bench:
+    driver: shal,sim-i2c
+    address: sim0
+    children:
+      temp0:
+        id: ambient_temp
+        driver: shal,sim-sensor
+        address: 0x48
+        routes:
+          - {via: /jump, address: 0x49, name: jump}
+  jump:
+    driver: shal,sim-i2c
+    address: sim1
+    children:
+      twin: {driver: "shal,sim-sensor", address: 0x49}
+```
+`shal call routes.yaml ambient_temp read_celsius --via jump` pins the `jump` route.
+
 ---
 
 ## Run it (no MCP host needed)
