@@ -89,7 +89,7 @@ class SimScpiBus(Driver, Transport, MessageTransport):
         try:
             return self._models[addr]
         except KeyError:
-            have = ", ".join(repr(a) for a in self._models) or "none"
+            have = ", ".join(repr(redact_url(str(a))) for a in self._models) or "none"
             raise LookupError(f"sim-scpi: no sim model at {redact_url(str(addr))!r}; "
                               f"addresses with models: {have}") from None
 

@@ -87,3 +87,39 @@ def test_model_for_miss_is_lookup_error_listing_addresses(case):
     msg = str(ei.value)
     assert "addresses with models" in msg
     assert "none" not in msg   # the modeled sibling is listed
+
+
+# scpi/msg addresses are ${ENV}-resolved labels and can carry a token in a URL;
+# model_for's "addresses with models" list must redact them, same as the miss
+# address right next to them (#291 review)
+MODELLED_URL_CASES = [
+    ("shal,sim-scpi", "shal,sim-psu"),
+    ("shal,sim-msg", "test,msg-ok"),
+]
+
+
+@pytest.fixture(params=MODELLED_URL_CASES, ids=["scpi", "msg"])
+def url_case(request, tmp_path):
+    bus, ok = request.param
+    p = tmp_path / "s.yaml"
+    p.write_text(textwrap.dedent(f"""
+        shal_version: 1
+        root:
+          bench:
+            id: bench
+            driver: {bus}
+            address: sim0
+            children:
+              ok: {{id: ok, driver: "{ok}", address: "http://user:SECRET@host/x"}}
+    """), encoding="utf-8")
+    with shal.load(p) as hal:
+        yield hal.get_node("bench").driver
+
+
+def test_model_for_miss_redacts_modelled_addresses(url_case):
+    bus = url_case
+    with pytest.raises(LookupError) as ei:
+        bus.model_for("missing")
+    msg = str(ei.value)
+    assert "SECRET" not in msg
+    assert "host" in msg

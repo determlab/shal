@@ -13,6 +13,9 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+### Changed
+- **`model_for` on sim buses raises `LookupError` (was `KeyError`)** (#288).
+
 ## [0.4.0] - 2026-09-29
 
 ### Added
