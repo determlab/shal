@@ -11,7 +11,7 @@ reviewed: 2026-09-27
 any agent can follow it — no Claude-specific tooling, no reading SHAL's source.*
 
 > **Install `pyshal`, import `shal`.** The PyPI distribution is `pyshal`
-> (`pip install pyshal[mcp]`); the Python module you import is `shal`
+> (`pip install "pyshal[mcp]"`); the Python module you import is `shal`
 > (`import shal`). There is no module named `pyshal`.
 
 SHAL is a **device-agnostic framework**: it ships the machinery, not devices. To control
@@ -212,6 +212,29 @@ root:
 ```
 Use a stable identifier — a serial number, account id, or the literal `"cloud"` — as
 the address; `config:` alone does not satisfy the rule.
+
+A node sits under its main bus. Extra channels are named jumps in `routes:`. A
+changing op is never re-sent on another route after an unknown delivery.
+```yaml
+shal_version: 1
+root:
+  bench:
+    driver: shal,sim-i2c
+    address: sim0
+    children:
+      temp0:
+        id: ambient_temp
+        driver: shal,sim-sensor
+        address: 0x48
+        routes:
+          - {via: /jump, address: 0x49, name: jump}
+  jump:
+    driver: shal,sim-i2c
+    address: sim1
+    children:
+      twin: {driver: "shal,sim-sensor", address: 0x49}
+```
+`shal call routes.yaml ambient_temp read_celsius --via jump` pins the `jump` route.
 
 ---
 
