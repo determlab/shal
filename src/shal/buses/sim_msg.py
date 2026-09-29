@@ -55,6 +55,7 @@ class SimMsgBus(Driver, Transport, MessageTransport):
     def __init__(self, node: Node) -> None:
         Transport.__init__(self, node)
         self._models: dict[Any, Any] = {}
+        self._unmodeled: dict[Any, str] = {}   # declared children with no sim model
         self.fail_next: int = 0          # test hook: fail N next txns (delivered=no)
         self.fail_delivered_unknown = False  # test hook: ambiguous failure
         self.connect_count = 0
@@ -74,15 +75,23 @@ class SimMsgBus(Driver, Transport, MessageTransport):
                 continue
             comp = getattr(node, "spec", {}).get("driver")
             model = MSG_SIM_MODELS.get(comp)
-            if model is not None and node.address is not None:
-                self._models.setdefault(node.address, model())
+            if node.address is not None:
+                if model is not None:
+                    self._models.setdefault(node.address, model())
+                elif isinstance(comp, str):
+                    self._unmodeled.setdefault(node.address, comp)
         super().activate()
         self.log.debug("connect (%d service models)", len(self._models),
                        event="connect")
 
     def model_for(self, addr: Any):
         self.ensure_ready()
-        return self._models[addr]
+        try:
+            return self._models[addr]
+        except KeyError:
+            have = ", ".join(repr(a) for a in self._models) or "none"
+            raise LookupError(f"sim-msg: no sim model at {redact_url(str(addr))!r}; "
+                              f"addresses with models: {have}") from None
 
     def exchange(self, addr: Any, msg: Mapping) -> Mapping:
         with self.lock:  # check -> activate -> talk, under the bus lock
@@ -103,7 +112,12 @@ class SimMsgBus(Driver, Transport, MessageTransport):
             if model is None:
                 # redact_url: address is ${ENV}-resolved, so its content isn't
                 # constrained by the expected label grammar (#126)
-                raise HopError(f"no service at {redact_url(str(addr))!r}",
+                hint = ""
+                if addr in self._unmodeled:
+                    comp = self._unmodeled[addr]
+                    hint = (f" — no sim model registered for {comp!r}; "
+                            f"decorate a class with @msg_sim_model({comp!r})")
+                raise HopError(f"no service at {redact_url(str(addr))!r}{hint}",
                                path=self.host.path,
                                hop="sim-msg", txn=current_txn.get())
             if not is_envelope(msg):
