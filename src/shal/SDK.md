@@ -517,7 +517,7 @@ def start_cleaning(self) -> None:
 - **`@idempotent` is about retry, never the label** (#194). The `side_effect`
   label alone decides the gate and the audit: every op that is not `"none"` is
   audited, `@idempotent` or not, so an absolute setpoint like `set_voltage`
-  (`@idempotent`, `side_effect="write"`) is retried on a lost delivery AND lands
+  (`@idempotent`, `side_effect="actuator"`) is retried on a lost delivery AND lands
   in the audit log. A gated op is approved once; the retry after a
   `delivered="no"` drop does not ask again, and its one outcome record carries
   `attempt: 2` and the dropped `hop`. The tool description says the same: only
