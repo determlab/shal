@@ -52,7 +52,7 @@ commands:
     the constant-current trip point, not the measured load current. The firmware silently
     clamps out-of-range values, so the declared range is enforced client-side before
     transmission.
-  side_effect: write
+  side_effect: actuator
   idempotent: true
   unit: ampere
   parameters:
@@ -65,7 +65,7 @@ commands:
     enabling the output, or to change the regulated voltage. The firmware silently
     clamps out-of-range values, so the declared range is enforced client-side and
     a rejected call never reaches the instrument.
-  side_effect: write
+  side_effect: actuator
   idempotent: true
   unit: volt
   parameters:
