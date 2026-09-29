@@ -286,6 +286,21 @@ def test_a_mistake_exits_3_not_2(lab, argv):
 
 
 @pytest.mark.parametrize("argv", [
+    ["call", "missing.yaml", "ambient_temp", "read_celsius"],
+    ["call", "sim.yaml", "nope", "read_celsius"],
+    ["call", "sim.yaml", "ambient_temp", "nope"],
+    ["call", "sim.yaml", "ambient_temp"],
+    ["call", "sim.yaml", "ambient_temp", "read_celsius", "5"],
+    ["call", "sim.yaml", "ambient_temp", "read_celsius", "--approve"],
+])
+def test_a_mistake_with_json_is_ok_false_on_stdout(lab, argv):
+    r = _shal(*argv, "--json", cwd=lab)
+    assert r.returncode == 3, r.stderr
+    assert json.loads(r.stdout)["ok"] is False
+    assert "shal call:" in r.stderr
+
+
+@pytest.mark.parametrize("argv", [
     ["set_level", "ten"],          # not an integer
     ["set_level"],                 # missing n
     ["set_level", "n=1", "2"],     # positional after name=value

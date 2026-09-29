@@ -449,4 +449,21 @@ def test_jig_writes_n_records_and_counts_n_as_the_runner_runs_it(tmp_path, capsy
             written = yaml.safe_load(record.yaml_path(elsewhere / "jig-records", x.record)
                                      .read_text(encoding="utf-8"))
             assert "calls" not in written
-        assert r.stdout.splitlines()[-1] == f"records in jig-records/records.db: {len(recs)}"
+        assert r.stdout.splitlines()[-2] == f"records in jig-records/records.db: {len(recs)}"
+        assert r.stdout.splitlines()[-1].endswith("shal records jig-records --unit U002")
+
+
+def test_jig_next_step_reads_one_unit_back(tmp_path, capsys):
+    import json
+    dest = tmp_path / "jig"
+    assert cli.main(["docs", "--sample", "jig", "--to", str(dest)]) == 0
+    capsys.readouterr()
+    env = {**os.environ, "PYTHONUTF8": "1"}
+    r = subprocess.run([sys.executable, str(dest / "run.py")], cwd=dest, env=env, input="",
+                       capture_output=True, text=True, encoding="utf-8", timeout=120)
+    assert r.returncode == 0, r.stdout + r.stderr
+    assert cli.main(["records", str(dest / "jig-records"), "--unit", "U002", "--json"]) == 0
+    out = json.loads(capsys.readouterr().out)
+    recs = out["records"] if isinstance(out, dict) else out
+    assert len(recs) == 1
+    assert recs[0]["unit"] == "U002" and recs[0]["verdict"] in ("pass", "fail")

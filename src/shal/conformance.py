@@ -111,7 +111,11 @@ def _static_checks(cls: type, report: Report) -> None:
             jsonschema.Draft202012Validator.check_schema(op_entry["input_schema"])
         report.checked.append("static: catalog entry + schemas well-formed")
     except Exception as e:  # noqa: BLE001 - report, don't crash the kit
-        report.problems.append(f"catalog entry failed to build: {e}")
+        report.problems.append(
+            f"catalog entry for driver: '{getattr(cls, 'compatible', cls.__name__)}' "
+            f"failed to build: {e}; fix its address_schema, config_schema, "
+            f"child_address_schema and each op's input schema so they are valid "
+            f"JSON Schema")
 
     # unbounded numeric write params: legal, but worth a human look (issue #10:
     # safe operating limits should be DECLARED wherever they exist)
@@ -139,8 +143,10 @@ def _live_checks(cls: type, topology: Any, report: Report) -> None:
     with load(topology) as hal:
         node = _find_node(hal, cls)
         if node is None:
+            compatible = getattr(cls, "compatible", cls.__name__)
             report.problems.append(
-                f"topology {topology} binds no node to this driver")
+                f"topology {topology} binds no node to this driver; add a node "
+                f"with driver: '{compatible}' under a shal,sim-* bus in {topology}")
             return
         drv = node.driver
         report.checked.append(f"live: bound at {node.path} on a sim transport (dry-run)")

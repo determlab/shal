@@ -338,3 +338,32 @@ def test_a_bus_op_with_no_side_effect_is_not_warned():
 
     report = conformance.check_driver(_Bus)
     assert not any("no side_effect declared" in w for w in report.warnings), report
+
+
+def test_topology_that_binds_no_node_names_the_fix(tmp_path):
+    p = tmp_path / "s.yaml"
+    p.write_text("shal_version: 1\n"
+                 "root:\n"
+                 "  psu: {id: psu, driver: 'test,conf-sloppy', address: 1}\n",
+                 encoding="utf-8")
+    report = conformance.check_driver("test,conf-good", topology=p)
+    assert report.ok is False
+    text = " ".join(report.problems)
+    assert "binds no node" in text
+    assert "driver: 'test,conf-good'" in text
+    assert "shal,sim-" in text
+    assert str(p) in text
+
+
+def test_catalog_entry_failed_names_the_driver_and_the_fix(monkeypatch):
+    def boom(compatible):
+        raise ValueError("bad schema")
+
+    monkeypatch.setattr(conformance.registry, "catalog", boom)
+    report = conformance.check_driver("test,conf-good")
+    assert report.ok is False
+    text = " ".join(report.problems)
+    assert "driver: 'test,conf-good'" in text
+    assert "failed to build" in text
+    assert "bad schema" in text
+    assert "fix" in text
