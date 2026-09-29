@@ -52,10 +52,14 @@ def test_sim_block_runs(lang, code, tmp_path):
         bash = shutil.which("bash")
         if bash is None:
             pytest.skip("no bash on PATH")
+        if sys.platform == "win32" and "system32" in bash.replace("/", "\\").lower():
+            pytest.skip("bash is the System32 WSL launcher, not a POSIX shell for this test")
         # a `shal` on PATH is the venv's console script; fall back to the module
-        (tmp_path / "shal").write_text(
+        shim = tmp_path / "shal"
+        shim.write_text(
             f'#!/bin/sh\nexec "{Path(sys.executable).as_posix()}" -m shal.cli "$@"\n',
             encoding="utf-8")
+        os.chmod(shim, 0o755)
         r = _run([bash, "-c", 'export PATH="$PWD:$PATH"\n' + code], tmp_path)
         assert r.returncode == 0, r.stdout + r.stderr
     else:

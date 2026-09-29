@@ -8,7 +8,7 @@ their heading.
 
 ## 1. Sim Quick Start
 
-Three lines, recapped from the [README](../README.md#quick-start): install from the
+Three steps from the [README](../README.md#quick-start): install from the
 repo, write a topology with a simulated bus and sensor, probe it.
 
 ```bash
@@ -108,7 +108,7 @@ root:
 Every device with an `id` becomes its own set of tools: `ambient_temp__read_celsius`
 and `board_temp__read_celsius`. Names must be unique across the file.
 
-## 4. Remote hop
+## 4. Remote hop (SSH jumpbox shal,ssh-host)
 
 Prerequisites:
 
@@ -144,7 +144,7 @@ The `address` can also come from the environment as `${BENCH_SSH}`, so the file 
 no host name or secret. A dropped connection is reported with `delivered`
 (`no`, `unknown`): SHAL does not re-send a write it cannot prove was not delivered.
 
-## 5. Expose it to an agent
+## 5. Expose to an agent
 
 Prerequisites: any topology from the stages above. The blocks below run on the
 simulator.
