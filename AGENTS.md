@@ -87,6 +87,37 @@ error the exit code is the same, the message is on stderr, and stdout holds
 `{"ok": false, "error": ...}`. `shal probe --json` lists the writes it did not run,
 each with the `shal call` line that runs it.
 
+## Routes
+
+Needs pyshal 0.4.0 or later.
+
+A node sits under its main bus. Extra channels are named jumps in `routes:`. A
+changing op is never re-sent on another route after an unknown delivery.
+
+```yaml
+shal_version: 1
+root:
+  bench:
+    driver: shal,sim-i2c
+    address: sim0
+    children:
+      temp0:
+        id: ambient_temp
+        driver: shal,sim-sensor
+        address: 0x48
+        routes:
+          - {via: /jump, address: 0x49, name: jump}
+  jump:
+    driver: shal,sim-i2c
+    address: sim1
+    children:
+      twin: {driver: "shal,sim-sensor", address: 0x49}
+```
+
+Save it as `routes.yaml`. `shal tools routes.yaml --json` lists `ambient_temp` once, with
+`routes: ["bench", "jump"]`; `shal call routes.yaml ambient_temp read_celsius --via jump --json`
+pins the second one.
+
 ## Side effects
 
 Every op declares `side_effect`, one of four labels. `shal call --json` returns it;
