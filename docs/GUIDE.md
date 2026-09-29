@@ -8,8 +8,8 @@ their heading.
 
 ## 1. Sim Quick Start
 
-Three steps from the [README](../README.md#quick-start): install from the
-repo, write a topology with a simulated bus and sensor, probe it.
+Three steps from the [README](../README.md#quick-start): install, write a
+topology with a simulated bus and sensor, probe it.
 
 ```bash
 # runs-on-sim
@@ -28,7 +28,7 @@ EOF
 shal probe sim.yaml
 ```
 
-Install first with `pip install git+https://github.com/determlab/shal`. The read
+Install first with `pip install pyshal`. The read
 prints `ambient_temp__read_celsius: <number>` and exits 0.
 
 ## 2. First real device
