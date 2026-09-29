@@ -31,7 +31,7 @@ names the SDK guide already documents — no internals inspected.
 - Ops (the four documented operations + the blessed read):
   - `read_celsius()` → `TemperatureSensor` capability, from status `temp_c`.
   - `read_status() -> dict` → `get_status`, read-only, idempotent.
-  - `set_temperature(celsius)` → `set_temperature`, write, limits −40..180.
+  - `set_temperature(celsius)` → `set_temperature`, actuator (drives a heater; gated), limits −40..180.
   - `start()` / `stop()` → physical actuator ops (compressor + heater).
 - Safe envelope: −40 °C..+180 °C (datasheet, encoded as `minimum`/`maximum` on
   `celsius` in the OpenAPI). Declared as `params={"celsius": {minimum, maximum}}`.

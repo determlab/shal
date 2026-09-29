@@ -3,7 +3,7 @@
     python demo_sim.py
 
 For a real speaker: `pip install soco`, edit `sonos.yaml` with its IP, and load
-that file instead. Playback/volume are benign writes (not gated); only the read
+that file instead. Playback/volume are actuators (gated); only the read
 ops are exercised first so you can see state before anything changes.
 """
 from __future__ import annotations
@@ -21,6 +21,9 @@ from shal.capabilities import MediaPlayer
 
 
 def main() -> None:
+    # playback/volume ops are actuators (gated); in a pure simulation there is
+    # nothing to protect, so auto-approve. A real speaker needs a real approver.
+    shal.set_approver(shal.AutoApprove())
     with shal.load(HERE / "sonos_sim.yaml") as hal:
         spk = hal.get_device("sonos")
         assert isinstance(spk, MediaPlayer)  # the capability is the contract, not the driver
@@ -29,7 +32,7 @@ def main() -> None:
         print(f"volume     : {spk.get_volume()}")
         print(f"now playing: {spk.now_playing()}")
 
-        # benign, reversible writes — instant, so SHAL runs them without a gate prompt
+        # actuators: each one passes the approval gate (auto-approved above)
         spk.play()
         print(f"play   -> {spk.get_state()}")
         spk.pause()

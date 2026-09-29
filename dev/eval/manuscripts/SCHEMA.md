@@ -62,5 +62,6 @@ approval gate got bypassed — the catalog disagrees with the manuscript and the
 
 `gated: true` devices (e.g. deebot `start_cleaning`, an `actuator`) exercise the full
 gate: `approval_required` ticket -> separate `shal_approve`/`shal_deny`.
-`gated: false` devices (e.g. sonos `play`, a benign `write`) run directly — and the loop
-proves *that* too, so both op-classes are reported honestly.
+Sonos `play` is also an `actuator`, so it is `gated: true` too. A `gated: false` device
+(a benign `write`) runs directly — and the loop proves *that* too, so both op-classes are
+reported honestly.

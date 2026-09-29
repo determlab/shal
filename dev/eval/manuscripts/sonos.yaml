@@ -1,10 +1,8 @@
 # agenticQA manuscript — sonos (the SECOND device — proves device-agnosticism, issue #78)
 #
-# sonos is the contrast case: its playback ops are @op side_effect="write" (benign,
-# reversible — controlling a speaker is instant, not physical actuation), so they are
-# audited but NOT gated. Running the SAME loop over sonos proves the harness is
-# device-agnostic AND that it tells the two op-classes apart honestly: gated ops need
-# approval; benign writes run directly. (gate_exercised will be false for sonos.)
+# sonos playback/volume ops are @op side_effect="actuator" (they change the physical
+# world — ADR-001 Addendum 6), so they are gated like deebot's. Running the SAME loop
+# over sonos proves the harness is device-agnostic. (gate_exercised will be true.)
 schema_version: 1
 device: sonos
 
@@ -18,11 +16,11 @@ liveness_reads: [get_state, get_volume]
 
 actuation: { op: play, args: {} }
 
-# Benign write: no gate. `gated: false` is asserted against the live catalog too —
-# if sonos play ever became an actuator, this run would go RED (catalog disagrees).
-expected:  { read: get_state, becomes: PLAYING, gated: false }
+# Actuator: gated. `gated: true` is asserted against the live catalog too —
+# if sonos play were downgraded to a write, this run would go RED (catalog disagrees).
+expected:  { read: get_state, becomes: PLAYING, gated: true }
 
-# No gate to deny on a benign write.
-deny_path: null
+# A denied play leaves the speaker STOPPED.
+deny_path: { stays: STOPPED }
 
 teardown:  [stop]

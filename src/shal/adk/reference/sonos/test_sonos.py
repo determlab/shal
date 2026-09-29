@@ -21,8 +21,29 @@ _TOPO = os.path.join(os.path.dirname(__file__), "topology.yaml")
 
 @pytest.fixture
 def spk():
+    with shal.load(_TOPO) as hal, shal.approver(shal.AutoApprove()):
+        yield hal.get_device("sonos")   # playback ops are gated: approve them
+
+
+_ACTUATORS = {"play": (), "pause": (), "stop": (), "next_track": (),
+              "previous_track": (), "set_volume": (40,)}
+
+
+def test_playback_and_volume_ops_are_actuators():
     with shal.load(_TOPO) as hal:
-        yield hal.get_device("sonos")
+        effects = {t["op"]: t["side_effect"] for t in hal.tool_catalog()}
+    for op_name in _ACTUATORS:
+        assert effects[op_name] == "actuator", op_name
+    for op_name in ("get_volume", "get_state", "now_playing"):
+        assert effects[op_name] == "none", op_name
+
+
+@pytest.mark.parametrize("op_name", sorted(_ACTUATORS))
+def test_actuators_are_refused_under_the_deny_approver(spk, op_name):
+    with shal.approver(shal.DenyAll()), pytest.raises(shal.ApprovalDenied):
+        getattr(spk, op_name)(*_ACTUATORS[op_name])
+    assert spk.get_state() == "STOPPED"            # the twin never saw it
+    assert spk.get_volume() == 25
 
 
 def test_reads_come_from_the_twin(spk):

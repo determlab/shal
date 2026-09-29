@@ -13,6 +13,14 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+### Changed
+- **Behaviour change: chamber `set_temperature` and Sonos playback/volume are now
+  `actuator`** (#290, ADR-001 Addendum 6). The http-service chamber example's
+  `set_temperature` (drives a heater) and the Sonos reference driver's `play`,
+  `pause`, `stop`, `next_track`, `previous_track` and `set_volume` were
+  `side_effect="write"` and ran without a prompt; they are now gated like every
+  other actuator and ask for approval. Sonos reads stay `none`.
+
 ## [0.4.0] - 2026-09-29
 
 ### Added

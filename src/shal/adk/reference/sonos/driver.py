@@ -5,9 +5,9 @@ The guide's headline pattern: no SHAL bus (`kind = None`), the driver calls the
 selects the twin in ``sim.py`` (no `soco`, no speaker); any other address is the
 speaker's IP/host and needs ``pip install soco``.
 
-Playback and volume are benign, reversible writes (`side_effect="write"`): the
-driver can undo each one with another of its own ops (pause undoes play,
-`set_volume` puts the old level back). Reads are live or raise.
+Playback and volume change the physical world (sound in a room), so they are
+actuators (`side_effect="actuator"`) and gated like every other actuator: a
+call stops for approval. Reads are live or raise.
 """
 from __future__ import annotations
 
@@ -61,28 +61,28 @@ class SonosSpeaker(Driver, MediaPlayer):
         return HopError(f"sonos {self._addr}: {e}", path=self.node.path,
                         hop="sonos", txn=current_txn.get(), delivered="unknown")
 
-    # -- transport controls (benign, reversible writes) -----------------------
-    @op("Start or resume playback on this speaker.", side_effect="write")
+    # -- transport controls (actuators: gated) --------------------------------
+    @op("Start or resume playback on this speaker.", side_effect="actuator")
     def play(self) -> None:
         self._do(lambda c: c.play())
 
-    @op("Pause playback on this speaker.", side_effect="write")
+    @op("Pause playback on this speaker.", side_effect="actuator")
     def pause(self) -> None:
         self._do(lambda c: c.pause())
 
-    @op("Stop playback on this speaker.", side_effect="write")
+    @op("Stop playback on this speaker.", side_effect="actuator")
     def stop(self) -> None:
         self._do(lambda c: c.stop())
 
-    @op("Skip to the next track.", side_effect="write")
+    @op("Skip to the next track.", side_effect="actuator")
     def next_track(self) -> None:
         self._do(lambda c: c.next())
 
-    @op("Go back to the previous track.", side_effect="write")
+    @op("Go back to the previous track.", side_effect="actuator")
     def previous_track(self) -> None:
         self._do(lambda c: c.previous())
 
-    @op("Set the speaker volume (0-100).", side_effect="write",
+    @op("Set the speaker volume (0-100).", side_effect="actuator",
         params={"level": {"type": "integer", "minimum": 0, "maximum": 100}})
     def set_volume(self, level: int) -> None:
         self._do(lambda c: setattr(c, "volume", int(level)))

@@ -55,7 +55,7 @@ import shal, sonos_driver  # noqa: F401  (registers sonos,speaker)
 with shal.load("sonos.yaml") as hal:
     spk = hal.get_device("sonos")
     print(spk.get_state(), spk.get_volume(), spk.now_playing())  # reads — free
-    spk.pause()                                                  # benign write
+    spk.pause()                                                  # actuator: asks for approval
 ```
 
 …or serve it to an AI host as gated tools (this driver is unpackaged, so point
@@ -74,8 +74,7 @@ shal mcp examples/demos/sonos/sonos.yaml --drivers examples/demos/sonos/
 - **Sim-first** — `address: sim` selects the in-memory `soco` stand-in in the
   reference's `sim.py`, so
   the whole flow validates without hardware or the `soco` dependency.
-- **Side effects** — playback/volume are `side_effect="write"` (benign, reversible,
-  instant) so an agent drives them without a per-call approval prompt; reads are
-  free. A cautious operator can still install a stricter approver.
+- **Side effects** — playback/volume are `side_effect="actuator"` (they
+  change the physical world), so each call stops for approval; reads are free.
 - **Errors** — network/`soco` failures map to `HopError(delivered="unknown")`, so
   the agent surface reports a clean, honest failure.

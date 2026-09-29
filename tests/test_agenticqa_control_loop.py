@@ -1,6 +1,6 @@
 """Tier 1 of agenticQA (#78): the device-agnostic release-acceptance control loop, run
 hermetically in CI. One command (pytest), red/green, over the SAME gate a real agent
-hits. Green on BOTH the deebot sim (gated actuator) and the sonos sim (benign write)
+hits. Green on BOTH the deebot sim and the sonos sim (both gated actuators)
 proves the loop is device-agnostic — driven entirely by per-device manuscripts.
 
 The control loop + manuscripts live under dev/eval/ (never shipped in the wheel); add
@@ -52,14 +52,15 @@ def test_deebot_exercises_the_gate() -> None:
     assert "approved" in v["audit_transitions"]
 
 
-def test_sonos_is_a_benign_write_not_a_gate() -> None:
-    """sonos play is side_effect='write': it must NOT trip the gate (honest reporting of
-    the op class — the loop proves it ran directly, no ticket)."""
+def test_sonos_play_is_gated() -> None:
+    """sonos play is an actuator (ADR-001 Addendum 6): the run must go THROUGH the gate
+    (ticket issued), and play runs after approve."""
     v = run_control(_manuscript("sonos"), decision="approve")
     assert v["passed"], v["reason"]
-    assert v["gate_exercised"] is False
-    assert v["gated_actual"] is False
-    assert v["approval_id"] is None
+    assert v["gate_exercised"] is True
+    assert v["gated_actual"] is True
+    assert v["approval_id"]
+    assert v["state_after"] == "PLAYING"
 
 
 def test_deny_path_leaves_device_unmoved() -> None:
@@ -76,8 +77,8 @@ def test_deny_path_leaves_device_unmoved() -> None:
 def test_catalog_downgrade_reads_as_red() -> None:
     """Anti-cheat (catalog): if the manuscript claims a gate but the live op is NOT
     actually gated (a downgrade), the loop must FAIL rather than pass."""
-    m = _manuscript("sonos")          # sonos play is genuinely benign...
-    m["expected"]["gated"] = True     # ...so claiming it's gated must read as red
+    m = _manuscript("sonos")          # sonos play is genuinely gated...
+    m["expected"]["gated"] = False    # ...so claiming it's benign must read as red
     v = run_control(m, decision="approve")
     assert not v["passed"]
     assert "mismatch" in v["reason"] or "downgrad" in v["reason"]

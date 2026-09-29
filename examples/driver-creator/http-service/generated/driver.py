@@ -71,7 +71,7 @@ class ChamberLinkCL340(Driver, shal.TemperatureSensor):
     @op("Program the chamber's active temperature setpoint (absolute, in "
         "degrees Celsius). The conditioning system must be started for the "
         "chamber to drive the air toward this value.",
-        unit="celsius", side_effect="write",
+        unit="celsius", side_effect="actuator",
         params={"celsius": {"minimum": -40.0, "maximum": 180.0}})
     def set_temperature(self, celsius: float) -> None:
         # Limits declared above; body stays check-free (framework enforces).

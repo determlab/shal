@@ -22,14 +22,14 @@ Do this:
 2. Write a YAML topology for the device (secrets via `${ENV_VAR}` resolved from `./.env`).
 3. **Author a NEW driver** — search online / wrap the device's Python library; load creds
    from `./.env`. Reads are `@idempotent` (`side_effect="none"`); the card's actuation has
-   the side-effect the card states (`actuator` = gated; benign media `write` = ungated).
+   the side-effect the card states (`actuator` = gated, incl. media playback; a benign `write` = ungated).
 4. **Read** (ungated) the card's liveness reads → confirm LIVE data (empty must raise, not
    default).
 5. **Control** the card's one actuation:
    - If the card says **gated**: it MUST defer (`approval_required` + `approval_id`), with
      nothing sent. Do NOT self-approve — surface the `approval_id` and wait for the
      approver. After approval, confirm the device's read-back matches the card's `becomes`.
-   - If the card says **benign** (e.g. Sonos): the write runs free (no ticket — correct,
+   - If the card says **benign**: the write runs free (no ticket — correct,
      not a bypass). Make it gentle + reversible; restore prior state.
 6. Repeat the control **via the MCP server** (`shal mcp`), as a real MCP client.
 
