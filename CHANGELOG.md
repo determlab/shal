@@ -26,6 +26,9 @@ All notable changes to this project are documented here. The format follows
 ### Changed (behaviour)
 - `error` in `--json` output is now always an object `{"type", "message", "fix"}`, never a string: `shal call`, `shal check`, `shal probe`, `shal tools`, `shal routes` now match `shal records`. `fix` is never empty. `shal call --json` on a node with no installed driver prints it too, with a `fix` that names how to install or register the driver (#279).
 
+### Changed
+- **`model_for` on sim buses raises `LookupError` (was `KeyError`)** (#288).
+
 ### Fixed
 - `docs/CATALOG.md` and the README list every shipped `shal,*` compatible, including `shal,sim-psu`; a test fails when one ships without a catalog row; the agent docs' MCP install line is the quoted PyPI form `pip install "pyshal[mcp]"` (#273).
 - `shal call --json` and `shal check --json` print `{"ok": false, "error": ...}` on stdout for every error path (exit 3 / 1 / 2), as AGENTS.md promises; the `shal records` no-store fix now names `shal records jig-records`, the folder the jig sample writes (#272).
