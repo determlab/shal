@@ -47,4 +47,4 @@ with shal.load(str(TOPOLOGY)) as hal:
         print(f"{unit}: {celsius:.2f} C  {'PASS' if ok else 'FAIL'}")
     rows = hal.get_device("db").query("records", limit=1000)
     print(f"records in {STORE}/records.db: {len(rows)}")
-    print(f"next: shal records {STORE} --unit U002")
+    print("next: shal records jig-records --unit U002")
