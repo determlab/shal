@@ -262,6 +262,24 @@ with shal.load("sim.yaml") as hal:
 python quickstart.py
 ```
 
+### For an agent: machine-readable output
+
+Every command below takes `--json` and prints one JSON document on stdout. On
+an error the exit code is the same, the message is on stderr, and stdout holds
+`{"ok": false, "error": ...}`.
+
+```bash
+shal tools sim.yaml --json
+shal probe sim.yaml --json
+shal routes sim.yaml ambient_temp --json
+shal docs --list --json
+```
+
+`shal tools` lists every tool with its kind (`read`, `write` or `gated`);
+`shal probe` runs the reads and lists the writes it did not run; `shal routes`
+prints the routes a node declares, in order (a node without `routes:` shows its
+one main route); `shal docs --list` lists the reference drivers.
+
 ### Next
 
 **Samples — small programs that show what SHAL does.** They ship inside the
@@ -445,6 +463,20 @@ guide, and `shal check <compatible>` tells you what your driver is still missing
 
 ---
 
+## Read the record store
+
+A setup that writes records (`record.write()`) keeps them in `records.db` in its
+directory. `shal records` reads that store, newest first, and never writes to it:
+
+```bash
+shal records . --verdict fail --json   # DIR (default .), filtered, one JSON document
+```
+
+A directory with no `records.db` is exit 1 with a `fix` in the message. A store
+written by a newer `record_version` is refused unless you pass `--skip-newer`.
+
+---
+
 ## How It Works
 
 A topology is a tree, and **every edge is a bus** — itself a node that carries
@@ -523,7 +555,7 @@ hardware — swap in a real transport later, and your code doesn't change.
 
 ## Roadmap
 
-**Shipped — Phase 1 (synchronous core, v0.1.0):**
+**Shipped — Phase 1 (synchronous core, on PyPI as v0.3.0):**
 
 - ✅ Declarative YAML topology: JSON-Schema validation, `id`/`path`/`$ref`,
   `${ENV}` secrets, reusable `template:` includes
@@ -538,12 +570,17 @@ hardware — swap in a real transport later, and your code doesn't change.
 - ✅ Human-in-the-loop actuation gate: actuator ops stop for an injectable
   `Approver` (pre-I/O, unbypassable, every decision audited)
 - ✅ Structured observability + `capture()` flight recorder
+- ✅ Named routes for multi-path devices (`routes:` in the topology,
+  `shal routes`, `shal call --via <name>`; a changing op is never re-sent on
+  another route after an unknown delivery)
+- ✅ Machine-readable CLI: `--json` on `shal probe`, `tools`, `docs --list`,
+  `call`, `routes`, `check` and `records`
 
 **Designed, in progress — Phase 2:**
 
 - 🚧 Async / streaming (`subscribe`, held channels) — [spec](https://github.com/determlab/shal/blob/main/docs/design/DESIGN%20-%20PHASE%202%20ASYNC.md)
 - 🚧 Actuator watchdog & safe-state (timeouts, auto safe-state on disconnect)
-- 🚧 Route failover for multi-path devices
+- 🚧 Automatic failover between a device's routes
 
 ---
 
