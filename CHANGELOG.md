@@ -13,6 +13,13 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+### Behaviour change
+- **PSU setpoints are `actuator`** (#276, ruling #274). PSU setpoints in the
+  reference driver are now `actuator`; an approval prompt appears where there was
+  none. The `side_effect` label follows the physical effect, not idempotence;
+  `SDK.md`, the `shal-build-driver` skill and the `examples/driver-creator/scpi-psu`
+  driver say the same.
+
 ## [0.4.0] - 2026-09-29
 
 ### Added

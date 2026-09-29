@@ -123,8 +123,11 @@ structured fields as kwargs: `self.log.debug("conv ready", event="...")`).
 agent surface stays a guarantee, not an afterthought. Every op carries a
 `description` (say WHEN to call it) and a `side_effect`:
 
-`side_effect` is `"none"` (read), `"write"` (a benign state change), `"actuator"`
-(physical motion), or `"config"` (a destructive/configuration write) — if omitted
+`side_effect` is `"none"` (read), `"write"` (a state change with no physical effect:
+display text, a log level, a name), `"actuator"` (motion, or any change to the energy
+reaching the world, so every PSU voltage/current/OVP setpoint), or `"config"` (a
+destructive/configuration write). The label follows the physical effect, not
+idempotence (#274). If omitted
 it is `"actuator"` (gated, audited), `@idempotent` or not; declare `"none"` for a
 read. Then `hal.tool_schemas()` emits Anthropic
 tool-use definitions, `hal.tool_catalog()` reports side-effects for gating, and
@@ -156,7 +159,7 @@ exists:
 
 ```python
 @op("Set this channel's output voltage (absolute setpoint).",
-    unit="volt", side_effect="write",
+    unit="volt", side_effect="actuator",   # a PSU setpoint is gated (physical effect)
     params={"volts": {"minimum": 0.0, "maximum": 32.0}})   # from the datasheet
 def set_voltage(self, volts: float) -> None: ...           # body stays check-free
 ```

@@ -394,7 +394,7 @@ and an audit record for rejected attempts. Your method body stays check-free.
 
 ```python
 @op("Set this channel's output voltage (absolute setpoint).",
-    unit="volt", side_effect="write",
+    unit="volt", side_effect="actuator",   # a PSU setpoint changes the energy reaching the world
     params={"volts": {"minimum": 0.0, "maximum": 32.0}})   # from the datasheet
 def set_voltage(self, volts: float) -> None:
     self.bus.exchange(self.addr, {"scpi": f":SOUR{self.ch}:VOLT {volts}"})

@@ -42,7 +42,7 @@ class Vx3210(Driver, shal.PowerSupply):
         "enabling the output, or to change the regulated voltage. The firmware "
         "silently clamps out-of-range values, so the declared range is enforced "
         "client-side and a rejected call never reaches the instrument.",
-        unit="volt", side_effect="write",
+        unit="volt", side_effect="actuator",
         params={"volts": {"minimum": 0.0, "maximum": 32.0}})
     def set_voltage(self, volts: float) -> None:
         self._write(f"VOLT {volts}")
@@ -52,7 +52,7 @@ class Vx3210(Driver, shal.PowerSupply):
         "constant-current trip point, not the measured load current. The "
         "firmware silently clamps out-of-range values, so the declared range is "
         "enforced client-side before transmission.",
-        unit="ampere", side_effect="write",
+        unit="ampere", side_effect="actuator",
         params={"amps": {"minimum": 0.0, "maximum": 5.0}})
     def set_current_limit(self, amps: float) -> None:
         self._write(f"CURR {amps}")
