@@ -45,7 +45,7 @@ class RigolDp832(Driver, PowerSupply):
     # op_limits(). Both are checked by the framework before any bus I/O.
     @idempotent  # absolute setpoint: re-asserting the same volts is safe
     @op("Set this channel's output voltage (absolute setpoint).",
-        unit="volt", side_effect="write",
+        unit="volt", side_effect="actuator",
         params={"volts": {"minimum": 0.0, "maximum": 30.0}})
     def set_voltage(self, volts: float) -> None:
         self._write(f":SOUR{self.ch}:VOLT {volts}")

@@ -204,7 +204,8 @@ def test_text_report_without_json(drivers, capsys):
 def test_a_check_that_cannot_run_exits_2_on_stderr(target, says, capsys):
     assert cli.main(["check", target, "--json"]) == 2
     captured = capsys.readouterr()
-    assert captured.out == ""
+    out = json.loads(captured.out)
+    assert out["ok"] is False and says in out["error"]
     assert says in captured.err
 
 
@@ -213,8 +214,14 @@ def test_module_class_never_shadows_a_shipped_compatible(drivers):
     # the state the guard must not be fooled by
     r = _shal("check", "check_shadow_driver:Fake", "--json", cwd=drivers)
     assert r.returncode == 2, r.stdout
-    assert r.stdout == ""
+    assert json.loads(r.stdout)["ok"] is False
     assert "compatible 'shal,sim-sensor' is already registered by" in r.stderr
+
+
+def test_check_of_a_missing_driver_json_is_ok_false_exit_2(tmp_path):
+    r = _shal("check", "nope,missing", "--json", cwd=tmp_path)
+    assert r.returncode == 2
+    assert json.loads(r.stdout)["ok"] is False
 
 
 def test_missing_topology_exits_2(capsys):

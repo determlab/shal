@@ -86,6 +86,11 @@ report = conformance.check_driver("vendor,part", topology=<sim yaml>)
 assert report.ok, str(report)
 ```
 
+From the deliverable folder, the same check as one CLI call:
+`shal check driver:<Class> --topology topology.yaml --json` (`module:Class`;
+the cwd is on `sys.path`). Exit 0 = certified; 1 = problems (listed in the
+JSON); 2 = the check could not run.
+
 Run pytest + the conformance check. Iterate until both are green — the errors
 name what's missing. Address every conformance WARNING or justify it in a
 comment (e.g. a genuinely unbounded parameter).
