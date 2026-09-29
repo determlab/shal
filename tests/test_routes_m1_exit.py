@@ -1,17 +1,21 @@
 """Routes M1 exit tests (#238, routes M1 part 5), end to end on the sim.
 
-Six checks, then the agent path. NOTE: the RFC's exit-test table was not available
-when this file was written; the six were inferred from the routes implementation
-(#234-#237) and its tests:
+RFC-001 ("Milestones", row M1) numbers six exit tests. This file is the one place
+that proves all six — reusing the tests from parts 1-4 (#234-#237) where they
+already prove the same thing on the sim — plus the DoD's separate agent-path check
+(AGENTS.md's own `routes:` example, run as written).
 
-1. `shal tools --json` lists a routed node once, with its two routes (and `via` enum).
-2. `shal call --via <name>` runs on each route, and the result says which.
-3. An unknown `--via` name is refused before any I/O and the error lists the valid ones.
-4. A changing op fails over to the next route on delivered="no", approved once.
-5. A changing op is never re-sent on another route after delivered="unknown".
-6. `shal routes --json` prints the declared routes in order.
-
-The agent path parses the `routes:` example out of AGENTS.md and runs it as written."""
+1. A `none` op moves to route 2 on connection refused (delivered="no"), via="r2".
+   (An actuator variant is kept too, in-process on this file's own sim rig.)
+2. An actuator op with `delivered="unknown"` stops, raising/returning an error that
+   names `via="r1"`; route 2 sees no traffic.
+3. A pinned `--via r2` never moves; a route that is down raises an error naming it.
+4. The four load-time refusals (RFC §1): a jump to a bus of the wrong kind, a
+   duplicate route name, a via with no bus at that path, and a routed node with no
+   parent bus.
+5. `shal tools --json` lists a routed node once, with its routes.
+6. Every log line of a routed node's call carries `via`.
+"""
 import json
 import os
 import re
@@ -27,6 +31,33 @@ from shal import registry
 from shal.buses.sim import SimSensorModel, sim_model
 from shal.errors import HopError
 from shal.transport import ByteTransport, Read, Write
+from tests import test_loader_routes as _loader_routes
+from tests import test_logging as _logging_tests
+from tests import test_routes_policy as _policy
+
+# Reused fixtures and tests (#234-#237): bound under this module's own names so
+# pytest collects and runs them here too, numbered to the RFC's M1 exit table.
+rig = _policy.rig
+routed = _logging_tests.routed
+
+test_m1_exit_1_none_op_moves_to_r2_on_delivered_no = \
+    _policy.test_exit_1_a_none_op_moves_to_r2_when_r1_fails_with_delivered_no
+test_m1_exit_2_actuator_op_with_delivered_unknown_raises_naming_r1_direct = \
+    _policy.test_exit_2_an_actuator_op_with_delivered_unknown_on_r1_stops
+test_m1_exit_3_pinned_route_down_raises_naming_it = \
+    _policy.test_a_pinned_call_never_moves_and_names_its_route
+
+test_m1_exit_4_wrong_kind_jump_is_refused = \
+    _loader_routes.test_jump_to_a_bus_of_the_wrong_kind_is_refused
+test_m1_exit_4_duplicate_route_name_is_refused = \
+    _loader_routes.test_duplicate_route_name_is_refused
+test_m1_exit_4_missing_path_is_refused = \
+    _loader_routes.test_unresolved_via_is_refused
+test_m1_exit_4_parentless_routed_node_is_refused = \
+    _loader_routes.test_routed_node_with_no_parent_bus_is_refused
+
+test_m1_exit_6_every_log_line_of_a_routed_node_has_via = \
+    _logging_tests.test_exit_6_every_log_line_of_a_routed_node_has_via
 
 _ROOT = Path(__file__).resolve().parents[1]
 _ENV = {**os.environ,
@@ -45,7 +76,7 @@ def _agents_md_routes_example() -> str:
     return next(b for b in blocks if "routes:" in b)
 
 
-# ---- the CLI checks, on the topology AGENTS.md ships ---------------------------------
+# ---- exit 5: `shal tools --json` lists the routed node once, with its routes --------
 
 @pytest.fixture
 def lab(tmp_path):
@@ -53,48 +84,21 @@ def lab(tmp_path):
     return tmp_path
 
 
-def test_exit_1_tools_lists_the_routed_node_once_with_two_routes(lab):
+def test_m1_exit_5_tools_lists_the_routed_node_once_with_two_routes(lab):
     r = _shal("tools", "routes.yaml", "--json", cwd=lab)
     assert r.returncode == 0, r.stderr
     tools = json.loads(r.stdout)["tools"]
     assert {t["device"] for t in tools if t["device"] == "ambient_temp"} == {"ambient_temp"}
     assert [t["device"] for t in tools].count("twin") == 0  # the jump's own node is
-    routed = [t for t in tools if "routes" in t]           # not a second listing
-    assert routed and all(t["device"] == "ambient_temp" for t in routed)
-    assert all(t["routes"] == ["bench", "jump"] for t in routed)
-    assert len({t["op"] for t in routed}) == len(routed)   # each op once
+    routed_tools = [t for t in tools if "routes" in t]      # not a second listing
+    assert routed_tools and all(t["device"] == "ambient_temp" for t in routed_tools)
+    assert all(t["routes"] == ["bench", "jump"] for t in routed_tools)
+    assert len({t["op"] for t in routed_tools}) == len(routed_tools)   # each op once
     assert all(t["input_schema"]["properties"]["via"]["enum"] == ["bench", "jump"]
-               for t in routed)
+               for t in routed_tools)
 
 
-@pytest.mark.parametrize("route", ["bench", "jump"])
-def test_exit_2_call_via_runs_on_each_route(lab, route):
-    r = _shal("call", "routes.yaml", "ambient_temp", "read_celsius", "--via", route,
-              "--json", cwd=lab)
-    assert r.returncode == 0, r.stderr
-    out = json.loads(r.stdout)
-    assert out["ok"] is True and out["via"] == route
-    assert isinstance(out["result"], float)
-
-
-def test_exit_3_unknown_via_is_refused_and_lists_the_valid_names(lab):
-    r = _shal("call", "routes.yaml", "ambient_temp", "read_celsius", "--via", "wifi",
-              "--json", cwd=lab)
-    assert r.returncode == 3
-    out = json.loads(r.stdout)
-    assert out["ok"] is False and out["routes"] == ["bench", "jump"]
-    assert "bench" in out["error"] and "jump" in out["error"]
-
-
-def test_exit_6_routes_prints_the_declared_routes_in_order(lab):
-    r = _shal("routes", "routes.yaml", "ambient_temp", "--json", cwd=lab)
-    assert r.returncode == 0, r.stderr
-    assert json.loads(r.stdout)["routes"] == [
-        {"name": "bench", "via": "/bench", "address": 0x48},
-        {"name": "jump", "via": "/jump", "address": 0x49}]
-
-
-# ---- the failure policy, in process on two sim buses ---------------------------------
+# ---- exits 1 & 2, actuator variants: an in-process rig of this file's own -----------
 
 @sim_model("test,m1-exit-probe")
 class _ProbeModel(SimSensorModel):
@@ -161,7 +165,7 @@ def _buses(hal):
     return node.parent.driver, node.routes[1][1].driver
 
 
-def test_exit_4_a_changing_op_fails_over_on_delivered_no_and_asks_once(hal):
+def test_m1_exit_1_actuator_variant_moves_to_r2_on_delivered_no(hal):
     r1, r2 = _buses(hal)
     r1.fail_next = 2                       # refused, and the revive is refused too
     ask = _Count()
@@ -173,12 +177,12 @@ def test_exit_4_a_changing_op_fails_over_on_delivered_no_and_asks_once(hal):
     assert r1.model_for(0x48).target_writes == 0
 
 
-def test_exit_5_a_changing_op_is_not_re_sent_after_delivered_unknown(hal):
+def test_m1_exit_2_actuator_op_with_delivered_unknown_raises_naming_r1(hal):
     r1, r2 = _buses(hal)
     r1.fail_delivered_unknown = True       # the request left; the reply was lost
     with shal.approver(_Count()):
         out = hal.call_tool("board__fire", {"c": 30})
-    assert out["ok"] is False and out["delivered"] == "unknown"
+    assert out["ok"] is False and out["delivered"] == "unknown" and out["via"] == "r1"
     assert r2.model_for(0x49).target_writes == 0     # never re-sent on r2
     assert r1.model_for(0x48).target_writes == 0     # nor retried on r1
     # the same through the driver: HopError names the route and the next step
@@ -195,8 +199,8 @@ def test_agent_path_agents_md_routes_example_runs_on_the_sim(tmp_path):
     (tmp_path / "routes.yaml").write_text(_agents_md_routes_example(), encoding="utf-8")
     r = _shal("tools", "routes.yaml", "--json", cwd=tmp_path)
     assert r.returncode == 0, r.stderr
-    routed = [t for t in json.loads(r.stdout)["tools"] if "routes" in t]
-    tool = next(t for t in routed if t["kind"] == "read")
+    routed_tools = [t for t in json.loads(r.stdout)["tools"] if "routes" in t]
+    tool = next(t for t in routed_tools if t["kind"] == "read")
     for name in tool["routes"]:
         c = _shal("call", "routes.yaml", tool["device"], tool["op"], "--via", name,
                   "--json", cwd=tmp_path)

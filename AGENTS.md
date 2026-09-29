@@ -94,6 +94,8 @@ each with the `shal call` line that runs it.
 
 ## Routes
 
+Needs pyshal 0.4.0 or later.
+
 A node sits under its main bus. Extra channels are named jumps in `routes:`. A
 changing op is never re-sent on another route after an unknown delivery.
 
