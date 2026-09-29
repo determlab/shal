@@ -261,8 +261,10 @@ def _cmd_mcp(args) -> int:
 _CHECK_USAGE_ERROR = 2
 
 
-def _check_fail(msg: str) -> int:
+def _check_fail(msg: str, as_json: bool = False) -> int:
     print(f"shal check: {msg}", file=sys.stderr)
+    if as_json:
+        _json_out({"ok": False, "error": msg})
     return _CHECK_USAGE_ERROR
 
 
@@ -325,15 +327,15 @@ def _cmd_check(args) -> int:
     """A thin CLI over ``conformance.check_driver`` (shal#148, ADK R6)."""
     from .conformance import check_driver
     if args.topology is not None and not os.path.isfile(args.topology):
-        return _check_fail(f"topology file not found: {args.topology}")
+        return _check_fail(f"topology file not found: {args.topology}", args.json)
     try:
         cls = _load_check_target(args.target)
     except ValueError as e:
-        return _check_fail(str(e))
+        return _check_fail(str(e), args.json)
     try:
         report = check_driver(cls, args.topology)
     except Exception as e:  # noqa: BLE001 - the check could not run: no traceback
-        return _check_fail(f"check could not run: {type(e).__name__}: {e}")
+        return _check_fail(f"check could not run: {type(e).__name__}: {e}", args.json)
     if args.json:
         print(json.dumps({"compatible": report.compatible, "ok": report.ok,
                           "problems": report.problems, "warnings": report.warnings,
@@ -364,11 +366,14 @@ class _CallCannotRun(Exception):
         self.routes = routes
 
 
-def _call_usage_error(parser: argparse.ArgumentParser):
-    """argparse exits 2 on a usage error; for `call`, 2 means a gate refusal."""
+def _call_usage_error(parser: argparse.ArgumentParser, argv: list[str] | None = None):
+    """argparse exits 2 on a usage error; for `call`, 2 means a gate refusal. With
+    --json on the command line, stdout also holds ``{"ok": false, "error": ...}``."""
     def error(message: str):
         parser.print_usage(sys.stderr)
         print(f"shal call: {message}", file=sys.stderr)
+        if "--json" in (sys.argv[1:] if argv is None else argv):
+            _json_out({"ok": False, "error": message})
         raise SystemExit(_CALL_CANNOT_RUN)
     return error
 
@@ -478,18 +483,22 @@ def _cmd_call(args) -> int:
             print(json.dumps(payload, indent=2, default=str))
 
     if not os.path.isfile(args.topology):
-        print(f"shal call: topology file not found: {args.topology}", file=sys.stderr)
+        msg = f"shal call: topology file not found: {args.topology}"
+        print(msg, file=sys.stderr)
+        emit({"ok": False, "error": msg})
         return _CALL_CANNOT_RUN
     try:
         _import_drivers(args.drivers)
         hal = _resolve_hal(args.topology)
     except SystemExit as e:  # the shared loaders exit with a message, not a code
-        print(e.code if isinstance(e.code, str) else f"shal call: load failed ({e.code})",
-              file=sys.stderr)
+        msg = e.code if isinstance(e.code, str) else f"shal call: load failed ({e.code})"
+        print(msg, file=sys.stderr)
+        emit({"ok": False, "error": msg})
         return _CALL_CANNOT_RUN
     except Exception as e:  # noqa: BLE001 - a bad topology is a clean exit 3
-        print(f"shal call: cannot load {args.topology}: {type(e).__name__}: {e}",
-              file=sys.stderr)
+        msg = f"shal call: cannot load {args.topology}: {type(e).__name__}: {e}"
+        print(msg, file=sys.stderr)
+        emit({"ok": False, "error": msg})
         return _CALL_CANNOT_RUN
     try:
         name, node, fn = _find_call_tool(hal, args.node, args.op)
@@ -523,10 +532,13 @@ def _cmd_call(args) -> int:
         print(f"shal call: {e}", file=sys.stderr)
         if e.routes is not None:  # a bad --via: the valid names, for the next call
             emit({"ok": False, "error": str(e), "routes": e.routes})
+        else:
+            emit({"ok": False, "error": str(e)})
         return _CALL_CANNOT_RUN
     except Exception as e:  # noqa: BLE001 - the op raised past call_tool: no traceback
-        print(f"shal call: {args.node}.{args.op} failed: {type(e).__name__}: {e}",
-              file=sys.stderr)
+        msg = f"{args.node}.{args.op} failed: {type(e).__name__}: {e}"
+        print(f"shal call: {msg}", file=sys.stderr)
+        emit({"ok": False, "error": msg})
         return _CALL_FAILED
     finally:
         hal.close()
@@ -546,9 +558,10 @@ def _cmd_call(args) -> int:
 # `shal records` fix text is one fixed sentence (issue #251): it names the exact
 # command an agent runs next, so it is never reworded per-call the way an error
 # message built from the failing value would be.
-_NO_STORE_FIX = ("run a test with pytest-shal or the jig sample "
-                 "('shal docs --sample jig --to DIR'), or pass the directory "
-                 "that holds records.db")
+_NO_STORE_FIX = ("run a test with pytest-shal, or run the jig sample "
+                 "('shal docs --sample jig --to DIR', then 'python DIR/run.py' in "
+                 "that folder) and read it with 'shal records jig-records'; or "
+                 "pass the directory that holds records.db")
 _NEWER_RECORD_FIX = "re-run with --skip-newer, or upgrade pyshal"
 _BAD_RECORD_FIX = "fix or remove the record file named in the message"
 
@@ -1101,7 +1114,7 @@ def main(argv: list[str] | None = None) -> int:
                "      3 could not run (usage error, unknown device, op or route, bad\n"
                "        value, topology does not load) — not 2, so a refusal is never\n"
                "        mistaken for a mistake")
-    k.error = _call_usage_error(k)  # 2 is the gate's code, not argparse's
+    k.error = _call_usage_error(k, argv)  # 2 is the gate's code, not argparse's
     k.add_argument("topology", help="path to the topology YAML")
     k.add_argument("node", help="the device: its id, its /path, or its handle in `shal tools`")
     k.add_argument("op", help="the op to run (e.g. read_celsius)")
