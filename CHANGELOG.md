@@ -32,6 +32,8 @@ All notable changes to this project are documented here. The format follows
 
 ### Changed
 - **`model_for` on sim buses raises `LookupError` (was `KeyError`)** (#288).
+- **`read()` raises `RecordError` for a corrupt record file or a record under
+  the wrong file name** (#287).
 
 ### Fixed
 - `docs/CATALOG.md` and the README list every shipped `shal,*` compatible, including `shal,sim-psu`; a test fails when one ships without a catalog row; the agent docs' MCP install line is the quoted PyPI form `pip install "pyshal[mcp]"` (#273).

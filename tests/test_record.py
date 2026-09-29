@@ -541,6 +541,49 @@ def test_a_fourth_runner_is_refused_and_the_message_names_all_three():
 
 
 # --------------------------------------------------------------------------- #
+# #287: a damaged store raises RecordError naming the file, never its text
+# --------------------------------------------------------------------------- #
+
+def test_corrupt_yaml_raises_record_error_naming_the_file(tmp_path):
+    path = yaml_path(tmp_path, "rec-bad")
+    path.parent.mkdir(parents=True)
+    path.write_text("key: [SECRETTEXT\n  : : {", encoding="utf-8")
+    with pytest.raises(RecordError, match=re.escape(str(path))) as exc:
+        read(tmp_path)
+    assert "SECRETTEXT" not in str(exc.value)
+
+
+def test_undecodable_yaml_raises_record_error_naming_the_file(tmp_path):
+    path = yaml_path(tmp_path, "rec-bad")
+    path.parent.mkdir(parents=True)
+    path.write_bytes(b"record: SECRETTEXT \xff\xfe\x80")
+    with pytest.raises(RecordError, match=re.escape(str(path))) as exc:
+        read(tmp_path)
+    assert "SECRETTEXT" not in str(exc.value)
+
+
+def test_corrupt_json_in_the_db_raises_record_error_naming_the_file(tmp_path):
+    write(FULL, tmp_path)
+    with sqlite3.connect(db_path(tmp_path)) as conn:
+        conn.execute("UPDATE records SET record_json = ?", ("{SECRETTEXT",))
+    yaml_path(tmp_path, FULL.record).unlink()
+    with pytest.raises(RecordError, match=re.escape(str(db_path(tmp_path)))) as exc:
+        read(tmp_path)
+    assert "SECRETTEXT" not in str(exc.value)
+
+
+def test_a_record_copied_under_another_name_is_a_mismatch(tmp_path):
+    write(FULL, tmp_path)
+    src = yaml_path(tmp_path, FULL.record)
+    copy = yaml_path(tmp_path, "rec-b")
+    copy.write_bytes(src.read_bytes())
+    with pytest.raises(RecordError, match=re.escape(str(copy))) as exc:
+        read(tmp_path)
+    assert "rec-b" in str(exc.value) and FULL.record in str(exc.value)
+    assert FULL.unit not in str(exc.value)
+
+
+# --------------------------------------------------------------------------- #
 # helpers
 # --------------------------------------------------------------------------- #
 
