@@ -54,7 +54,7 @@ def test_no_store_exits_1_and_names_the_fix_on_stderr(tmp_path):
     r = _shal("records", str(tmp_path), cwd=tmp_path)
     assert r.returncode == 1
     assert "no records.db in" in r.stderr
-    assert "shal docs --sample jig --to DIR" in r.stderr
+    assert "shal records jig-records" in r.stderr
     assert r.stdout == ""
 
 
@@ -67,11 +67,27 @@ def test_no_store_json_shape(tmp_path):
         "error": {
             "type": "NoStore",
             "message": f"no records.db in {tmp_path}",
-            "fix": "run a test with pytest-shal or the jig sample "
-                   "('shal docs --sample jig --to DIR'), or pass the directory "
-                   "that holds records.db",
+            "fix": "run a test with pytest-shal, or run the jig sample "
+                   "('shal docs --sample jig --to DIR', then 'python DIR/run.py' in "
+                   "that folder) and read it with 'shal records jig-records'; or "
+                   "pass the directory that holds records.db",
         },
     }
+
+
+def test_the_fix_command_works_after_the_jig_sample(tmp_path):
+    d = tmp_path / "d"
+    assert _shal("docs", "--sample", "jig", "--to", "d", cwd=tmp_path).returncode == 0
+    run = subprocess.run([sys.executable, "run.py"], cwd=d, capture_output=True,
+                         text=True, encoding="utf-8", timeout=120)
+    assert run.returncode == 0, run.stderr
+    empty = tmp_path / "empty"
+    empty.mkdir()
+    fix = json.loads(_shal("records", "--json", cwd=empty).stdout)["error"]["fix"]
+    assert "shal records jig-records" in fix
+    r = _shal("records", "jig-records", "--json", cwd=d)
+    assert r.returncode == 0, r.stderr
+    assert len(json.loads(r.stdout)["records"]) == 5
 
 
 # --------------------------------------------------------------------------- #
