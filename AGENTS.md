@@ -17,13 +17,8 @@ stop for a person.
 ## Install
 
 ```bash
-pip install git+https://github.com/determlab/shal
+pip install pyshal
 ```
-
-**Until the next release, install from the repo.** `pip install pyshal` gives
-0.2.2 from PyPI, which has no `shal call`, no `shal check`, no `shal docs --list` /
-`--example`, and no `shal,sim-sensor` driver, so the first-success step below fails
-on it. When 0.3.0 ships, this line becomes `pip install pyshal`.
 
 ## First success
 
