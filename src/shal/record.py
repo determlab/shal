@@ -668,9 +668,17 @@ def _read_yaml(store: StoreLike, record_id: str) -> Record | None:
     path = yaml_path(store, record_id)
     if not path.exists():
         return None
-    with open(path, encoding="utf-8", newline="") as fh:
-        data = yaml.safe_load(fh)  # safe_load only — never yaml.load
-    return Record.from_mapping(data, source=str(path))
+    try:
+        with open(path, encoding="utf-8", newline="") as fh:
+            data = yaml.safe_load(fh)  # safe_load only — never yaml.load
+    except (yaml.YAMLError, UnicodeDecodeError):
+        raise RecordError(f"{path}: not a readable record file (corrupt or not UTF-8)") from None
+    rec = Record.from_mapping(data, source=str(path))
+    if rec.record != record_id:
+        raise RecordError(
+            f"{path}: holds record '{rec.record}' but the file name says '{record_id}'"
+        )
+    return rec
 
 
 def _read_db(store: StoreLike, record_id: str) -> Record | None:
@@ -683,7 +691,13 @@ def _read_db(store: StoreLike, record_id: str) -> Record | None:
         ).fetchone()
     if row is None:
         return None
-    return Record.from_mapping(json.loads(row[0]), source=f"{db_path(store)}:{record_id}")
+    try:
+        data = json.loads(row[0])
+    except (ValueError, TypeError):
+        raise RecordError(
+            f"{db_path(store)}:{record_id}: record_json is not valid JSON"
+        ) from None
+    return Record.from_mapping(data, source=f"{db_path(store)}:{record_id}")
 
 
 __all__ = [
