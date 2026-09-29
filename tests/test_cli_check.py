@@ -205,7 +205,8 @@ def test_a_check_that_cannot_run_exits_2_on_stderr(target, says, capsys):
     assert cli.main(["check", target, "--json"]) == 2
     captured = capsys.readouterr()
     out = json.loads(captured.out)
-    assert out["ok"] is False and says in out["error"]
+    assert out["ok"] is False and says in out["error"]["message"]
+    assert out["error"]["type"] and out["error"]["fix"]
     assert says in captured.err
 
 

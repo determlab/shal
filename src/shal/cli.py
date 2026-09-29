@@ -61,14 +61,49 @@ def _add_drivers_arg(p: argparse.ArgumentParser) -> None:
 
 # `--json` on probe / tools / docs --list (shal#185) and docs --samples (#206). One
 # JSON document on stdout, the same exit code as without --json, and every message
-# still on stderr (as `shal call --json` does). An error is `{"ok": false, "error": <the message>}`.
+# still on stderr (as `shal call --json` does). An error is
+# `{"ok": false, "error": {"type": <short name>, "message": <text>, "fix": <what fixes it>}}`
+# (#279) — the one shape for every command; `fix` is never empty.
 def _json_out(payload: dict) -> None:
     print(json.dumps(payload, indent=2, default=str))
 
 
-def _json_error(msg: str, code: int = 1) -> int:
-    print(msg, file=sys.stderr)
-    _json_out({"ok": False, "error": msg})
+def _error_obj(type_: str, message: str, fix: str) -> dict:
+    return {"type": type_, "message": message, "fix": fix or "run the command with --help"}
+
+
+def _help_fix(cmd: str) -> str:
+    return f"run `shal {cmd} --help` for the arguments"
+
+
+_READ_FIX = "check the device and its wiring, then run `shal probe --help`"
+
+
+def _load_fault(msg: str, cmd: str) -> dict:
+    """The error object for a topology/driver load failure reported as a message."""
+    if "no driver installed" in msg:
+        from .registry import ENTRY_POINT_GROUP
+        return _error_obj(
+            "NoDriver", msg,
+            f"install a package that exposes the driver via the '{ENTRY_POINT_GROUP}' "
+            "entry point, or register a local driver file with --drivers <file.py | "
+            "directory/>; `shal docs` is the guide to write one")
+    if "topology file not found" in msg:
+        return _error_obj("TopologyNotFound", msg,
+                          "pass the path to a topology YAML, or run "
+                          "`shal docs --sample hello --to DIR` for a ready-to-edit one")
+    if "failed importing driver" in msg or "--drivers" in msg:
+        return _error_obj("DriverImport", msg,
+                          "fix the driver file named in the message, or check the "
+                          "--drivers path")
+    return _error_obj("LoadError", msg,
+                      "fix the topology file, or run `shal docs --sample hello --to DIR` "
+                      f"for a working one; `shal {cmd} --help` shows the arguments")
+
+
+def _json_error(error: dict, code: int = 1) -> int:
+    print(error["message"], file=sys.stderr)
+    _json_out({"ok": False, "error": error})
     return code
 
 
@@ -83,10 +118,10 @@ def _json_load(args, cmd: str):
     except SystemExit as e:
         if not isinstance(e.code, str):
             raise
-        return _json_error(e.code)
+        return _json_error(_load_fault(e.code, cmd))
     except Exception as e:  # noqa: BLE001 - a bad topology is a JSON error, exit 1
-        return _json_error(f"shal {cmd}: cannot load {args.topology}: "
-                           f"{type(e).__name__}: {e}")
+        return _json_error(_load_fault(f"shal {cmd}: cannot load {args.topology}: "
+                                       f"{type(e).__name__}: {e}", cmd))
 
 
 # run_with is built from an ALLOW-list, never a deny-list: a token pastes into bash,
@@ -150,7 +185,9 @@ def _probe_json(args) -> int:
         try:
             picked = [_probe_pick(defs, args.tool)] if args.tool else None
         except SystemExit as e:
-            return _json_error(str(e.code))
+            return _json_error(_error_obj("BadTool", str(e.code),
+                                          "run `shal probe <topology>` with no tool to "
+                                          "list the reads, or use `shal call` for a write"))
         reads, writes = _probe_split(defs)
         read_out = []
         for d in picked or reads:
@@ -160,14 +197,19 @@ def _probe_json(args) -> int:
                 out = bridge.call(d["name"], {})
             except Exception as e:  # noqa: BLE001 - as the text snapshot: one bad read
                 if picked:  # a named read that raises exits 1 without --json too
-                    return _json_error(f"shal probe: {d['name']} failed: "
-                                       f"{type(e).__name__}: {e}")
-                entry.update(ok=False, error=f"{type(e).__name__}: {e}")
+                    return _json_error(_error_obj(
+                        "ReadFailed", f"shal probe: {d['name']} failed: "
+                                      f"{type(e).__name__}: {e}",
+                        _READ_FIX))
+                entry.update(ok=False, error=_error_obj(
+                    "ReadFailed", f"{type(e).__name__}: {e}", _READ_FIX))
             else:
                 if out.get("ok"):
                     entry.update(ok=True, value=out.get("result"))
                 else:
-                    entry.update(ok=False, error=out.get("error", out.get("message")))
+                    entry.update(ok=False, error=_error_obj(
+                        "ReadFailed", str(out.get("error", out.get("message"))),
+                        out.get("fix") or _READ_FIX))
             entry["unit"] = f.get("unit")
             read_out.append(entry)
         write_out = [{"tool": d["name"], "device": facts[d["name"]]["device"],
@@ -261,10 +303,12 @@ def _cmd_mcp(args) -> int:
 _CHECK_USAGE_ERROR = 2
 
 
-def _check_fail(msg: str, as_json: bool = False) -> int:
+def _check_fail(msg: str, as_json: bool = False, type_: str = "CheckCouldNotRun",
+                fix: str = "") -> int:
     print(f"shal check: {msg}", file=sys.stderr)
     if as_json:
-        _json_out({"ok": False, "error": msg})
+        _json_out({"ok": False, "error": _error_obj(
+            type_, msg, fix or _help_fix("check"))})
     return _CHECK_USAGE_ERROR
 
 
@@ -327,11 +371,14 @@ def _cmd_check(args) -> int:
     """A thin CLI over ``conformance.check_driver`` (shal#148, ADK R6)."""
     from .conformance import check_driver
     if args.topology is not None and not os.path.isfile(args.topology):
-        return _check_fail(f"topology file not found: {args.topology}", args.json)
+        return _check_fail(f"topology file not found: {args.topology}", args.json,
+                           "TopologyNotFound", "pass the path to an existing topology YAML")
     try:
         cls = _load_check_target(args.target)
     except ValueError as e:
-        return _check_fail(str(e), args.json)
+        return _check_fail(str(e), args.json, "BadTarget",
+                           "pass module:Class or a registered compatible; "
+                           "`shal docs --list` lists the reference drivers")
     try:
         report = check_driver(cls, args.topology)
     except Exception as e:  # noqa: BLE001 - the check could not run: no traceback
@@ -373,7 +420,8 @@ def _call_usage_error(parser: argparse.ArgumentParser, argv: list[str] | None = 
         parser.print_usage(sys.stderr)
         print(f"shal call: {message}", file=sys.stderr)
         if "--json" in (sys.argv[1:] if argv is None else argv):
-            _json_out({"ok": False, "error": message})
+            _json_out({"ok": False, "error": _error_obj(
+                "UsageError", message, _help_fix("call"))})
         raise SystemExit(_CALL_CANNOT_RUN)
     return error
 
@@ -485,7 +533,7 @@ def _cmd_call(args) -> int:
     if not os.path.isfile(args.topology):
         msg = f"shal call: topology file not found: {args.topology}"
         print(msg, file=sys.stderr)
-        emit({"ok": False, "error": msg})
+        emit({"ok": False, "error": _load_fault(msg, "call")})
         return _CALL_CANNOT_RUN
     try:
         _import_drivers(args.drivers)
@@ -493,12 +541,12 @@ def _cmd_call(args) -> int:
     except SystemExit as e:  # the shared loaders exit with a message, not a code
         msg = e.code if isinstance(e.code, str) else f"shal call: load failed ({e.code})"
         print(msg, file=sys.stderr)
-        emit({"ok": False, "error": msg})
+        emit({"ok": False, "error": _load_fault(msg, "call")})
         return _CALL_CANNOT_RUN
     except Exception as e:  # noqa: BLE001 - a bad topology is a clean exit 3
         msg = f"shal call: cannot load {args.topology}: {type(e).__name__}: {e}"
         print(msg, file=sys.stderr)
-        emit({"ok": False, "error": msg})
+        emit({"ok": False, "error": _load_fault(msg, "call")})
         return _CALL_CANNOT_RUN
     try:
         name, node, fn = _find_call_tool(hal, args.node, args.op)
@@ -522,7 +570,7 @@ def _cmd_call(args) -> int:
                   "approve_with": [f"shal mcp {args.topology}",
                                    "with shal.approver(...): in Python"],
                   "how_to_approve": HOW_TO_APPROVE_LINE,
-                  "error": msg})
+                  "error": _error_obj("ApprovalRequired", msg, HOW_TO_APPROVE_LINE)})
             return _CALL_REFUSED
         schema = next(s["input_schema"] for s in hal.tool_schemas() if s["name"] == name)
         arguments = _call_arguments(fn, schema, args.args)
@@ -531,20 +579,32 @@ def _cmd_call(args) -> int:
     except _CallCannotRun as e:
         print(f"shal call: {e}", file=sys.stderr)
         if e.routes is not None:  # a bad --via: the valid names, for the next call
-            emit({"ok": False, "error": str(e), "routes": e.routes})
+            emit({"ok": False, "routes": e.routes, "error": _error_obj(
+                "BadRoute", str(e), f"pass one of: {', '.join(e.routes) or 'none'} "
+                                    f"(`shal routes {args.topology} {args.node}`)")})
         else:
-            emit({"ok": False, "error": str(e)})
+            emit({"ok": False, "error": _error_obj(
+                "CannotRun", str(e), f"run `shal tools {args.topology}` for the devices, "
+                                     "ops and arguments, or `shal call --help`")})
         return _CALL_CANNOT_RUN
     except Exception as e:  # noqa: BLE001 - the op raised past call_tool: no traceback
         msg = f"{args.node}.{args.op} failed: {type(e).__name__}: {e}"
         print(f"shal call: {msg}", file=sys.stderr)
-        emit({"ok": False, "error": msg})
+        emit({"ok": False, "error": _error_obj(
+            "OpFailed", msg, "check the device and its wiring; `shal call --help` "
+                             "shows the arguments")})
         return _CALL_FAILED
     finally:
         hal.close()
     payload = {"ok": out["ok"], "tool": name, "device": device, "op": args.op,
                "side_effect": side_effect, **{k: v for k, v in out.items() if k != "ok"}}
     if not out["ok"]:
+        kind = {"limits": "LimitsRejected", "approval": "ApprovalDenied"}.get(
+            out.get("rejected"), "OpFailed")
+        payload["error"] = _error_obj(kind, str(out.get("error")), out.get("fix") or (
+            "pass a value inside the op's declared limits (`shal tools "
+            f"{args.topology} --json`)" if kind == "LimitsRejected" else
+            "check the device and its wiring; `shal call --help` shows the arguments"))
         print(f"shal call: {device}.{args.op} failed: {out.get('error')}", file=sys.stderr)
         emit(payload)
         return _CALL_FAILED
@@ -664,7 +724,8 @@ def _cmd_routes(args) -> int:
             msg = (f"shal routes: no device '{args.node}' on this topology "
                    f"(devices: {', '.join(handles) or 'none'})")
             if args.json:
-                return _json_error(msg)
+                return _json_error(_error_obj(
+                    "NoDevice", msg, f"run `shal tools {args.topology}` to list the devices"))
             print(msg, file=sys.stderr)
             return 1
         routes = declared_routes(node)
@@ -952,7 +1013,8 @@ def main(argv: list[str] | None = None) -> int:
                '              "side_effect": "config", "gated": true,\n'
                '              "run_with":\n'
                '                "shal call sim.yaml ambient_temp set_target celsius=<celsius>"}]}\n'
-               '  A read that failed has "ok": false and "error" instead of "value"; the\n'
+               '  A read that failed has "ok": false and "error" (an object: {"type",\n'
+               '  "message", "fix"}) instead of "value"; the\n'
                '  top-level "ok" is still true (the probe ran, exit 0). With a named\n'
                '  tool, "reads" holds that one read. A gated write is refused by\n'
                '  `shal call` (exit 2) until a person approves it.\n'
@@ -966,7 +1028,8 @@ def main(argv: list[str] | None = None) -> int:
                "\n"
                "exit: 0 ran; 1 no such tool, the tool is a write, or the topology\n"
                "  does not load. The message is on stderr; with --json, stdout also\n"
-               '  holds {"ok": false, "error": <the same message>}. 2 is a usage error.')
+               '  holds {"ok": false, "error": {"type": ..., "message": <the same\n'
+               '  message>, "fix": <what fixes it>}}. 2 is a usage error.')
     p.add_argument("topology", help="path to the topology YAML")
     p.add_argument("tool", nargs="?", help="a specific read tool to run (default: all reads)")
     _add_drivers_arg(p)
@@ -993,7 +1056,8 @@ def main(argv: list[str] | None = None) -> int:
                "  of those names) that pins one route: `shal call ... --via r2`.\n"
                "\n"
                "exit: 0 listed; 1 the topology does not load. The message is on\n"
-               '  stderr; with --json, stdout also holds {"ok": false, "error": ...}.')
+               '  stderr; with --json, stdout also holds {"ok": false, "error":\n'
+               '  {"type": ..., "message": ..., "fix": ...}}.')
     t.add_argument("topology", help="path to the topology YAML")
     _add_drivers_arg(t)
     t.add_argument("--json", action="store_true",
@@ -1070,7 +1134,8 @@ def main(argv: list[str] | None = None) -> int:
                "  shal check <target> --topology t.yaml  add the live probes on a sim\n"
                "\n"
                "exit: 0 no problems, 1 problems (warnings never fail), "
-               "2 the check could not run")
+               "2 the check could not run. With --json a failure to run prints\n"
+               '  {"ok": false, "error": {"type": ..., "message": ..., "fix": ...}}')
     c.add_argument("target", metavar="<compatible|module:Class>",
                    help="a registered compatible (shal,sim-sensor) or module:Class")
     c.add_argument("--topology", metavar="t.yaml", default=None,
@@ -1099,7 +1164,8 @@ def main(argv: list[str] | None = None) -> int:
                "  --via NAME pins one route of a node with routes for this call: no\n"
                "  failover, and a failure names that route. `shal routes <topology>\n"
                "  <device>` lists the names. An unknown name is exit 3, nothing sent;\n"
-               '  with --json, stdout holds {"ok": false, "error": ..., "routes":\n'
+               '  with --json, stdout holds {"ok": false, "error": {"type", "message",\n'
+               '  "fix"}, "routes":\n'
                '  [<the valid names>]}. A routed call\'s JSON has "via", the route\n'
                "  that carried it (on failure: the route that failed).\n"
                "\n"
@@ -1113,7 +1179,10 @@ def main(argv: list[str] | None = None) -> int:
                "      2 refused by the gate (config/actuator; nothing sent),\n"
                "      3 could not run (usage error, unknown device, op or route, bad\n"
                "        value, topology does not load) — not 2, so a refusal is never\n"
-               "        mistaken for a mistake")
+               "        mistaken for a mistake\n"
+               "\n"
+               'errors: with --json every failure has "error": {"type": <short name>,\n'
+               '  "message": <text>, "fix": <the command or change that fixes it>}.')
     k.error = _call_usage_error(k, argv)  # 2 is the gate's code, not argparse's
     k.add_argument("topology", help="path to the topology YAML")
     k.add_argument("node", help="the device: its id, its /path, or its handle in `shal tools`")
@@ -1194,7 +1263,7 @@ def main(argv: list[str] | None = None) -> int:
                "\n"
                "exit: 0 listed; 1 no such device, or the topology does not load. The\n"
                "  message is on stderr; with --json, stdout also holds\n"
-               '  {"ok": false, "error": ...}.')
+               '  {"ok": false, "error": {"type": ..., "message": ..., "fix": ...}}.')
     r.add_argument("topology", help="path to the topology YAML")
     r.add_argument("node", help="the device: its id, its /path, or its handle in `shal tools`")
     _add_drivers_arg(r)

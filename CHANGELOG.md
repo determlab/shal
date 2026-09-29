@@ -36,6 +36,9 @@ All notable changes to this project are documented here. The format follows
   (`tests/test_routes_m1_exit.py`), and every sim bus is tested for the
   `"no"` / `"unknown"` split.
 
+### Changed (behaviour)
+- `error` in `--json` output is now always an object `{"type", "message", "fix"}`, never a string: `shal call`, `shal check`, `shal probe`, `shal tools`, `shal routes` now match `shal records`. `fix` is never empty. `shal call --json` on a node with no installed driver prints it too, with a `fix` that names how to install or register the driver (#279).
+
 ### Changed
 - **`model_for` on sim buses raises `LookupError` (was `KeyError`)** (#288).
 - **`read()` raises `RecordError` for a corrupt record file or a record under

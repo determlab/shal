@@ -96,6 +96,35 @@ def lab(tmp_path):
     return tmp_path
 
 
+@pytest.mark.parametrize("argv", [
+    ("call", "sim.yaml", "ambient_temp", "nope", "--json"),
+    ("check", "nope,missing", "--json"),
+    ("records", "--json"),
+    ("probe", "sim.yaml", "nope", "--json"),
+], ids=["call", "check", "records", "probe"])
+def test_json_error_is_one_object_in_every_command(lab, argv):
+    (lab / "empty").mkdir()
+    cwd = lab / "empty" if argv[0] == "records" else lab
+    r = _shal(*argv, cwd=cwd)
+    assert r.returncode != 0
+    error = json.loads(r.stdout)["error"]
+    assert isinstance(error, dict)
+    assert error["type"] and error["message"] and error["fix"]
+
+
+def test_call_json_with_no_installed_driver_is_the_error_object(tmp_path):
+    (tmp_path / "t.yaml").write_text(_SIM_YAML.replace("shal,sim-sensor", "acme,nothing"),
+                                     encoding="utf-8")
+    r = _shal("call", "t.yaml", "ambient_temp", "read_celsius", "--json", cwd=tmp_path)
+    assert r.returncode == 3, r.stderr
+    doc = json.loads(r.stdout)
+    assert doc["ok"] is False
+    error = doc["error"]
+    assert set(error) == {"type", "message", "fix"}
+    assert "no driver installed for compatible 'acme,nothing'" in error["message"]
+    assert "entry point" in error["fix"] and "--drivers" in error["fix"]
+
+
 def _marker(*argv: str, cwd) -> subprocess.CompletedProcess:
     return _shal("call", "marker.yaml", "thing", *argv,
                  "--drivers", "marker_driver.py", cwd=cwd)
@@ -365,7 +394,7 @@ def test_agent_path_json_when_every_route_refuses_has_delivered_via_and_fix(tmp_
     assert r.returncode == 1, r.stderr
     out = json.loads(r.stdout)
     assert out["ok"] is False and out["delivered"] == "no" and out["via"] is None
-    assert out["error"] == ("/r1/board: no route delivered — r1 via /r1: simulated "
+    assert out["error"]["message"] == ("/r1/board: no route delivered — r1 via /r1: simulated "
                             "link drop before send; r2 via /r2: simulated link drop "
                             "before send")
     assert out["fix"] == 'check the wiring sheet for board, or pin a route: via="r1"'
@@ -396,7 +425,7 @@ def test_via_r2_down_fails_on_r2_and_never_tries_r1(tmp_path):
     assert r.returncode == 1, r.stderr
     out = json.loads(r.stdout)
     assert out["ok"] is False and out["via"] == "r2" and out["delivered"] == "no"
-    assert "via=r2" in out["error"]
+    assert "via=r2" in out["error"]["message"]
 
 
 def test_unknown_via_exits_3_and_lists_the_valid_names(tmp_path):
@@ -406,8 +435,9 @@ def test_unknown_via_exits_3_and_lists_the_valid_names(tmp_path):
     assert r.returncode == 3, r.stderr
     out = json.loads(r.stdout)
     assert out["ok"] is False and out["routes"] == ["r1", "r2"]
-    assert out["error"] == "/r1/board: no route named 'r9'; routes: r1, r2"
-    assert out["error"] in r.stderr and "Traceback" not in r.stderr
+    assert out["error"]["message"] == "/r1/board: no route named 'r9'; routes: r1, r2"
+    assert out["error"]["fix"] and out["error"]["message"] in r.stderr
+    assert "Traceback" not in r.stderr
 
 
 def test_via_on_a_node_without_routes_takes_only_its_main_route(lab):
