@@ -142,3 +142,6 @@ package adds the entry point:
 - Connection caching: two ops, one connect.
 - `kinds()` reports exactly what is implemented.
 - TLS/insecure rule if network-facing.
+
+Then certify the bus class: `shal check <module:Class> --topology topology.yaml --json`
+(topology optional; without it only the static checks run). Exit 0 = certified.

@@ -23,6 +23,9 @@ All notable changes to this project are documented here. The format follows
   (`tests/test_routes_m1_exit.py`), and every sim bus is tested for the
   `"no"` / `"unknown"` split.
 
+### Fixed
+- `shal call --json` and `shal check --json` print `{"ok": false, "error": ...}` on stdout for every error path (exit 3 / 1 / 2), as AGENTS.md promises; the `shal records` no-store fix now names `shal records jig-records`, the folder the jig sample writes (#272).
+
 ## [0.4.0] - 2026-09-29
 
 ### Added
