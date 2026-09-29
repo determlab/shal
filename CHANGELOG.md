@@ -19,6 +19,12 @@ All notable changes to this project are documented here. The format follows
   none. The `side_effect` label follows the physical effect, not idempotence;
   `SDK.md`, the `shal-build-driver` skill and the `examples/driver-creator/scpi-psu`
   driver say the same.
+- **Behaviour change: chamber `set_temperature` and Sonos playback/volume are now
+  `actuator`** (#290, ADR-001 Addendum 6). The http-service chamber example's
+  `set_temperature` (drives a heater) and the Sonos reference driver's `play`,
+  `pause`, `stop`, `next_track`, `previous_track` and `set_volume` were
+  `side_effect="write"` and ran without a prompt; they are now gated like every
+  other actuator and ask for approval. Sonos reads stay `none`.
 
 ### Added
 - **Routes M1 closes** (#238). The bus contract for routes is written in

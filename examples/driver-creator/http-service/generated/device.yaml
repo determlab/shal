@@ -39,7 +39,7 @@ commands:
   description: Program the chamber's active temperature setpoint (absolute, in degrees
     Celsius). The conditioning system must be started for the chamber to drive the
     air toward this value.
-  side_effect: write
+  side_effect: actuator
   idempotent: false
   unit: celsius
   parameters:

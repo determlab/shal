@@ -19,8 +19,8 @@ and `NOTES.md`. The driver binds `compatible = "lumen,chamber-api"` with
 passed to `bus.exchange(addr, msg)` (the `shal,http` bus POSTs it to
 `<base>/<addr>`; the `shal,sim-msg` twin hands it to the model). It must
 implement `shal.TemperatureSensor` (`read_celsius()` from the status
-`temp_c`) plus local ops `set_temperature(celsius: float)` (a write with the
-documented safe envelope -40..180 declared as `params=` limits), `start()`,
+`temp_c`) plus local ops `set_temperature(celsius: float)` (an actuator: it
+drives a heater; the documented safe envelope -40..180 declared as `params=` limits), `start()`,
 `stop()`, and `read_status() -> dict` (the live status read). Do not read any
 SHAL source code and do not look inside `harness/`. Acceptance gate (run from
 the repo root, must be fully green, no skips):

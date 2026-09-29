@@ -16,12 +16,11 @@ reviewed: 2026-06-23
 
 ## Acceptance (the success oracle)
 - **liveness reads:** `get_state`, `get_volume` → live data (must raise on none).
-- **actuation:** `play` (or a small `set_volume` nudge) — **benign** (`side_effect="write"`).
+- **actuation:** `play` (or a small `set_volume` nudge) — an **actuator** (`side_effect="actuator"`).
 - **expected:** the read-back changes (e.g. `get_state` becomes `PLAYING`, or volume changes).
-- **gate:** **NOT gated** — benign media writes run free. This is correct, not a bypass;
-  Sonos validates the whole flow *except* the approve/deny hero (that's an actuator device's
-  job). Confirm the gate is present (`shal_approve`/`shal_deny` in the tool surface) and
-  simply does not fire for a `write`.
+- **gate:** **gated** — playback and volume ops must defer (`approval_required` +
+  `approval_id`, nothing sent). Do NOT self-approve; after the approver approves, confirm the
+  read-back.
 - **teardown:** restore the original transport state + volume (leave the speaker as found).
 
 ## Known gotchas (found in run 1)

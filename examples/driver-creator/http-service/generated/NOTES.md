@@ -31,7 +31,7 @@ names the SDK guide already documents — no internals inspected.
 - Ops (the four documented operations + the blessed read):
   - `read_celsius()` → `TemperatureSensor` capability, from status `temp_c`.
   - `read_status() -> dict` → `get_status`, read-only, idempotent.
-  - `set_temperature(celsius)` → `set_temperature`, write, limits −40..180.
+  - `set_temperature(celsius)` → `set_temperature`, actuator (drives a heater; gated), limits −40..180.
   - `start()` / `stop()` → physical actuator ops (compressor + heater).
 - Safe envelope: −40 °C..+180 °C (datasheet, encoded as `minimum`/`maximum` on
   `celsius` in the OpenAPI). Declared as `params={"celsius": {minimum, maximum}}`.
@@ -55,8 +55,8 @@ names the SDK guide already documents — no internals inspected.
     delivery-unknown command must reach the user, never be silently re-fired
     (SDK §5 retry contract). They carry `side_effect="actuator"`.
   - `set_temperature` → NOT idempotent. An absolute setpoint *could* be marked
-    idempotent per SDK §5, BUT it is a `side_effect="write"`, and conformance
-    requires write ops to produce an audit record. Empirically (conformance),
+    idempotent per SDK §5, BUT it is a `side_effect="actuator"`, and conformance
+    requires audited ops to produce an audit record. Empirically (conformance),
     marking it `@idempotent` routed it down the read/retry path and produced no
     audit record. Leaving it unmarked yields the mandated audit trail and the
     correct "delivery-unknown surfaced to the user" behavior. See SDK GAP below.
@@ -95,15 +95,15 @@ names the SDK guide already documents — no internals inspected.
 ## SDK / skill gap (verbatim finding)
 
 The SDK guide (§5) explicitly permits `@idempotent` on "absolute setpoints
-re-asserted", and (§7) requires write ops to "actually produce audit records".
-For an absolute setpoint write that is BOTH (`set_temperature`), these two
+re-asserted", and (§7) requires audited ops to "actually produce audit records".
+For an absolute setpoint op that is BOTH (`set_temperature`), these two
 statements pull in opposite directions: marking the op `@idempotent` while it is
-`side_effect="write"` caused conformance to report
-`set_temperature: write op produced no shal.audit record`. The guide does not
-state that `@idempotent` and audited-write are mutually exclusive, nor which to
+`side_effect="actuator"` caused conformance to report
+`set_temperature: actuator op produced no shal.audit record`. The guide does not
+state that `@idempotent` and an audited op are mutually exclusive, nor which to
 prefer. Resolution taken: drop `@idempotent` so the mandated audit trail is
 produced and the delivery-unknown setpoint is surfaced to the user (the safer
-reading of §5). A one-line clarification in §5/§7 — "an audited write op must not
+reading of §5). A one-line clarification in §5/§7 — "an audited op must not
 also be `@idempotent`; re-assert at the call site instead" — would remove the
 ambiguity. No core change was needed or made.
 
