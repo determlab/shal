@@ -77,7 +77,7 @@ write did not.
   does. `shal docs --sample <name> --to DIR` writes one into a new or empty folder and
   prints the one command that runs it. Samples are not references, and not in `--list`.
 - `shal mcp sim.yaml` — serve the same tools to an MCP host over stdio. Needs the
-  extra: `pip install "pyshal[mcp] @ git+https://github.com/determlab/shal"`.
+  extra: `pip install "pyshal[mcp]"`.
 - Python: `hal = shal.load("sim.yaml")`, then `hal.tool_schemas()` and
   `hal.call_tool("ambient_temp__read_celsius", {})` → `{'ok': True, 'result': 26.33}`.
 

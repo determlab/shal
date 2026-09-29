@@ -13,6 +13,9 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+### Fixed
+- `docs/CATALOG.md` and the README list every shipped `shal,*` compatible, including `shal,sim-psu`; a test fails when one ships without a catalog row; the agent docs' MCP install line is the quoted PyPI form `pip install "pyshal[mcp]"` (#273).
+
 ## [0.4.0] - 2026-09-29
 
 ### Added

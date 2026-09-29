@@ -526,10 +526,11 @@ hardware — swap in a real transport later, and your code doesn't change.
 - ✅ Declarative YAML topology: JSON-Schema validation, `id`/`path`/`$ref`,
   `${ENV}` secrets, reusable `template:` includes
 - ✅ Bundled buses: `sim-i2c`, `local`, `ssh-host`, `i2c-cli`, `spi-cli`,
-  `tcp` (TLS), `http`, and the mux mechanism (the `nxp,pca9548` chip itself is
-  an example, not a shipped driver)
+  `tcp` (TLS), `http`, `scpi-raw`, `sim-scpi`, `sim-msg`, and the mux mechanism
+  (the `nxp,pca9548` chip itself is an example, not a shipped driver)
 - ✅ Bundled devices: `shal,sim-sensor` — the simulated device the Quick Start
-  reads. No vendor part ships as a registered driver
+  reads — and `shal,sim-psu`, a simulated power supply on `shal,sim-scpi`. No
+  vendor part ships as a registered driver
 - ✅ Capability model, driver plugin registry, trustworthy retry policy
 - ✅ Agent tool surface: `tool_schemas()` / `tool_catalog()` / `call_tool()`
 - ✅ Human-in-the-loop actuation gate: actuator ops stop for an injectable
