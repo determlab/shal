@@ -39,6 +39,8 @@ gated tools: reads run free; **anything that moves or reconfigures stops for a p
 
 ### [→ Try it in 60 seconds — no hardware required](#quick-start)
 
+New here? [Start with the guide](docs/GUIDE.md) — from the simulator to a real rack.
+
 </div>
 
 **Built for:**
