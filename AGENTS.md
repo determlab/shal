@@ -84,7 +84,9 @@ write did not.
 `--json`: `shal probe`, `shal tools`, `shal docs --list`, `shal docs --samples`,
 `shal call`, `shal routes`, `shal check` and `shal records` take it. Each prints one JSON document on stdout; `--help` shows its shape. On an
 error the exit code is the same, the message is on stderr, and stdout holds
-`{"ok": false, "error": ...}`. `shal probe --json` lists the writes it did not run,
+`{"ok": false, "error": {"type": <short name>, "message": <text>, "fix": <the
+command or change that fixes it>}}` — the same object in every command, and `fix`
+is never empty. `shal probe --json` lists the writes it did not run,
 each with the `shal call` line that runs it.
 
 ## Side effects

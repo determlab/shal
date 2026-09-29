@@ -412,7 +412,10 @@ def test_json_error_mirrors_text_error(lab, argv):
     js = _run(*argv, "--json", cwd=lab)
     assert text.returncode == js.returncode == 1
     assert js.stderr == text.stderr and js.stderr.strip()
-    assert _doc(js) == {"ok": False, "error": text.stderr.rstrip("\n")}
+    doc = _doc(js)
+    assert doc["ok"] is False
+    assert doc["error"]["message"] == text.stderr.rstrip("\n")
+    assert doc["error"]["type"] and doc["error"]["fix"]
 
 
 @pytest.mark.parametrize("cmd", ["probe", "tools"])
@@ -421,8 +424,9 @@ def test_json_bad_topology_is_a_json_error(lab, cmd):
     assert r.returncode == 1  # the same exit as the text form's traceback
     doc = _doc(r)
     assert doc["ok"] is False
-    assert doc["error"].startswith(f"shal {cmd}: cannot load bad.yaml: LoadError: ")
-    assert "Traceback" not in r.stderr and doc["error"] in r.stderr
+    msg = doc["error"]["message"]
+    assert msg.startswith(f"shal {cmd}: cannot load bad.yaml: LoadError: ")
+    assert "Traceback" not in r.stderr and msg in r.stderr
 
 
 @pytest.mark.parametrize("route, says", [
@@ -437,7 +441,7 @@ def test_tools_json_bad_route_names_the_route_and_the_fix(lab, route, says):
     r = _run("tools", "routes.yaml", "--json", cwd=lab)
     assert r.returncode != 0
     doc = _doc(r)
-    assert doc["ok"] is False and says in doc["error"]
+    assert doc["ok"] is False and says in doc["error"]["message"]
 
 
 # -- shal tools --json --------------------------------------------------------------

@@ -151,8 +151,9 @@ def test_routes_unknown_device_is_exit_1_and_lists_the_devices(lab):
     r = _shal("routes", "t.yaml", "nope", "--json", cwd=lab)
     assert r.returncode == 1
     out = json.loads(r.stdout)
-    assert out["ok"] is False and "no device 'nope'" in out["error"]
-    assert "board" in out["error"] and out["error"] in r.stderr
+    msg = out["error"]["message"]
+    assert out["ok"] is False and "no device 'nope'" in msg
+    assert "board" in msg and msg in r.stderr and out["error"]["fix"]
 
 
 def test_routes_help_shows_the_json_shape(lab):
