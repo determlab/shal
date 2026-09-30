@@ -26,6 +26,7 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import importlib.metadata
 import json
 import os
 import re
@@ -413,17 +414,23 @@ class _CallCannotRun(Exception):
         self.routes = routes
 
 
-def _call_usage_error(parser: argparse.ArgumentParser, argv: list[str] | None = None):
-    """argparse exits 2 on a usage error; for `call`, 2 means a gate refusal. With
-    --json on the command line, stdout also holds ``{"ok": false, "error": ...}``."""
+def _usage_error(parser: argparse.ArgumentParser, cmd: str, code: int = 2,
+                 argv: list[str] | None = None):
+    """argparse's ``error`` hook for a subcommand with --json. Usage goes to stderr;
+    with --json on the command line, stdout also holds ``{"ok": false, "error": ...}``.
+    ``code`` is argparse's 2, except for `call`, where 2 means a gate refusal."""
     def error(message: str):
         parser.print_usage(sys.stderr)
-        print(f"shal call: {message}", file=sys.stderr)
+        print(f"shal {cmd}: {message}", file=sys.stderr)
         if "--json" in (sys.argv[1:] if argv is None else argv):
             _json_out({"ok": False, "error": _error_obj(
-                "UsageError", message, _help_fix("call"))})
-        raise SystemExit(_CALL_CANNOT_RUN)
+                "UsageError", message, _help_fix(cmd))})
+        raise SystemExit(code)
     return error
+
+
+def _call_usage_error(parser: argparse.ArgumentParser, argv: list[str] | None = None):
+    return _usage_error(parser, "call", _CALL_CANNOT_RUN, argv)
 
 
 def _find_call_tool(hal, node_key: str, op: str) -> tuple[str, object, object]:
@@ -963,7 +970,10 @@ def _cmd_docs(args) -> int:
     from importlib.resources import files
     if getattr(args, "json", False) and not (getattr(args, "list", False)
                                              or getattr(args, "samples", False)):
-        print("shal docs: --json works only with --list or --samples", file=sys.stderr)
+        msg = "--json works only with --list or --samples"
+        print(f"shal docs: {msg}", file=sys.stderr)
+        _json_out({"ok": False, "error": _error_obj(
+            "UsageError", msg, "add --list or --samples")})
         return 2
     if getattr(args, "to", None) is not None and not getattr(args, "sample", None):
         print("shal docs: --to works only with --sample <name>", file=sys.stderr)
@@ -996,6 +1006,8 @@ def main(argv: list[str] | None = None) -> int:
         description="Drive a SHAL topology — read it, list its tools, or serve it.",
         epilog="Add a device: run `shal docs` (the bundled guide)  |  "
                "Full SDK: run `shal docs --sdk`")
+    ap.add_argument("--version", action="version",
+                    version=f"shal {importlib.metadata.version('pyshal')}")
     sub = ap.add_subparsers(dest="cmd", required=True, metavar="<command>")
 
     p = sub.add_parser(
@@ -1271,10 +1283,16 @@ def main(argv: list[str] | None = None) -> int:
                    help="print the routes as JSON on stdout")
     r.set_defaults(func=_cmd_routes)
 
+    for cmd, sp in (("probe", p), ("tools", t), ("docs", d), ("check", c),
+                    ("records", rc), ("routes", r)):
+        sp.error = _usage_error(sp, cmd, 2, argv)
+
     args, extra = ap.parse_known_args(argv)
     if extra:  # parse_args would exit 2 here — for `call`, 2 is the gate's code
-        if args.cmd == "call":
-            k.error(f"unrecognized arguments: {' '.join(extra)}")
+        hooked = {"call": k, "probe": p, "tools": t, "docs": d, "check": c,
+                  "records": rc, "routes": r}
+        if args.cmd in hooked:
+            hooked[args.cmd].error(f"unrecognized arguments: {' '.join(extra)}")
         ap.error(f"unrecognized arguments: {' '.join(extra)}")
     return args.func(args)
 
