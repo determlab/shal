@@ -40,6 +40,7 @@ All notable changes to this project are documented here. The format follows
 - `error` in `--json` output is now always an object `{"type", "message", "fix"}`, never a string: `shal call`, `shal check`, `shal probe`, `shal tools`, `shal routes` now match `shal records`. `fix` is never empty. `shal call --json` on a node with no installed driver prints it too, with a `fix` that names how to install or register the driver (#279).
 
 ### Changed
+- A usage error with `--json` on `shal probe`, `tools`, `routes`, `check`, `records` and `docs` now prints `{"ok": false, "error": {"type": "UsageError", "message", "fix"}}` on stdout (exit codes unchanged); `shal --version` prints the installed version (#297).
 - **`model_for` on sim buses raises `LookupError` (was `KeyError`)** (#288).
 - **`read()` raises `RecordError` for a corrupt record file or a record under
   the wrong file name** (#287).

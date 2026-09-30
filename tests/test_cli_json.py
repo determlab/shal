@@ -531,5 +531,42 @@ def test_docs_list_json_shape(tmp_path):
 
 def test_docs_json_needs_list(tmp_path):
     r = _run("docs", "--json", cwd=tmp_path)
-    assert r.returncode == 2 and r.stdout == ""
+    assert r.returncode == 2
     assert "--json works only with --list" in r.stderr
+    err = json.loads(r.stdout)["error"]
+    assert err["fix"] == "add --list or --samples"
+
+
+@pytest.mark.parametrize("argv", [
+    ("probe", "--json"),
+    ("tools", "--json"),
+    ("routes", "--json"),
+    ("check", "--json"),
+    ("records", "--verdict", "bogus", "--json"),
+    ("docs", "--json"),
+], ids=["probe", "tools", "routes", "check", "records", "docs"])
+def test_usage_error_is_a_json_error_with_json(tmp_path, argv):
+    r = _run(*argv, cwd=tmp_path)
+    assert r.returncode == 2
+    doc = json.loads(r.stdout)
+    assert doc["ok"] is False
+    assert doc["error"]["type"] == "UsageError"
+    assert doc["error"]["fix"]
+
+
+def test_usage_error_without_json_keeps_stdout_empty(tmp_path):
+    r = _run("probe", cwd=tmp_path)
+    assert r.returncode == 2 and r.stdout == ""
+    assert "required" in r.stderr
+
+
+def test_unrecognized_argument_is_a_json_usage_error(tmp_path):
+    r = _run("tools", "x.yaml", "--bogus", "--json", cwd=tmp_path)
+    assert r.returncode == 2
+    assert json.loads(r.stdout)["error"]["type"] == "UsageError"
+
+
+def test_version_prints_the_installed_version(tmp_path):
+    r = _run("--version", cwd=tmp_path)
+    assert r.returncode == 0
+    assert re.match(r"^shal \d+\.\d+\.\d+", r.stdout)
