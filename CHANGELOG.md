@@ -27,6 +27,10 @@ All notable changes to this project are documented here. The format follows
   other actuator and ask for approval. Sonos reads stay `none`.
 
 ### Added
+- **`cause` on error steps in a record** (#301). An `error` step carries an
+  optional `cause`, `"transport"` for a `HopError`, so a reader can tell no
+  connection to the instrument from a failed check. Omitted when unset; older
+  records read as before, and `record_version` is unchanged.
 - **Routes M1 closes** (#238). The bus contract for routes is written in
   `SDK.md` and the `shal-build-bus` skill: `delivered="no"` only when nothing was
   sent, a timeout or a drop after send is `"unknown"`, and a driver must not
