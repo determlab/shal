@@ -137,6 +137,50 @@ def test_probe_json_named_read(lab):
     assert doc["reads"][0]["ok"] is True
 
 
+_DOWN_DRIVER = textwrap.dedent('''\
+    from shal import Driver, HopError, idempotent, op, register
+
+    @register
+    class Down(Driver):
+        compatible = "test,json-down"
+        kind = None
+        llm_ready = True
+
+        @idempotent
+        @op("A read whose link is dead.", side_effect="none")
+        def dead(self) -> int:
+            raise HopError("connect failed", path=self.node.path, hop="tcp",
+                           delivered="no")
+
+        @idempotent
+        @op("A read that fails.", side_effect="none")
+        def broken(self) -> int:
+            raise RuntimeError("check failed")
+    ''')
+
+
+def test_probe_json_unreachable_is_its_own_type_and_a_failing_read_is_not(tmp_path):
+    (tmp_path / "down_driver.py").write_text(_DOWN_DRIVER, encoding="utf-8")
+    (tmp_path / "down.yaml").write_text(
+        "shal_version: 1\nroot:\n  bus:\n    driver: shal,sim-i2c\n"
+        "    address: 192.0.2.9:5025\n    children:\n"
+        "      d: {id: d, driver: 'test,json-down', address: 1}\n", encoding="utf-8")
+    base = ("probe", "down.yaml")
+    flags = ("--drivers", "down_driver.py", "--json")
+    r = _run(*base, "d__dead", *flags, cwd=tmp_path)
+    assert r.returncode == 4, r.stderr
+    error = _doc(r)["error"]
+    assert set(error) == {"type", "message", "fix"} and error["fix"]
+    assert error["type"] == "Unreachable" and "192.0.2.9:5025" in error["message"]
+    r = _run(*base, "d__broken", *flags, cwd=tmp_path)  # a failing check: old code
+    assert r.returncode == 1, r.stderr
+    assert _doc(r)["error"]["type"] == "ReadFailed"
+    r = _run(*base, *flags, cwd=tmp_path)
+    assert r.returncode == 0, r.stderr
+    kinds = {x["op"]: x["error"]["type"] for x in _doc(r)["reads"]}
+    assert kinds == {"dead": "Unreachable", "broken": "ReadFailed"}
+
+
 def test_probe_json_run_with_carries_drivers(tmp_path):
     (tmp_path / "json_rig_driver.py").write_text(textwrap.dedent('''\
         from shal import Driver, idempotent, op, register
