@@ -79,6 +79,29 @@ def _help_fix(cmd: str) -> str:
 
 _READ_FIX = "check the device and its wiring, then run `shal probe --help`"
 
+# A HopError the bus raised before anything was sent (`delivered == "no"`) is "no
+# connection to the instrument", not "the check failed" (#300): its own error type
+# and, for `shal call`, its own exit code.
+_UNREACHABLE_FIX = ("check the cable, address or power of the instrument, then run "
+                    "the command again")
+
+
+def _unreachable(out: dict, node) -> dict | None:
+    """The `Unreachable` error object when `out` (a failed `call_tool` result) is a
+    link that never delivered; None for any other failure. The message names the
+    bus endpoint (host:port on a tcp bus) of each route that was tried."""
+    if out.get("ok") or out.get("delivered") != "no":
+        return None
+    from .log import redact_url
+    routes = node.routes or ([(node.parent.name, node.parent, node.address)]
+                             if node.parent is not None else [])
+    tried = [r for r in routes if r[0] == out.get("via")] or routes
+    ends = ", ".join(redact_url(str(bus.address)) for _, bus, _ in tried)
+    where = f" at {ends}" if ends else ""
+    return _error_obj("Unreachable",
+                      f"no connection to the instrument{where}: {out.get('error')}",
+                      _UNREACHABLE_FIX)
+
 
 def _load_fault(msg: str, cmd: str) -> dict:
     """The error object for a topology/driver load failure reported as a message."""
@@ -196,6 +219,9 @@ def _probe_json(args) -> int:
             entry = {"tool": d["name"], "device": f["device"], "op": f["op"]}
             try:
                 out = bridge.call(d["name"], {})
+                unreachable = _unreachable(out, hal._tool_index()[d["name"]][0])
+                if unreachable and picked:  # a named read: its own exit code, like call
+                    return _json_error(unreachable, _CALL_UNREACHABLE)
             except Exception as e:  # noqa: BLE001 - as the text snapshot: one bad read
                 if picked:  # a named read that raises exits 1 without --json too
                     return _json_error(_error_obj(
@@ -207,6 +233,8 @@ def _probe_json(args) -> int:
             else:
                 if out.get("ok"):
                     entry.update(ok=True, value=out.get("result"))
+                elif unreachable:
+                    entry.update(ok=False, error=unreachable)
                 else:
                     entry.update(ok=False, error=_error_obj(
                         "ReadFailed", str(out.get("error", out.get("message"))),
@@ -402,6 +430,7 @@ def _cmd_check(args) -> int:
 _CALL_FAILED = 1
 _CALL_REFUSED = 2
 _CALL_CANNOT_RUN = 3
+_CALL_UNREACHABLE = 4  # the link never delivered (a HopError, delivered="no")
 
 
 class _CallCannotRun(Exception):
@@ -605,6 +634,13 @@ def _cmd_call(args) -> int:
         hal.close()
     payload = {"ok": out["ok"], "tool": name, "device": device, "op": args.op,
                "side_effect": side_effect, **{k: v for k, v in out.items() if k != "ok"}}
+    unreachable = _unreachable(out, node)
+    if unreachable:
+        payload["error"] = unreachable
+        print(f"shal call: {device}.{args.op} failed: {unreachable['message']}",
+              file=sys.stderr)
+        emit(payload)
+        return _CALL_UNREACHABLE
     if not out["ok"]:
         kind = {"limits": "LimitsRejected", "approval": "ApprovalDenied"}.get(
             out.get("rejected"), "OpFailed")
@@ -1192,6 +1228,10 @@ def main(argv: list[str] | None = None) -> int:
                "      3 could not run (usage error, unknown device, op or route, bad\n"
                "        value, topology does not load) — not 2, so a refusal is never\n"
                "        mistaken for a mistake\n"
+               "      4 unreachable: no connection to the instrument, nothing was sent\n"
+               '        (error type "Unreachable"; its message names the bus address,\n'
+               "        host:port on a tcp bus) — not 1, so a dead link is never\n"
+               "        mistaken for a failing check\n"
                "\n"
                'errors: with --json every failure has "error": {"type": <short name>,\n'
                '  "message": <text>, "fix": <the command or change that fixes it>}.')

@@ -295,6 +295,7 @@ def test_a_limit_rejection_is_exit_1_with_the_violation(lab):
     assert r.returncode == 1
     out = json.loads(r.stdout)
     assert out["ok"] is False and out["rejected"] == "limits"
+    assert out["error"]["type"] == "LimitsRejected"  # a failing check is not Unreachable
     assert _marks(lab) == []
 
 
@@ -391,12 +392,14 @@ def test_agent_path_json_when_every_route_refuses_has_delivered_via_and_fix(tmp_
     lab = _two_route_lab(tmp_path, ["sim0", "sim1"])
     r = _shal("call", "t.yaml", "board", "read_celsius", "--json",
               "--drivers", "refusing.py", cwd=lab)
-    assert r.returncode == 1, r.stderr
+    assert r.returncode == 4, r.stderr  # nothing delivered: Unreachable (#300)
     out = json.loads(r.stdout)
     assert out["ok"] is False and out["delivered"] == "no" and out["via"] is None
-    assert out["error"]["message"] == ("/r1/board: no route delivered — r1 via /r1: simulated "
-                            "link drop before send; r2 via /r2: simulated link drop "
-                            "before send")
+    assert out["error"]["type"] == "Unreachable"
+    assert ("/r1/board: no route delivered — r1 via /r1: simulated "
+            "link drop before send; r2 via /r2: simulated link drop "
+            "before send") in out["error"]["message"]
+    assert "sim0, sim1" in out["error"]["message"]
     assert out["fix"] == 'check the wiring sheet for board, or pin a route: via="r1"'
 
 
@@ -422,7 +425,7 @@ def test_via_r2_down_fails_on_r2_and_never_tries_r1(tmp_path):
     lab = _two_route_lab(tmp_path, ["sim1"])
     r = _shal("call", "t.yaml", "board", "read_celsius", "--via", "r2", "--json",
               "--drivers", "refusing.py", cwd=lab)
-    assert r.returncode == 1, r.stderr
+    assert r.returncode == 4, r.stderr
     out = json.loads(r.stdout)
     assert out["ok"] is False and out["via"] == "r2" and out["delivered"] == "no"
     assert "via=r2" in out["error"]["message"]
@@ -449,3 +452,44 @@ def test_via_on_a_node_without_routes_takes_only_its_main_route(lab):
               "--json", cwd=lab)
     assert r.returncode == 3, r.stderr
     assert json.loads(r.stdout)["routes"] == ["bus"]
+
+
+# ---- an unreachable instrument is its own type and exit code (#300) ---------------------
+
+def _dead_link_lab(tmp_path):
+    """One sim sensor on a bus at a tcp-style address whose link never delivers."""
+    from tests.test_routes_policy import _REFUSING
+    (tmp_path / "refusing.py").write_text(_REFUSING, encoding="utf-8")
+    (tmp_path / "dead.yaml").write_text(
+        _SIM_YAML.replace("shal,sim-i2c", "test,refusing-i2c")
+                 .replace("address: sim0", "address: 192.0.2.7:5025"), encoding="utf-8")
+    return tmp_path
+
+
+def test_unreachable_call_is_type_unreachable_exit_4_with_host_port_and_fix(tmp_path):
+    lab = _dead_link_lab(tmp_path)
+    r = _shal("call", "dead.yaml", "ambient_temp", "read_celsius", "--json",
+              "--drivers", "refusing.py", cwd=lab)
+    assert r.returncode == 4, r.stderr
+    out = json.loads(r.stdout)
+    assert out["ok"] is False and out["delivered"] == "no"
+    assert set(out["error"]) == {"type", "message", "fix"}
+    assert out["error"]["type"] == "Unreachable"
+    assert "192.0.2.7:5025" in out["error"]["message"]
+    assert "cable" in out["error"]["fix"] and "address" in out["error"]["fix"]
+    assert "192.0.2.7:5025" in r.stderr
+
+
+def test_probe_json_names_the_unreachable_instrument(tmp_path):
+    lab = _dead_link_lab(tmp_path)
+    r = _shal("probe", "dead.yaml", "ambient_temp__read_celsius", "--json",
+              "--drivers", "refusing.py", cwd=lab)
+    assert r.returncode == 4, r.stderr
+    error = json.loads(r.stdout)["error"]
+    assert error["type"] == "Unreachable" and error["fix"]
+    assert "192.0.2.7:5025" in error["message"]
+    r = _shal("probe", "dead.yaml", "--json", "--drivers", "refusing.py", cwd=lab)
+    assert r.returncode == 0, r.stderr  # the whole probe still runs: per-read error
+    [read] = json.loads(r.stdout)["reads"]
+    assert read["ok"] is False and read["error"]["type"] == "Unreachable"
+    assert "192.0.2.7:5025" in read["error"]["message"]
