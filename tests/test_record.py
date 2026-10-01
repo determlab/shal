@@ -16,6 +16,7 @@ import yaml
 # `write(record, store)` and `read(store)`, and the DoD's "byte-identical from
 # both stores" cannot be shown through a reader that already applies the
 # YAML-wins rule. They stay underscored until the spec names a public pair.
+from shal.errors import HopError
 from shal.record import (
     RECORD_VERSION,
     Abort,
@@ -581,6 +582,51 @@ def test_a_record_copied_under_another_name_is_a_mismatch(tmp_path):
         read(tmp_path)
     assert "rec-b" in str(exc.value) and FULL.record in str(exc.value)
     assert FULL.unit not in str(exc.value)
+
+
+# --------------------------------------------------------------------------- #
+# #301: an error step says why it errored (`cause`)
+# --------------------------------------------------------------------------- #
+
+def test_a_hop_error_step_is_written_with_cause_transport(tmp_path):
+    boom = HopError("no connection", delivered="no")
+    rec = _with(steps=[Step.from_error("measure_vout", boom)])
+    write(rec, tmp_path)
+
+    on_disk = yaml.safe_load(yaml_path(tmp_path, rec.record).read_text(encoding="utf-8"))
+    assert on_disk["steps"][0]["cause"] == "transport"
+    assert json.loads(_db_json(tmp_path, rec.record))["steps"][0]["cause"] == "transport"
+    [got] = read(tmp_path)
+    assert got.steps[0].cause == "transport"
+    assert got.verdict == "error"
+
+
+def test_a_check_failure_has_no_transport_cause(tmp_path):
+    rec = _with(steps=[Step(name="ripple", verdict="fail"),
+                       Step.from_error("other", ValueError("bad"))])
+    write(rec, tmp_path)
+
+    on_disk = yaml.safe_load(yaml_path(tmp_path, rec.record).read_text(encoding="utf-8"))
+    assert all("cause" not in s for s in on_disk["steps"])
+    assert all(s.cause is None for s in read(tmp_path)[0].steps)
+
+
+def test_an_old_record_without_cause_still_reads(tmp_path):
+    doc = _with(steps=[Step(name="s", verdict="error")]).to_mapping()
+    assert "cause" not in doc["steps"][0]
+    _write_doc(tmp_path, doc)
+    [got] = read(tmp_path)
+    assert got.steps[0].cause is None
+
+
+def test_cause_is_for_error_steps_and_a_known_value_only(tmp_path):
+    with pytest.raises(RecordError):
+        Step(name="s", verdict="fail", cause="transport")
+    doc = _with(steps=[Step.from_error("s", HopError("x"))]).to_mapping()
+    doc["steps"][0]["cause"] = "gremlins"
+    _write_doc(tmp_path, doc)
+    with pytest.raises(RecordError, match="cause"):
+        read(tmp_path)
 
 
 # --------------------------------------------------------------------------- #

@@ -61,7 +61,7 @@ from typing import Any, Literal, overload
 
 import yaml
 
-from .errors import Error
+from .errors import Error, HopError
 
 # `record.md` §7 — the first field, so a reader knows what it holds. 2 since
 # #218 made `calls` optional, which a version-1 reader cannot read (#223).
@@ -79,11 +79,13 @@ StepVerdict = Literal["pass", "fail", "error"]
 # (`record.md` §2, #214).
 Runner = Literal["pytest", "bricks", "script"]
 AbortBy = Literal["predictor", "human"]
+Cause = Literal["transport"]
 
 _VERDICTS = frozenset(("pass", "fail", "error", "aborted"))
 _STEP_VERDICTS = frozenset(("pass", "fail", "error"))
 _RUNNERS = frozenset(("pytest", "bricks", "script"))
 _ABORT_BY = frozenset(("predictor", "human"))
+_CAUSES = frozenset(("transport",))
 
 # A record id becomes a file name (`records/<id>.yaml`), so it may not be able to
 # name anything but itself. Matches the spec's `rec-20260909T143022-8f1a2c`.
@@ -152,14 +154,36 @@ class Measurement:
 
 @dataclass(frozen=True, kw_only=True)
 class Step:
-    """One step of the sequence and every measurement it took."""
+    """One step of the sequence and every measurement it took.
+
+    `cause` (#301) says why an `error` step errored: `"transport"` when no
+    connection to the instrument could be made (a `HopError`), so a reader can
+    tell that from a failed check. Optional, omitted when unset, and only on an
+    `error` step. Added without a `record_version` bump: an older reader ignores
+    the key and every older record reads as `cause=None`.
+    """
 
     name: str
     verdict: StepVerdict
     measurements: tuple[Measurement, ...] = ()
+    cause: Cause | None = None
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "measurements", tuple(self.measurements))
+        if self.cause is not None and self.verdict != "error":
+            raise RecordError("a step cause belongs on an error step only")
+
+    @classmethod
+    def from_error(
+        cls, name: str, exc: BaseException, measurements: tuple[Measurement, ...] = ()
+    ) -> Step:
+        """An `error` step for `exc`: `cause="transport"` if it is a `HopError`."""
+        return cls(
+            name=name,
+            verdict="error",
+            measurements=measurements,
+            cause="transport" if isinstance(exc, HopError) else None,
+        )
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -307,11 +331,11 @@ class Record:
 
 
 def _step_to_mapping(step: Step) -> dict[str, Any]:
-    return {
-        "name": step.name,
-        "verdict": step.verdict,
-        "measurements": [_measurement_to_mapping(x) for x in step.measurements],
-    }
+    out: dict[str, Any] = {"name": step.name, "verdict": step.verdict}
+    if step.cause is not None:
+        out["cause"] = step.cause
+    out["measurements"] = [_measurement_to_mapping(x) for x in step.measurements]
+    return out
 
 
 def _measurement_to_mapping(m: Measurement) -> dict[str, Any]:
@@ -331,9 +355,14 @@ def _measurement_to_mapping(m: Measurement) -> dict[str, Any]:
 
 def _step_from_mapping(data: Any, source: str) -> Step:
     s = _as_mapping(data, "steps[]", source)
+    verdict = _enum(s, "verdict", _STEP_VERDICTS, source)
+    cause = None if s.get("cause") is None else _enum(s, "cause", _CAUSES, source)
+    if cause is not None and verdict != "error":
+        raise RecordError(f"{source}: 'cause' belongs on an error step only")
     return Step(
         name=_req(s, "name", str, source),
-        verdict=_enum(s, "verdict", _STEP_VERDICTS, source),
+        verdict=verdict,
+        cause=cause,
         measurements=tuple(
             _measurement_from_mapping(x, source) for x in _seq(s, "measurements", source)
         ),
