@@ -17,7 +17,8 @@ the same name. Look your device up, claim its name, then build it from the SDK
 > community. Only items marked ✅ exist today.
 >
 > **No vendor device driver ships registered** (D1, re-affirmed #110; #149). The
-> only registered devices are the simulated `shal,sim-sensor` and `shal,sim-psu`.
+> only registered devices are the simulated `shal,sim-sensor`, `shal,sim-psu` and
+> `shal,sim-dmm`.
 > A ✅ vendor device driver is either an **ADK reference** — shipped inside the Authoring Kit as guide
 > material, printed by `shal docs --example <name>` — or a **repo example** under
 > `examples/drivers/`. Either runs by naming its files with `--drivers` (D5).
@@ -426,6 +427,7 @@ your_package/
 
 | Device | `compatible` | Capability | Notes |
 |---|---|---|---|
+| Simulated DMM | `shal,sim-dmm` | DigitalMultimeter | ✅ registered; simulated DMM on `shal,sim-scpi`, reading a `shal,sim-psu` output (`config.probe`) |
 | Keysight 34461A | `keysight,34461a` | DigitalMultimeter | ✅ repo example (`examples/drivers/keysight_34461a`, no sim twin); 6½-digit bench standard |
 | Keysight 34470A | `keysight,34470a` | DigitalMultimeter | 7½-digit |
 | Keithley DMM6500 | `keithley,dmm6500` | DigitalMultimeter | touchscreen 6½ |
