@@ -1,0 +1,20 @@
+# A simulated SCPI rack: one programmable PSU, one DMM that reads its output
+# plus small measurement noise (shal,sim-dmm, #303). No hardware, no network.
+shal_version: 1
+root:
+  bench:
+    driver: shal,sim-scpi
+    address: sim0
+    children:
+      psu0:
+        id: psu
+        driver: shal,sim-psu
+        address: psu0
+        config:
+          load_ohms: 10
+      dmm0:
+        id: dmm
+        driver: shal,sim-dmm
+        address: dmm0
+        config:
+          probe: psu0

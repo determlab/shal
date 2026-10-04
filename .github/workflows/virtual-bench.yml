@@ -1,0 +1,63 @@
+name: Virtual bench demo
+
+# examples/demos/virtual-bench/ (issue #305, T8): the two README commands, run
+# daily from a clean venv against the wheel built from this commit — the
+# "install the built wheel, run both commands" half of the DoD.
+#
+# Not gated on push/pull_request, deliberately, the same reasoning as
+# quickstart-published.yml: this demo also needs pytest-shal (pinned to a
+# commit, not on PyPI — see the demo's README), a separate repo this one
+# doesn't control, so a transient failure fetching it would block an
+# unrelated PR rather than report on this repo's own code. The other half of
+# the DoD — the same two commands, with assertions on their output — is
+# tests/test_virtual_bench_demo.py, which already runs on every push/PR as
+# part of the normal `test` job's `pytest`.
+
+on:
+  # 12:07 UTC daily — off the hour, where GitHub's scheduler is least congested.
+  schedule:
+    - cron: "7 12 * * *"
+  workflow_dispatch:
+
+jobs:
+  virtual-bench:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Build the wheel from this commit
+        run: |
+          pip install build
+          python -m build --wheel
+      - name: Clean venv with the wheel, pytest and pytest-shal installed
+        shell: bash
+        run: |
+          python -m venv "${{ runner.temp }}/virtual-bench-venv"
+          VENV_PY="${{ runner.temp }}/virtual-bench-venv/${{ runner.os == 'Windows' && 'Scripts' || 'bin' }}/python"
+          "$VENV_PY" -m pip install "$(ls dist/*.whl)" pytest
+          # --no-deps: pytest-shal's own pin (pyshal<0.4) predates pyshal#217,
+          # which it actually needs and which this wheel has (see the demo's
+          # README) — the resolver warning this prints is expected.
+          "$VENV_PY" -m pip install --no-deps \
+            "pytest-shal @ git+https://github.com/determlab/pytest-shal@e240b07"
+      - name: README commands — pass run (exit 0), then --unplug dmm (exit 4)
+        shell: bash
+        run: |
+          VENV_PY="${{ runner.temp }}/virtual-bench-venv/${{ runner.os == 'Windows' && 'Scripts' || 'bin' }}/python"
+          cd examples/demos/virtual-bench
+          set +e
+          "$VENV_PY" run_bench.py
+          ec=$?
+          set -e
+          [ "$ec" -eq 0 ] || { echo "pass run exited $ec, expected 0"; exit 1; }
+          set +e
+          "$VENV_PY" run_bench.py --unplug dmm
+          ec=$?
+          set -e
+          [ "$ec" -eq 4 ] || { echo "--unplug run exited $ec, expected 4"; exit 1; }

@@ -1,0 +1,4 @@
+# This run's own output, not part of the repo (record.md: records.db + the
+# records/ YAML audit copy, written beside bench.yaml on every run).
+/records.db
+/records/
