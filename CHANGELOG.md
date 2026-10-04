@@ -27,6 +27,11 @@ All notable changes to this project are documented here. The format follows
   other actuator and ask for approval. Sonos reads stay `none`.
 
 ### Added
+- **`shal,sim-dmm`** (#303): a simulated bench DMM on `shal,sim-scpi`.
+  `config.probe` names a `shal,sim-psu` address on the same bus; `measure_voltage`
+  and `measure_current` read that PSU's own measurement (so `load_ohms` and
+  constant-current mode already apply), plus small seeded noise. Both ops are
+  reads (`side_effect="none"`); outside a `shal,sim-scpi` bus it is a `LoadError`.
 - **`cause` on error steps in a record** (#301). An `error` step carries an
   optional `cause`, `"transport"` for a `HopError`, so a reader can tell no
   connection to the instrument from a failed check. Omitted when unset; older
