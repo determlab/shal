@@ -112,6 +112,11 @@
         "watchdog_ms": { "type": "integer", "minimum": 1 },
         "verify": { "type": "boolean" },
         "insecure": { "type": "boolean" },
+        "fault": {
+          "type": "string",
+          "description": "Sim-only fault injection (issue #304): 'unplugged' makes every hop to this node raise a HopError(delivered=\"no\"), as if the real link were disconnected. The SHAL_SIM_UNPLUG=<node id> env var does the same for one node without editing the file. Ignored by non-sim drivers.",
+          "enum": ["unplugged"]
+        },
         "config": {
           "type": "object",
           "description": "Bus/driver-specific parameters. String values of the form ${ENV_VAR} resolve from the environment at load (the documented home for secrets); literals are the local-file convenience. The reserved `limits` key is installation safety policy consumed by the framework, never by the driver.",
