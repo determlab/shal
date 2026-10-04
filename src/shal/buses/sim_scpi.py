@@ -24,6 +24,7 @@ only (``side_effect="none"``); like the other two, it wraps no part.
 from __future__ import annotations
 
 import logging
+import os
 import random
 import re
 from collections.abc import Mapping
@@ -62,6 +63,8 @@ class SimScpiBus(Driver, Transport, MessageTransport):
         self._models: dict[Any, Any] = {}
         self._unmodeled: dict[Any, str] = {}   # declared children with no sim model
         self._devices: dict[Any, Node] = {}    # every declared child, keyed by address
+        self._unplugged: set[Any] = set()      # addresses faulted (#304): fault:
+        # unplugged or SHAL_SIM_UNPLUG=<id>, a refused connection, not a NAK
         self.fail_next: int = 0          # test hook: fail N next txns (delivered=no)
         self.fail_delivered_unknown = False  # test hook: ambiguous failure
         self.connect_count = 0
@@ -77,6 +80,7 @@ class SimScpiBus(Driver, Transport, MessageTransport):
 
     def activate(self) -> None:
         self.connect_count += 1
+        unplug_id = os.environ.get("SHAL_SIM_UNPLUG")
         for node in self.host.walk():
             if node is self.host:
                 continue
@@ -96,6 +100,9 @@ class SimScpiBus(Driver, Transport, MessageTransport):
                         self._models[node.address] = model
                 elif isinstance(comp, str):
                     self._unmodeled.setdefault(node.address, comp)
+                if node.spec.get("fault") == "unplugged" or (
+                        unplug_id is not None and node.id == unplug_id):
+                    self._unplugged.add(node.address)
         super().activate()
         self.log.debug("connect (%d instrument models)", len(self._models),
                        event="connect")
@@ -136,6 +143,12 @@ class SimScpiBus(Driver, Transport, MessageTransport):
                 raise HopError("simulated link drop before send",
                                path=self.host.path, hop="sim-scpi",
                                txn=current_txn.get(), delivered="no")
+            if addr in self._unplugged:
+                # redact_url: address is ${ENV}-resolved (#126); delivered="no" —
+                # refused exactly like a real disconnected link (#304)
+                raise HopError(f"no answer from the instrument at "
+                               f"{redact_url(str(addr))!r}", path=self.host.path,
+                               hop="sim-scpi", txn=current_txn.get(), delivered="no")
             model = self._models.get(addr)
             if model is None:
                 # redact_url: address is ${ENV}-resolved, so its content isn't
