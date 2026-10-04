@@ -50,7 +50,7 @@ def main(argv: list[str] | None = None) -> int:
 
     proc = subprocess.run(
         [sys.executable, "-m", "pytest", "test_bench.py",
-         "--shal-setup", "bench.yaml", "-q"],
+         "--shal-setup", "bench.yaml", "-q", "--tb=line"],
         cwd=HERE, env=env, capture_output=True, text=True,
     )
     sys.stderr.write(proc.stdout)
