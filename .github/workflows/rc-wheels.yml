@@ -1,0 +1,58 @@
+name: RC wheels
+
+# Builds the wheel(s) this repo would release, from main, on every push, and
+# saves them as workflow artifacts. Nothing is published anywhere (#339 D1).
+# This is step 1 of the release-candidate chain: a clean-machine run (#340)
+# installs only these artifacts, never an index, to prove what we'd actually
+# ship still works.
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Build pyshal
+        run: |
+          pip install build
+          python -m build --outdir dist-pyshal
+      - name: Build shal-arena
+        run: python -m build --outdir dist-shal-arena arena
+      - name: Write rc-manifest.json (pyshal)
+        run: |
+          python - <<'PY'
+          import glob, json, os
+          wheel = glob.glob("dist-pyshal/*.whl")[0]
+          version = os.path.basename(wheel).split("-")[1]
+          with open("dist-pyshal/rc-manifest.json", "w") as f:
+              json.dump({"package": "pyshal", "version": version, "sha": "${{ github.sha }}"}, f)
+          PY
+      - name: Write rc-manifest.json (shal-arena)
+        run: |
+          python - <<'PY'
+          import glob, json, os
+          wheel = glob.glob("dist-shal-arena/*.whl")[0]
+          version = os.path.basename(wheel).split("-")[1]
+          with open("dist-shal-arena/rc-manifest.json", "w") as f:
+              json.dump({"package": "shal-arena", "version": version, "sha": "${{ github.sha }}"}, f)
+          PY
+      - uses: actions/upload-artifact@v4
+        with:
+          name: rc-pyshal
+          path: dist-pyshal/
+          retention-days: 30
+      - uses: actions/upload-artifact@v4
+        with:
+          name: rc-shal-arena
+          path: dist-shal-arena/
+          retention-days: 30

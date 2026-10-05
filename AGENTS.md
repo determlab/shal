@@ -167,3 +167,6 @@ and a terminal run asks a person.
 - [RELEASING.md](RELEASING.md) — the two release paths: type A (a version-bump +
   changelog PR, anyone can open) and type B (tag + `gh release create`, founder
   only — the one step that publishes to PyPI).
+- `.github/workflows/rc-wheels.yml` builds pyshal and shal-arena from `main` on
+  every push as artifacts `rc-pyshal` / `rc-shal-arena`, each with a
+  `rc-manifest.json` (`package`, `version`, `sha`). Nothing is published.
