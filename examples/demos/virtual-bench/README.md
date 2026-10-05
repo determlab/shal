@@ -52,7 +52,7 @@ prints "no answer from the instrument at 'dmm0'", not a `check()` failure.
 
 | File | Role |
 |---|---|
-| `bench.yaml` | the rack: `shal,sim-scpi` bus, one `shal,sim-psu` (`psu`, capped at 24 V — `config.limits.set_voltage.volts.maximum`), one `shal,sim-dmm` (`dmm`) reading it |
+| `bench.yaml` | the rack: `shal,sim-scpi` bus, one `shal,sim-psu` (`psu`, capped at 3.6 V — the DUT's own abs max, `config.limits.set_voltage.volts.maximum`), one `shal,sim-dmm` (`dmm`) reading it |
 | `test_bench.py` | the pytest-shal test: sets 3.3 V, `check()`s the DMM reading within 2% |
 | `run_bench.py` | the one command: runs the test, prints one line of JSON, exits 0/1/3/4 |
 

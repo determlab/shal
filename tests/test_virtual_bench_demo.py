@@ -129,13 +129,16 @@ def test_unplug_dmm_gives_an_error_record_with_cause_transport_and_a_different_e
     assert all(s.cause == "transport" for s in error_steps)
 
 
-def test_30v_is_rejected_by_the_declared_limit() -> None:
-    """Issue #350: `bench.yaml`'s PSU declares a limit (`config.limits.set_voltage
-    .volts.maximum: 24.0`) tighter than the driver's own 0-30 V range, so a 30 V
-    request is rejected pre-I/O by the framework's Guard (src/shal/limits.py) —
-    before the approval gate even runs, so the rejected call itself needs no
-    approver. Nothing reaches the simulated instrument: a DMM read right after
-    still gives the healthy value set before the rejected call."""
+@pytest.mark.parametrize("volts", [5.0, 30.0])
+def test_above_the_declared_limit_is_rejected(volts: float) -> None:
+    """Issue #350 (CTO review, #359): `bench.yaml`'s PSU declares a limit
+    (`config.limits.set_voltage.volts.maximum: 3.6`) that is the fictional
+    DUT's own abs max, not the driver's 0-30 V range — so both a 5 V and a
+    30 V request exceed it and are rejected pre-I/O by the framework's Guard
+    (src/shal/limits.py), before the approval gate even runs, so the rejected
+    call itself needs no approver. Nothing reaches the simulated instrument: a
+    DMM read right after still gives the healthy value set before the
+    rejected call."""
     hal = shal.load(DEMO_DIR / "bench.yaml")
     psu = hal.get_device("psu")
     dmm = hal.get_device("dmm")
@@ -143,7 +146,7 @@ def test_30v_is_rejected_by_the_declared_limit() -> None:
         psu.set_voltage(TARGET_VOLTS)
 
     with pytest.raises(LimitError, match="nothing was sent"):
-        psu.set_voltage(30)
+        psu.set_voltage(volts)
 
     healthy = dmm.measure_voltage()
     assert healthy == pytest.approx(TARGET_VOLTS, rel=TOLERANCE)
