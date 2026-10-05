@@ -20,8 +20,11 @@ from __future__ import annotations
 import argparse
 import json
 import sys
+from pathlib import Path
 
 from .errors import ArenaError
+from .replay.card import build_result_card
+from .replay.rack import build_setup_yaml, render_rack_page
 from .runner import answer as _answer
 from .runner import check_instrument_driver, drive_input, start_run, take_measurement
 
@@ -118,6 +121,44 @@ def _cmd_answer(args: argparse.Namespace) -> int:
     return 0
 
 
+def _cmd_replay(args: argparse.Namespace) -> int:
+    try:
+        card_html = build_result_card(args.run_id, state_dir=args.state_dir)
+    except ArenaError as e:
+        return _report_error(e, args.json)
+    out_path = Path(args.out) if args.out else Path(args.state_dir) / f"{args.run_id}.card.html"
+    out_path.write_text(card_html, encoding="utf-8")
+    if args.json:
+        _json_out({"ok": True, "run_id": args.run_id, "card_path": str(out_path)})
+    else:
+        print(f"wrote {out_path}")
+    return 0
+
+
+def _cmd_rack(args: argparse.Namespace) -> int:
+    out_path = Path(args.out)
+    out_path.write_text(render_rack_page(), encoding="utf-8")
+    if args.json:
+        _json_out({"ok": True, "rack_path": str(out_path)})
+    else:
+        print(f"wrote {out_path}")
+    return 0
+
+
+def _cmd_setup_yaml(args: argparse.Namespace) -> int:
+    try:
+        doc = build_setup_yaml(args.cases)
+    except ArenaError as e:
+        return _report_error(e, args.json)
+    if args.out:
+        Path(args.out).write_text(doc, encoding="utf-8")
+    if args.json:
+        _json_out({"ok": True, "setup_yaml": doc})
+    else:
+        print(doc, end="")
+    return 0
+
+
 def _build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="shal-arena",
                                      description="SHAL Arena: run a task, check a driver, "
@@ -168,6 +209,32 @@ def _build_parser() -> argparse.ArgumentParser:
     p_answer.add_argument("value", help="your answer (one of the card's fault ids, or 'ok')")
     add_common(p_answer)
     p_answer.set_defaults(func=_cmd_answer)
+
+    p_replay = sub.add_parser(
+        "replay",
+        help="write the offline result card for a closed run (issue #315 Agent path)")
+    p_replay.add_argument("run_id")
+    p_replay.add_argument("--out", default=None, metavar="PATH",
+                          help="where to write the card html (default: "
+                               "<state-dir>/<run_id>.card.html)")
+    add_common(p_replay)
+    p_replay.set_defaults(func=_cmd_replay)
+
+    p_rack = sub.add_parser(
+        "rack", help="write the rack page: drag instrument tiles to build a setup.yaml")
+    p_rack.add_argument("--out", default="rack.html", metavar="PATH")
+    add_common(p_rack)
+    p_rack.set_defaults(func=_cmd_rack)
+
+    p_setup = sub.add_parser(
+        "setup-yaml",
+        help="the rack page's own mechanism, without the page: build a setup.yaml "
+             "from one or more case names")
+    p_setup.add_argument("cases", nargs="+", help="case names, e.g. scpi-psu dmm")
+    p_setup.add_argument("--out", default=None, metavar="PATH",
+                         help="also write the result to this path")
+    add_common(p_setup)
+    p_setup.set_defaults(func=_cmd_setup_yaml)
 
     return parser
 
