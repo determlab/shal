@@ -121,3 +121,23 @@ class SimLog:
         record) — informational; not what disqualification checks."""
         return any(e["kind"] == "query" and e["address"] == str(address)
                    for e in self.entries())
+
+    def mark_damage(self, address: str, *, input: str, effect: str, above_v: float,
+                    source: str) -> None:
+        """A card's damage-state transition, in the same JSON-lines shape as
+        every other entry in this file (issue #313 Scope: "damage is written
+        to the sim log (same format as other commands)"). Written by
+        `card_sim.SimCard` only on a NEW transition (`card_sim.DamageModel.
+        apply` returning a `DamageEvent`), never on every call — same
+        discipline as `mark_measured`: one line per real event."""
+        self.path.parent.mkdir(parents=True, exist_ok=True)
+        entry = {"ts": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+                 "address": address, "kind": "damage", "input": input,
+                 "effect": effect, "above_v": above_v, "source": source}
+        with self.path.open("a", encoding="utf-8") as f:
+            f.write(json.dumps(entry) + "\n")
+
+    def has_damage(self, address: str) -> bool:
+        """A damage-state transition was logged at ``address``."""
+        return any(e["kind"] == "damage" and e["address"] == str(address)
+                   for e in self.entries())
