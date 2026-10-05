@@ -1,9 +1,11 @@
 """``shal-arena`` — the CLI front door for SHAL Arena (issue #310; the
-``check-driver`` command is issue #311's Agent path; ``measure`` is #312's).
+``check-driver`` command is issue #311's Agent path; ``measure`` is #312's;
+``drive`` is #313's).
 
     shal-arena run tasks/rail-3v3.yaml --json
     shal-arena check-driver <run-id> psu0 ./driver.py --json
     shal-arena measure <run-id> dmm0 ./driver.py --json
+    shal-arena drive <run-id> psu0 6.5 --json
     shal-arena answer <run-id> low_voltage --json
 
 Non-interactive by design: no prompt ever blocks a command, so an agent can
@@ -21,7 +23,7 @@ import sys
 
 from .errors import ArenaError
 from .runner import answer as _answer
-from .runner import check_instrument_driver, start_run, take_measurement
+from .runner import check_instrument_driver, drive_input, start_run, take_measurement
 
 
 def _json_out(payload: dict) -> None:
@@ -86,6 +88,21 @@ def _cmd_measure(args: argparse.Namespace) -> int:
     return 0
 
 
+def _cmd_drive(args: argparse.Namespace) -> int:
+    try:
+        result = drive_input(args.run_id, args.instrument, args.volts, state_dir=args.state_dir)
+    except ArenaError as e:
+        return _report_error(e, args.json)
+    if args.json:
+        _json_out(result)
+    else:
+        print(f"{args.instrument}: {result['input']} -> {result['volts']} V; card is "
+              f"{result['state']}")
+        if result.get("rejected"):
+            print(f"  rejected: {result['rejected']}")
+    return 0
+
+
 def _cmd_answer(args: argparse.Namespace) -> int:
     try:
         result = _answer(args.run_id, args.value, state_dir=args.state_dir)
@@ -136,6 +153,15 @@ def _build_parser() -> argparse.ArgumentParser:
     p_measure.add_argument("manifest", help="path to your driver.py")
     add_common(p_measure)
     p_measure.set_defaults(func=_cmd_measure)
+
+    p_drive = sub.add_parser(
+        "drive",
+        help="apply a voltage to the card input this instrument drives (issue #313 Agent path)")
+    p_drive.add_argument("run_id")
+    p_drive.add_argument("instrument", help="the instrument address from `run`'s output")
+    p_drive.add_argument("volts", type=float)
+    add_common(p_drive)
+    p_drive.set_defaults(func=_cmd_drive)
 
     p_answer = sub.add_parser("answer", help="answer the question and close the run")
     p_answer.add_argument("run_id")

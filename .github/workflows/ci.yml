@@ -78,6 +78,12 @@ jobs:
         run: |
           pip install -e .
           pip install -e "./arena[dev]"
+          # separate from the dev extra on purpose, same reasoning as this
+          # workflow's own `packaging`/`build` jobs: test_packaging.py builds
+          # a real wheel (issue #313 CTO review — package-data only showed up
+          # missing there, never from this job's own editable install) and
+          # needs the `build` frontend to do it.
+          pip install build
       - name: Lint
         run: ruff check arena/src arena/tests
       - name: Test

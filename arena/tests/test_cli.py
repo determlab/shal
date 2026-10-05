@@ -68,6 +68,30 @@ def test_run_check_answer_roundtrip_via_cli(tmp_path: Path) -> None:
     assert json.loads(answer_proc.stdout)["correct"] is True
 
 
+def test_drive_cli_shows_state_change_in_json_and_sim_log(tmp_path: Path) -> None:
+    """issue #313 Agent path, CTO review on #323: an agent reaches
+    `CardSim.state`/`apply_input` through the `shal-arena` CLI alone, no
+    Python import — the run's --json output shows the card's state change,
+    and the same change lands in the run's sim log."""
+    state_dir = tmp_path / "state"
+
+    run_proc = _run_cli("run", str(SAMPLE_TASK), "--state-dir", str(state_dir), "--json")
+    assert run_proc.returncode == 0, run_proc.stderr
+    run_id = json.loads(run_proc.stdout)["run_id"]
+
+    # buck-5v-3v3.yaml: vin is destroyed above 6.0 V.
+    drive_proc = _run_cli("drive", run_id, "psu0", "6.5", "--state-dir", str(state_dir), "--json")
+    assert drive_proc.returncode == 0, drive_proc.stderr
+    drive_doc = json.loads(drive_proc.stdout)
+    assert drive_doc["ok"] is True
+    assert drive_doc["side_effect"] == "write"
+    assert drive_doc["state"] == "damage"
+
+    sim_log_path = RunStore(state_dir).sim_log_path(run_id)
+    lines = [json.loads(ln) for ln in sim_log_path.read_text(encoding="utf-8").splitlines()]
+    assert any(ln["kind"] == "damage" and ln["address"] == "psu0" for ln in lines), lines
+
+
 def test_check_reports_exit_1_when_driver_has_problems(tmp_path: Path) -> None:
     from .conftest import FAILING_DRIVER
     state_dir = tmp_path / "state"
