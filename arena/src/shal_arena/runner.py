@@ -150,6 +150,7 @@ def drive_input(run_id: str, address: str, volts: float, *,
     input_name = instrument.drives.removeprefix("card.")
 
     card_sim = _load_card_sim(loaded, state, store, run_id)
+    SimLog(store.sim_log_path(run_id)).log_command(str(address), f"VOLT {volts}")
     result = card_sim.apply_input(input_name, volts, address=str(address))
     store.set_card_state(run_id, applied=card_sim.applied, destroyed=card_sim.destroyed)
     return {"run_id": run_id, "address": instrument.address, **result.as_dict()}

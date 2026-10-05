@@ -103,6 +103,17 @@ class SimLog:
         with self.path.open("a", encoding="utf-8") as f:
             f.write(json.dumps(entry) + "\n")
 
+    def log_command(self, address: str, cmd: str) -> None:
+        """One SCPI command received at ``address``, in the same shape the
+        bus recorder writes (issue #314: `drive` and the raw side reach the
+        card without the sim bus, so they log the command here)."""
+        self.path.parent.mkdir(parents=True, exist_ok=True)
+        entry = {"ts": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+                 "address": address, "kind": "query" if cmd.strip().endswith("?") else "write",
+                 "cmd": cmd}
+        with self.path.open("a", encoding="utf-8") as f:
+            f.write(json.dumps(entry) + "\n")
+
     def entries(self) -> list[dict[str, Any]]:
         if not self.path.is_file():
             return []

@@ -118,6 +118,23 @@ def _cmd_answer(args: argparse.Namespace) -> int:
     return 0
 
 
+def _cmd_bench(args: argparse.Namespace) -> int:
+    from .bench import load_agent, run_bench
+    try:
+        result = run_bench(args.task, load_agent(args.agent), runs=args.runs, seed=args.seed,
+                           state_dir=args.state_dir)
+    except ArenaError as e:
+        return _report_error(e, args.json)
+    if args.json:
+        _json_out(result)
+    else:
+        for side, s in result["sides"].items():
+            t = s["turns"]
+            print(f"{side}: turns median {t['median']} (range {t['min']}-{t['max']}), "
+                  f"success {s['success_rate']:.0%}, destroyed {s['destroyed']}")
+    return 0
+
+
 def _build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="shal-arena",
                                      description="SHAL Arena: run a task, check a driver, "
@@ -168,6 +185,16 @@ def _build_parser() -> argparse.ArgumentParser:
     p_answer.add_argument("value", help="your answer (one of the card's fault ids, or 'ok')")
     add_common(p_answer)
     p_answer.set_defaults(func=_cmd_answer)
+
+    p_bench = sub.add_parser(
+        "bench", help="run the same task with and without SHAL, N runs per side (issue #314)")
+    p_bench.add_argument("task", help="path to the task.yaml")
+    p_bench.add_argument("--agent", required=True, metavar="MODULE:ATTR",
+                         help="the agent callable, e.g. my_agent:run or ./agent.py:run")
+    p_bench.add_argument("--runs", type=int, default=10, help="runs per side (minimum 10)")
+    p_bench.add_argument("--seed", type=int, default=None, help="override the task's seed")
+    add_common(p_bench)
+    p_bench.set_defaults(func=_cmd_bench)
 
     return parser
 
