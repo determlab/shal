@@ -206,14 +206,20 @@ def take_measurement(run_id: str, address: str, driver_path: str | Path, *,
     fault-wired one), and calls its one zero-argument read op through that
     bound driver, exactly once.
 
-    A successful exchange is what lands in the sim log — the bus's own
-    structured record, captured the same way for every fault, every time
-    (`simlog.SimLog`). A failed one (the instrument is unreachable — the
+    Right before that call, a neutral ``measure`` marker is written to the
+    sim log (``SimLog.mark_measured``) — same shape whatever happens next,
+    so its presence is what `answer`'s disqualification check counts (CTO
+    review on #322, round 2: checking for a successful ``query`` instead
+    meant the `open` fault, unreachable by construction, could never be
+    logged as measured, so a correctly-reasoned `open` answer was always
+    disqualified). A successful exchange also lands its own ``query`` in the
+    log, same as always. A failed one (the instrument is unreachable — the
     `open` fault, extending `fault: unplugged` — or a bug in the driver)
     raises `MeasurementFailed` with whatever the real exception says: a live
     answer to THIS call, reported to whoever just made it, never written to
-    the sim log or any other file (Scope: "never written to a file the
-    player or agent can read")."""
+    the sim log or any other file beyond that one neutral marker (Scope:
+    "never written to a file the player or agent can read" — a marker that
+    is identical for every outcome names nothing)."""
     from shal import registry
     from shal.hal import load as _load
 
@@ -254,6 +260,7 @@ def take_measurement(run_id: str, address: str, driver_path: str | Path, *,
                     f"{case.name}: its own harness binds no node to {case.compatible!r}",
                     fix="this is a packaged case's harness, not your driver.py — "
                         "if you see this, file a shal-arena issue")
+            sim_log.mark_measured(str(address))
             reading = getattr(node.driver, read_op)()
     except CheckCouldNotRun:
         raise
@@ -264,7 +271,7 @@ def take_measurement(run_id: str, address: str, driver_path: str | Path, *,
                 "check your driver.py's handling of the case's SCPI dialect") from e
     return {
         "ok": True,
-        "side_effect": "none",
+        "side_effect": "write",
         "run_id": run_id,
         "address": instrument.address,
         "case": instrument.case,
@@ -278,10 +285,10 @@ def answer(run_id: str, value: str, *, state_dir: str | Path = DEFAULT_STATE_DIR
     """Close the run: compare ``value`` against the hidden fault and write the
     record (issue #310 Scope: "takes the answer; writes the run record").
 
-    issue #312 adds: ``disqualified`` (true when the sim log has no logged
-    ``query`` at any probe instrument's address: the player never took a
-    measurement — via `take_measurement` — this answer could be based on)
-    and ``score`` (the 13-field score file, also written to
+    issue #312 adds: ``disqualified`` (true when the sim log has no ``measure``
+    marker at any probe instrument's address: the player never called
+    `take_measurement` for one — regardless of whether that call's read then
+    succeeded) and ``score`` (the 13-field score file, also written to
     ``<run_id>.score.json``). Neither changes ``record``/``correct`` itself —
     every existing caller of `answer` keeps seeing exactly what it always
     returned, under the same keys."""
@@ -300,7 +307,7 @@ def answer(run_id: str, value: str, *, state_dir: str | Path = DEFAULT_STATE_DIR
     sim_log = SimLog(store.sim_log_path(run_id))
     probe_addresses = [str(i.address) for i in loaded.task.instruments if i.probe is not None]
     disqualified = bool(probe_addresses) and not any(
-        sim_log.has_query(addr) for addr in probe_addresses)
+        sim_log.has_measure(addr) for addr in probe_addresses)
     score = build_score(task_id=loaded.task.id, seed=state.seed, fault_id=fault_id,
                         given=value, correct=record["correct"], disqualified=disqualified,
                         created_at=state.created_at, closed_at=record["closed_at"],

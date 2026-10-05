@@ -67,16 +67,20 @@ Issue #312 adds the rest of what it takes to actually score a run:
   your driver (every player runs it, pass or fail, to light the tile); it
   never touches the sim log. `shal-arena measure` is the deliberate act of
   taking a reading through your bound driver, and is the only thing that
-  writes to the sim log: a successful read appends a `query` entry (same
+  writes to the sim log. Right before the read, it writes one neutral
+  `measure` entry (address and time, nothing else — identical whatever
+  happens next); a successful read also appends its own `query` entry (same
   format whether it came from the CLI, MCP, or Python — captured at `shal`'s
-  own structured bus log); an unreachable instrument (or a driver bug)
-  raises `MeasurementFailed` live, to you, and writes nothing anywhere — a
-  file naming *how* a read failed would, in practice, name the `open` fault,
-  since nothing else makes a correct driver fail to read.
-- **Disqualification.** `shal-arena answer` refuses to credit a measurement
-  that never happened: an answer with no logged `query` at any probe
-  instrument's address comes back `"disqualified": true` — whether that's
-  because you never called `measure`, or because your one call to it raised.
+  own structured bus log). An unreachable instrument (or a driver bug)
+  raises `MeasurementFailed` live, to you, after that `measure` entry is
+  already written — a file naming *how* a read failed would, in practice,
+  name the `open` fault, since nothing else makes a correct driver fail to
+  read, so nothing about the failure itself is ever written down.
+- **Disqualification.** `shal-arena answer` refuses to credit an answer with
+  no `measure` entry at any probe instrument's address: `"disqualified":
+  true` means you never called `measure` for one, full stop — not whether
+  the read that followed succeeded, so a fault like `open`, unreachable by
+  design, can still be answered correctly and counted.
 - **Score file.** `shal-arena answer` also writes `<run_id>.score.json`
   (13 fields — `task_id`, `seed`, `fault_type`, `faults_total`,
   `faults_caught`, `false_fails`, `error_fail_correct`, `duration_s`,

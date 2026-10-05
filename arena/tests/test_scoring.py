@@ -139,6 +139,18 @@ def test_answer_after_a_measurement_is_not_disqualified(tmp_path: Path) -> None:
     assert out["disqualified"] is False
 
 
+def test_take_measurement_side_effect_is_write(tmp_path: Path) -> None:
+    """CTO review on #322, round 2: it writes the sim log and bumps the turn
+    count, so it is not a bare read — `side_effect` must say `"write"`."""
+    state_dir = tmp_path / "state"
+    result = start_run(SAMPLE_TASK, state_dir=state_dir)
+    run_id = result["run_id"]
+
+    out = take_measurement(run_id, "dmm0", PASSING_DMM_DRIVER, state_dir=state_dir)
+
+    assert out["side_effect"] == "write"
+
+
 def test_score_file_validates_and_ties_to_the_record(tmp_path: Path) -> None:
     state_dir = tmp_path / "state"
     result = start_run(SAMPLE_TASK, state_dir=state_dir)
@@ -206,17 +218,16 @@ def test_correct_ok_answer_is_not_counted_as_a_caught_fault(tmp_path: Path) -> N
     assert out["score"]["false_fails"] == 0
 
 
-def test_open_fault_fails_the_measurement_and_leaves_the_run_disqualified(
-        tmp_path: Path) -> None:
+def test_open_fault_measurement_fails_but_still_counts_as_measured(tmp_path: Path) -> None:
     """The `open` fault makes the instrument genuinely unreachable
     (`fault.harness_for_run` extends `fault: unplugged`). `take_measurement`
-    reports that live, to the player, as `MeasurementFailed` — and writes
-    nothing to the sim log (CTO review on #322: any entry distinguishing
-    "this one raised" from "this one didn't" would, in practice, name the
-    `open` fault, since a correct driver only ever fails to read because of
-    it). The player can still reason from the live error to answer `open`
-    correctly; the run is `disqualified` either way, for want of a logged
-    reading — same rule applied uniformly, not relaxed for this one fault."""
+    reports that live, to the player, as `MeasurementFailed` — but it still
+    writes the one neutral ``measure`` marker to the sim log BEFORE the read
+    (CTO review on #322, round 2): disqualification checks for that marker,
+    not for a successful ``query``, precisely so a fault that makes every
+    read fail by design doesn't also make it impossible to ever be credited
+    for a correct answer. The marker is identical whether the read that
+    follows succeeds or raises, so its presence alone names nothing."""
     state_dir = tmp_path / "state"
     seed = _seed_for("open")
     result = start_run(SAMPLE_TASK, seed=seed, state_dir=state_dir)
@@ -231,6 +242,6 @@ def test_open_fault_fails_the_measurement_and_leaves_the_run_disqualified(
     out = answer(run_id, "open", state_dir=state_dir)
 
     assert out["correct"] is True
-    assert out["disqualified"] is True
-    assert out["score"]["faults_caught"] == 0
-    assert out["score"]["error_fail_correct"] == 0
+    assert out["disqualified"] is False
+    assert out["score"]["faults_caught"] == 1
+    assert out["score"]["error_fail_correct"] == 1

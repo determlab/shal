@@ -11,17 +11,20 @@ the player's surface, not inside it, so nothing the player does (CLI flag,
 MCP host, raw Python) can change its shape.
 
 "An answer with no matching measurement in the log is disqualified"
-(`runner.answer`) reads this log back for at least one ``query`` at a probe
-instrument's address — proof the player actually measured, not just typed an
-answer. The log carries ONLY what the bus's own structured record produces:
-a successful exchange logs ``query``/``write`` as always; a failed one (the
-`open` fault, or a driver bug) logs nothing at all here (CTO review on #322:
-an earlier version wrote a fixed ``"attempt"``/``"unreachable"`` entry for
-every failure, and since a correct driver only ever fails to read on the
-`open` fault, that entry — regardless of its exact wording — named the fault
-as surely as writing its id would have). A failed measurement is reported
-live to whoever just tried it (`runner.take_measurement`'s own return value
-or raised error), never written here.
+(`runner.answer`) reads this log back for a ``measure`` entry at a probe
+instrument's address — proof the player made the attempt, not just typed an
+answer. ``measure`` is written by `mark_measured`, unconditionally, BEFORE
+the read — the one deliberately neutral entry in this file: same shape
+whether the read that follows succeeds or raises, so its presence alone
+never tells anyone which fault is active (CTO review on #322, round 2: an
+earlier version disqualified on a missing ``query`` instead, which meant the
+`open` fault — unreachable by construction — could never be logged as
+measured, so a correctly-reasoned `open` answer was always disqualified).
+
+The bus's own structured record is still captured on top of that, the same
+way it always has (``query``/``write`` on a successful exchange, nothing on
+a failed one — issue #10's own logging, not anything built for this file):
+useful detail, but no longer what disqualification itself checks.
 """
 from __future__ import annotations
 
@@ -85,14 +88,36 @@ class SimLog:
             logger.removeHandler(handler)
             logger.setLevel(prev_level)
 
+    def mark_measured(self, address: str) -> None:
+        """A neutral marker that a measurement was attempted at ``address``
+        — written BEFORE the read, regardless of what the read then does.
+        No result, no error, nothing fault-specific: just that the attempt
+        happened and when. This is what `answer`'s disqualification check
+        looks for (CTO review on #322, round 2) — not whether the read
+        itself succeeded, which `has_query` still tells you, for anyone who
+        wants it, but which must not gate credit for a correct answer to a
+        fault that makes every read fail by design (`open`)."""
+        self.path.parent.mkdir(parents=True, exist_ok=True)
+        entry = {"ts": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+                 "address": address, "kind": "measure"}
+        with self.path.open("a", encoding="utf-8") as f:
+            f.write(json.dumps(entry) + "\n")
+
     def entries(self) -> list[dict[str, Any]]:
         if not self.path.is_file():
             return []
         return [json.loads(line) for line in
                 self.path.read_text(encoding="utf-8").splitlines() if line.strip()]
 
+    def has_measure(self, address: str) -> bool:
+        """A measurement was attempted at ``address`` — what `answer`'s
+        disqualification check counts, regardless of whether the read that
+        followed succeeded."""
+        return any(e["kind"] == "measure" and e["address"] == str(address)
+                   for e in self.entries())
+
     def has_query(self, address: str) -> bool:
-        """A genuine, successful reading at ``address`` — the only thing
-        `answer`'s disqualification check counts as a measurement."""
+        """A genuine, successful reading at ``address`` (the bus's own
+        record) — informational; not what disqualification checks."""
         return any(e["kind"] == "query" and e["address"] == str(address)
                    for e in self.entries())
