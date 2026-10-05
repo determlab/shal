@@ -35,8 +35,8 @@ where = ["src"]
 
 [tool.setuptools.package-data]
 shal_arena = [
-    "cases/*/docs/*",
-    "cases/*/harness/*",
+    "adk/*/docs/*",
+    "adk/*/harness/*",
     "tasks/*.yaml",
     "cards/*.yaml",
 ]
