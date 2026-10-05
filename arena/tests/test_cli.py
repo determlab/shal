@@ -69,10 +69,14 @@ def test_run_check_answer_roundtrip_via_cli(tmp_path: Path) -> None:
 
 
 def test_drive_cli_shows_state_change_in_json_and_sim_log(tmp_path: Path) -> None:
-    """issue #313 Agent path, CTO review on #323: an agent reaches
+    """issue #313 Agent path, CTO review on #323 and #330: an agent reaches
     `CardSim.state`/`apply_input` through the `shal-arena` CLI alone, no
-    Python import — the run's --json output shows the card's state change,
-    and the same change lands in the run's sim log."""
+    Python import. 6.5 V on `vin` (destroyed above 6.0 V) is a damage limit,
+    so the SHAL-side gate (issue #330) refuses it, exit 0, nothing applied;
+    the same voltage over `raw_scpi` (no gate) destroys the card instead,
+    and that lands in the run's sim log."""
+    from shal_arena.runner import raw_scpi
+
     state_dir = tmp_path / "state"
 
     run_proc = _run_cli("run", str(SAMPLE_TASK), "--state-dir", str(state_dir), "--json")
@@ -83,11 +87,20 @@ def test_drive_cli_shows_state_change_in_json_and_sim_log(tmp_path: Path) -> Non
     drive_proc = _run_cli("drive", run_id, "psu0", "6.5", "--state-dir", str(state_dir), "--json")
     assert drive_proc.returncode == 0, drive_proc.stderr
     drive_doc = json.loads(drive_proc.stdout)
-    assert drive_doc["ok"] is True
+    assert drive_doc["ok"] is False
+    assert drive_doc["sent"] is False
+    assert drive_doc["rejected"] == "approval"
     assert drive_doc["side_effect"] == "write"
-    assert drive_doc["state"] == "damage"
+    assert drive_doc["state"] == "ok"
+    assert drive_doc["fix"]
 
     sim_log_path = RunStore(state_dir).sim_log_path(run_id)
+    lines = [json.loads(ln) for ln in sim_log_path.read_text(encoding="utf-8").splitlines()]
+    assert any(ln["kind"] == "refused" and ln["address"] == "psu0" for ln in lines), lines
+    assert not any(ln["kind"] == "damage" for ln in lines), lines
+
+    # the destroy path: raw_scpi has no gate (issue #314/#330).
+    raw_scpi(run_id, "psu0", "VOLT 6.5", state_dir=state_dir)
     lines = [json.loads(ln) for ln in sim_log_path.read_text(encoding="utf-8").splitlines()]
     assert any(ln["kind"] == "damage" and ln["address"] == "psu0" for ln in lines), lines
 

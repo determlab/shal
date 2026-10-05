@@ -130,6 +130,13 @@ def _load_card_sim(loaded: LoadedTask, state: RunState, store: RunStore, run_id:
     return card_sim
 
 
+def _refuse_damage(action: dict[str, Any]) -> bool:
+    """issue #330: the SHAL side's gate for `drive_input` — a non-interactive
+    deny of any action that would damage the card; protection-only and
+    in-range actions pass. `raw_scpi` has no gate."""
+    return action.get("would_cause") != "damage"
+
+
 def drive_input(run_id: str, address: str, volts: float, *,
                 state_dir: str | Path = DEFAULT_STATE_DIR) -> dict[str, Any]:
     """Apply ``volts`` to the card input the instrument at ``address``
@@ -160,9 +167,18 @@ def drive_input(run_id: str, address: str, volts: float, *,
     input_name = instrument.drives.removeprefix("card.")
 
     card_sim = _load_card_sim(loaded, state, store, run_id)
-    result = card_sim.apply_input(input_name, volts, address=str(address))
+    result = card_sim.apply_input(input_name, volts, gate=_refuse_damage,
+                                  address=str(address))
     store.set_card_state(run_id, applied=card_sim.applied, destroyed=card_sim.destroyed)
-    return {"run_id": run_id, "address": instrument.address, **result.as_dict()}
+    # side_effect stays "write" from as_dict() even on a refusal: it counted a
+    # turn and wrote a refused line to the sim log (CTO review on #330,
+    # following the #328 ruling for apply_input itself).
+    out = {"run_id": run_id, "address": instrument.address, **result.as_dict()}
+    if not result.sent:  # the gate stopped it: nothing was applied (issue #330)
+        out["reason"] = (f"{volts} V on {input_name} would damage the card; "
+                         "the SHAL gate refused it and nothing was sent")
+        out["fix"] = "pick a voltage inside the card's documented input range"
+    return out
 
 
 # "VOLT <value>" (scpi-psu's own datasheet command for a setpoint write) is the
