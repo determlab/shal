@@ -10,11 +10,15 @@ import json
 import subprocess
 import sys
 import textwrap
+from pathlib import Path
 
 import pytest
 
 from shal import cli
 from shal.buses import sim as sim_mod
+
+_DEMO_BENCH = (Path(__file__).resolve().parents[1] / "examples" / "demos"
+              / "virtual-bench" / "bench.yaml")
 
 _SIM_YAML = textwrap.dedent("""\
     shal_version: 1
@@ -493,3 +497,38 @@ def test_probe_json_names_the_unreachable_instrument(tmp_path):
     [read] = json.loads(r.stdout)["reads"]
     assert read["ok"] is False and read["error"]["type"] == "Unreachable"
     assert "192.0.2.7:5025" in read["error"]["message"]
+
+
+# ---- limits are checked before approval (shal#364) ---------------------------------
+# `psu.set_voltage` is an actuator op (gated) with a declared limit (bench.yaml:
+# volts maximum 3.6). A request outside that limit must be refused as
+# `LimitsRejected`, never as `ApprovalRequired` — nobody should be asked to approve
+# a call the limits would refuse anyway. An in-range request still hits the
+# approval gate exactly as before.
+
+@pytest.mark.parametrize("volts", ["30", "5"])
+def test_limit_before_approval_over_limit_is_rejected_by_limits_not_approval(
+        tmp_path, volts):
+    r = _shal("call", str(_DEMO_BENCH), "psu", "set_voltage", volts, "--json",
+              cwd=tmp_path)
+    assert r.returncode != 0, r.stdout
+    out = json.loads(r.stdout)
+    assert out["ok"] is False
+    assert out["sent"] is False
+    assert out["rejected"] == "limits"
+    assert out["error"]["type"] == "LimitsRejected"
+    assert "3.6" in out["error"]["message"]
+    assert out["error"]["fix"]
+    assert "ApprovalRequired" not in r.stdout
+    assert "approve_with" not in out
+
+
+def test_limit_before_approval_in_range_still_needs_approval(tmp_path):
+    r = _shal("call", str(_DEMO_BENCH), "psu", "set_voltage", "3.3", "--json",
+              cwd=tmp_path)
+    assert r.returncode != 0, r.stdout
+    out = json.loads(r.stdout)
+    assert out["ok"] is False
+    assert out["sent"] is False
+    assert out["rejected"] == "approval"
+    assert out["error"]["type"] == "ApprovalRequired"
