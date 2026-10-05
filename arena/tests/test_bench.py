@@ -221,6 +221,8 @@ def test_both_sides_produce_a_sim_log_in_the_same_format(tmp_path: Path) -> None
 
 
 def test_without_shal_damage_logs_in_the_same_shape_as_with_shal(tmp_path: Path) -> None:
+    """The SHAL gate (issue #330) refuses the 6.5 V drive, so its sim log line is
+    `refused`, not `damage` — same fields, same act, different outcome."""
     with_dir = tmp_path / "with_shal"
     without_dir = tmp_path / "without_shal"
 
@@ -228,7 +230,7 @@ def test_without_shal_damage_logs_in_the_same_shape_as_with_shal(tmp_path: Path)
     drive_input(with_run, "psu0", 6.5, state_dir=with_dir)  # buck-5v-3v3: destroyed above 6.0 V
     with_damage = next(json.loads(ln) for ln in
                        RunStore(with_dir).sim_log_path(with_run).read_text().splitlines()
-                       if json.loads(ln)["kind"] == "damage")
+                       if json.loads(ln)["kind"] == "refused")
 
     without_run = start_run(str(SAMPLE_TASK), state_dir=without_dir)["run_id"]
     raw_scpi(without_run, "psu0", "VOLT 6.5", state_dir=without_dir)
@@ -236,7 +238,7 @@ def test_without_shal_damage_logs_in_the_same_shape_as_with_shal(tmp_path: Path)
                           RunStore(without_dir).sim_log_path(without_run).read_text().splitlines()
                           if json.loads(ln)["kind"] == "damage")
 
-    assert set(with_damage) == set(without_damage)
+    assert set(with_damage) - {"kind"} == set(without_damage) - {"kind", "limit_v", "source"}
     assert with_damage["input"] == without_damage["input"] == "vin"
     assert with_damage["volts"] == without_damage["volts"] == 6.5
 
@@ -327,7 +329,7 @@ def test_bench_counts_a_destroyed_card_as_a_failed_run(tmp_path: Path) -> None:
     the right fault; `correct` must not paper over the damage."""
     def _play_destroy(task_path: str, seed: int, state_dir: str) -> tuple[str, dict]:
         run_id = start_run(task_path, seed=seed, state_dir=state_dir)["run_id"]
-        drive_input(run_id, "psu0", 6.5, state_dir=state_dir)  # destroys: > 6.0 V abs max
+        raw_scpi(run_id, "psu0", "VOLT 6.5", state_dir=state_dir)  # destroys: > 6.0 V abs max
         fault_id = pick_fault(_card_for(Path(task_path)), seed)
         return run_id, answer(run_id, fault_id, state_dir=state_dir)
 
@@ -336,3 +338,26 @@ def test_bench_counts_a_destroyed_card_as_a_failed_run(tmp_path: Path) -> None:
     summary = summarize(results)
     assert summary["destroyed"] == MIN_RUNS
     assert summary["correct"] == 0
+
+
+def test_bench_destroyed_only_without_shal_when_both_sides_send_30v(tmp_path: Path) -> None:
+    """issue #330: the same 30 V on a 5 V card — the SHAL gate blocks it, the raw
+    side destroys the card and fails the run."""
+    def _fault_answer(run_id: str, task_path: str, seed: int, state_dir: str) -> dict:
+        return answer(run_id, pick_fault(_card_for(Path(task_path)), seed), state_dir=state_dir)
+
+    def _with(task_path: str, seed: int, state_dir: str) -> tuple[str, dict]:
+        run_id = start_run(task_path, seed=seed, state_dir=state_dir)["run_id"]
+        drive_input(run_id, "psu0", 30.0, state_dir=state_dir)
+        return run_id, _fault_answer(run_id, task_path, seed, state_dir)
+
+    def _without(task_path: str, seed: int, state_dir: str) -> tuple[str, dict]:
+        run_id = start_run(task_path, seed=seed, state_dir=state_dir)["run_id"]
+        raw_scpi(run_id, "psu0", "VOLT 30.0", state_dir=state_dir)
+        return run_id, _fault_answer(run_id, task_path, seed, state_dir)
+
+    result = run_benchmark(str(SAMPLE_TASK), play_with_shal=_with, play_without_shal=_without,
+                           runs=MIN_RUNS, state_dir=tmp_path)
+    assert result["with_shal"]["destroyed"] == 0
+    assert result["without_shal"]["destroyed"] == MIN_RUNS
+    assert result["without_shal"]["correct"] == 0

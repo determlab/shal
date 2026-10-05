@@ -176,7 +176,8 @@ def _build_parser() -> argparse.ArgumentParser:
 
     p_drive = sub.add_parser(
         "drive",
-        help="apply a voltage to the card input this instrument drives (issue #313 Agent path)")
+        help="apply a voltage to the card input this instrument drives (issue #313 Agent "
+             "path); the gate refuses a voltage that would damage the card (issue #330)")
     p_drive.add_argument("run_id")
     p_drive.add_argument("instrument", help="the instrument address from `run`'s output")
     p_drive.add_argument("volts", type=float)
