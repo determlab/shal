@@ -13,6 +13,14 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+### Fixed
+- **`fault: unplugged` / `SHAL_SIM_UNPLUG` now work on every sim bus** (#349),
+  not only `shal,sim-scpi`: the README's own `sim.yaml` first-success example
+  uses `shal,sim-i2c`, so the documented unplug previously did nothing there.
+  `shal,sim-msg` is covered too. A new optional `after: <N>` node key lets the
+  device answer N calls normally before every further hop raises
+  `HopError(delivered="no")`, so a demo can pull the cable mid-run.
+
 ### Behaviour change
 - **PSU setpoints are `actuator`** (#276, ruling #274). PSU setpoints in the
   reference driver are now `actuator`; an approval prompt appears where there was
