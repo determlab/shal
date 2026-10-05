@@ -2,7 +2,7 @@ arena_task: 1
 id: medium
 title: "Is the 5V rail in spec at 12V input?"
 level: medium
-card: ../cards/medium.yaml
+card: ../cards/buck-12v-5v.yaml
 instruments:
   - case: scpi-psu
     address: psu0
