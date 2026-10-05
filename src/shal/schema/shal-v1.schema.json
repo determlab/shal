@@ -114,8 +114,13 @@
         "insecure": { "type": "boolean" },
         "fault": {
           "type": "string",
-          "description": "Sim-only fault injection (issue #304): 'unplugged' makes every hop to this node raise a HopError(delivered=\"no\"), as if the real link were disconnected. The SHAL_SIM_UNPLUG=<node id> env var does the same for one node without editing the file. Ignored by non-sim drivers.",
+          "description": "Sim-only fault injection (issue #304, #349), on every sim bus (shal,sim-i2c, shal,sim-scpi, shal,sim-msg): 'unplugged' makes every hop to this node raise a HopError(delivered=\"no\"), as if the real link were disconnected. The SHAL_SIM_UNPLUG=<node id> env var does the same for one node without editing the file. Ignored by non-sim drivers.",
           "enum": ["unplugged"]
+        },
+        "after": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "Sim-only (issue #349): on a node faulted by fault: unplugged or by SHAL_SIM_UNPLUG, the device answers this many calls normally before every further hop raises HopError(delivered=\"no\") — so a run can unplug the cable mid-demo. Ignored on a node that is not faulted."
         },
         "config": {
           "type": "object",

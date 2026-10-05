@@ -31,6 +31,7 @@ from ..log import bus_logger, current_txn, redact_url
 from ..node import Node
 from ..transport import MessageTransport, Transport
 from .http_bus import is_envelope, parse_envelope
+from .sim_fault import SimFaultMixin
 
 logger = logging.getLogger("shal.bus.sim_msg")
 
@@ -46,7 +47,7 @@ def msg_sim_model(compatible: str):
     return deco
 
 
-class SimMsgBus(Driver, Transport, MessageTransport):
+class SimMsgBus(SimFaultMixin, Driver, Transport, MessageTransport):
     """A node that provides MessageTransport to its children — entirely in memory."""
 
     compatible = "shal,sim-msg"
@@ -56,6 +57,7 @@ class SimMsgBus(Driver, Transport, MessageTransport):
         Transport.__init__(self, node)
         self._models: dict[Any, Any] = {}
         self._unmodeled: dict[Any, str] = {}   # declared children with no sim model
+        self._init_fault()   # fault: unplugged / SHAL_SIM_UNPLUG / after: N (#304, #349)
         self.fail_next: int = 0          # test hook: fail N next txns (delivered=no)
         self.fail_delivered_unknown = False  # test hook: ambiguous failure
         self.connect_count = 0
@@ -80,6 +82,7 @@ class SimMsgBus(Driver, Transport, MessageTransport):
                     self._models.setdefault(node.address, model())
                 elif isinstance(comp, str):
                     self._unmodeled.setdefault(node.address, comp)
+                self._register_fault(node)
         super().activate()
         self.log.debug("connect (%d service models)", len(self._models),
                        event="connect")
@@ -106,6 +109,11 @@ class SimMsgBus(Driver, Transport, MessageTransport):
                 self.fail_next -= 1
                 self._active = False
                 raise HopError("simulated link drop before send",
+                               path=self.host.path, hop="sim-msg",
+                               txn=current_txn.get(), delivered="no")
+            if self._faulted(addr):  # fault: unplugged / SHAL_SIM_UNPLUG (#304, #349)
+                # redact_url: address is ${ENV}-resolved (#126)
+                raise HopError(f"no service at {redact_url(str(addr))!r}",
                                path=self.host.path, hop="sim-msg",
                                txn=current_txn.get(), delivered="no")
             model = self._models.get(addr)

@@ -21,6 +21,7 @@ from ..errors import HopError, LoadError
 from ..log import bus_logger, current_txn, redact, redact_url
 from ..node import Node
 from ..transport import ByteTransport, Op, Read, Transport, Write
+from .sim_fault import SimFaultMixin
 
 # -- device models -------------------------------------------------------------
 
@@ -92,7 +93,7 @@ class SimSensorModel:
 
 # -- the bus ---------------------------------------------------------------------
 
-class SimI2cBus(Driver, Transport, ByteTransport):
+class SimI2cBus(SimFaultMixin, Driver, Transport, ByteTransport):
     """A node that provides ByteTransport to its children — entirely in memory."""
 
     compatible = "shal,sim-i2c"
@@ -102,6 +103,7 @@ class SimI2cBus(Driver, Transport, ByteTransport):
         Transport.__init__(self, node)
         self._models: dict[int, Any] = {}
         self._unmodeled: dict[int, str] = {}   # declared children with no sim model
+        self._init_fault()   # fault: unplugged / SHAL_SIM_UNPLUG / after: N (#304, #349)
         self.fail_next: int = 0          # test hook: fail N next txns (delivered=no)
         self.fail_delivered_unknown = False  # test hook: ambiguous failure
         self.connect_count = 0
@@ -127,6 +129,7 @@ class SimI2cBus(Driver, Transport, ByteTransport):
                     self._models.setdefault(node.address, model())
                 elif isinstance(comp, str):
                     self._unmodeled.setdefault(node.address, comp)
+                self._register_fault(node)
         super().activate()
         self.log.debug("connect (%d device models)", len(self._models),
                        event="connect")
@@ -153,6 +156,10 @@ class SimI2cBus(Driver, Transport, ByteTransport):
                 self._active = False
                 raise HopError("simulated link drop before send", path=self.host.path,
                                hop="sim-i2c", txn=current_txn.get(), delivered="no")
+            if self._faulted(addr):  # fault: unplugged / SHAL_SIM_UNPLUG (#304, #349)
+                raise HopError(f"no answer from the device at 0x{addr:02x}",
+                               path=self.host.path, hop="sim-i2c",
+                               txn=current_txn.get(), delivered="no")
             model = self._models.get(addr)
             if model is None:
                 hint = ""

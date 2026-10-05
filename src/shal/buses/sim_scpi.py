@@ -24,7 +24,6 @@ only (``side_effect="none"``); like the other two, it wraps no part.
 from __future__ import annotations
 
 import logging
-import os
 import random
 import re
 from collections.abc import Mapping
@@ -36,6 +35,7 @@ from ..errors import HopError, LoadError
 from ..log import bus_logger, current_txn, redact_url
 from ..node import Node
 from ..transport import MessageTransport, Transport
+from .sim_fault import SimFaultMixin
 
 logger = logging.getLogger("shal.bus.sim_scpi")
 
@@ -51,7 +51,7 @@ def scpi_sim_model(compatible: str):
     return deco
 
 
-class SimScpiBus(Driver, Transport, MessageTransport):
+class SimScpiBus(SimFaultMixin, Driver, Transport, MessageTransport):
     """A node that provides MessageTransport (scpi-raw dialect) to its children —
     entirely in memory."""
 
@@ -63,8 +63,7 @@ class SimScpiBus(Driver, Transport, MessageTransport):
         self._models: dict[Any, Any] = {}
         self._unmodeled: dict[Any, str] = {}   # declared children with no sim model
         self._devices: dict[Any, Node] = {}    # every declared child, keyed by address
-        self._unplugged: set[Any] = set()      # addresses faulted (#304): fault:
-        # unplugged or SHAL_SIM_UNPLUG=<id>, a refused connection, not a NAK
+        self._init_fault()   # fault: unplugged / SHAL_SIM_UNPLUG / after: N (#304, #349)
         self.fail_next: int = 0          # test hook: fail N next txns (delivered=no)
         self.fail_delivered_unknown = False  # test hook: ambiguous failure
         self.connect_count = 0
@@ -80,7 +79,6 @@ class SimScpiBus(Driver, Transport, MessageTransport):
 
     def activate(self) -> None:
         self.connect_count += 1
-        unplug_id = os.environ.get("SHAL_SIM_UNPLUG")
         for node in self.host.walk():
             if node is self.host:
                 continue
@@ -100,9 +98,7 @@ class SimScpiBus(Driver, Transport, MessageTransport):
                         self._models[node.address] = model
                 elif isinstance(comp, str):
                     self._unmodeled.setdefault(node.address, comp)
-                if node.spec.get("fault") == "unplugged" or (
-                        unplug_id is not None and node.id == unplug_id):
-                    self._unplugged.add(node.address)
+                self._register_fault(node)
         super().activate()
         self.log.debug("connect (%d instrument models)", len(self._models),
                        event="connect")
@@ -143,9 +139,9 @@ class SimScpiBus(Driver, Transport, MessageTransport):
                 raise HopError("simulated link drop before send",
                                path=self.host.path, hop="sim-scpi",
                                txn=current_txn.get(), delivered="no")
-            if addr in self._unplugged:
+            if self._faulted(addr):
                 # redact_url: address is ${ENV}-resolved (#126); delivered="no" —
-                # refused exactly like a real disconnected link (#304)
+                # refused exactly like a real disconnected link (#304, #349)
                 raise HopError(f"no answer from the instrument at "
                                f"{redact_url(str(addr))!r}", path=self.host.path,
                                hop="sim-scpi", txn=current_txn.get(), delivered="no")
