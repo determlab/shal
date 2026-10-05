@@ -1,0 +1,59 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "shal-arena"
+# Follows pyshal's version (AGENTS.md "Where the contract lives"); kept in sync
+# by hand and pinned by `tests/test_version_follows_shal.py`, which reads both
+# pyproject.toml files and fails loudly rather than letting them drift.
+version = "0.4.0"
+description = "SHAL Arena — simulated instruments, a card, a hidden fault: a runner any agent can play over the shal-arena CLI."
+readme = "README.md"
+license = { text = "MIT" }
+authors = [{ name = "SHAL contributors" }]
+requires-python = ">=3.10"
+dependencies = [
+    "pyshal>=0.4.0,<0.5",
+    "pyyaml>=6.0,<7",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=7",
+    "ruff>=0.4",
+]
+
+[project.scripts]
+shal-arena = "shal_arena.cli:main"
+
+[project.urls]
+Source = "https://github.com/determlab/shal/tree/main/arena"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.setuptools.package-data]
+shal_arena = [
+    "cases/*/docs/*",
+    "cases/*/harness/*",
+    "tasks/*.yaml",
+    "cards/*.yaml",
+]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-q"
+
+# Same rule set as the root pyproject.toml, spelled out explicitly rather than
+# left to fall through to ruff's defaults: ruff resolves config from the
+# nearest pyproject.toml to each file it lints, and this one (having its own
+# [tool.ruff]) is nearer than the repo root's for everything under arena/.
+[tool.ruff]
+line-length = 100
+target-version = "py310"
+src = ["src", "tests"]
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "B", "UP"]
+ignore = ["E741"]

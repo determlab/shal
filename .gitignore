@@ -34,6 +34,10 @@ Thumbs.db
 debug.jsonl
 *.local.yaml
 
+# shal-arena local run state (default `--state-dir`; issue #310) — a player's own
+# runs, never part of the project.
+.shal-arena/
+
 # Personal / third-party agent skills under .claude/ are local tooling, not part of
 # SHAL. (SHAL's own Claude Code skills are tracked under integrations/claude-code/.)
 /.agents/
