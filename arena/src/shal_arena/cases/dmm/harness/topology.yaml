@@ -1,0 +1,11 @@
+# Harness for the "dmm" ADK case: one node of driver: "arena,bench-dmm1" on
+# the sim SCPI bus. The runner imports the player's driver.py (which
+# registers that compatible) before loading this file.
+shal_version: 1
+root:
+  bench:
+    id: bench
+    driver: shal,sim-scpi
+    address: sim0
+    children:
+      unit: {id: unit, driver: "arena,bench-dmm1", address: 1}

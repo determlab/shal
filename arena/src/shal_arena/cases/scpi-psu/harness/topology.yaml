@@ -1,0 +1,12 @@
+# Harness for the "scpi-psu" ADK case: one node of driver: "arena,bench-psu1"
+# on the sim SCPI bus. The runner imports the player's driver.py (which
+# registers that compatible) before loading this file, so `shal.load` binds
+# the player's class here, backed by this folder's sim.py model.
+shal_version: 1
+root:
+  bench:
+    id: bench
+    driver: shal,sim-scpi
+    address: sim0
+    children:
+      unit: {id: unit, driver: "arena,bench-psu1", address: 1}
