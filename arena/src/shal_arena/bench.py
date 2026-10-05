@@ -87,22 +87,33 @@ def run_side(task_path: str, play: Play, *, runs: int, seed_base: int,
     for i in range(runs):
         run_id, record = play(str(task_path), seed_base + i, str(state_dir))
         state = store.load(run_id)
+        # a destroyed card is a failed run on its own terms (Scope: "30 V on
+        # a 5 V card destroys it and the task fails"), whatever `given`
+        # happened to match — CTO review on #328: counting it "correct"
+        # because the answer also named the right fault hid the damage.
+        destroyed = state.card_destroyed
+        correct = bool(record.get("correct")) and not destroyed
         results.append({"run_id": run_id, "seed": seed_base + i, "turns": state.turns,
-                        "correct": bool(record.get("correct")),
+                        "correct": correct, "disqualified": bool(record.get("disqualified")),
+                        "destroyed": destroyed,
                         "sim_log": str(store.sim_log_path(run_id))})
     return results
 
 
 def summarize(results: list[dict[str, Any]]) -> dict[str, Any]:
     """Median and range of turns across ``results`` — the metric the CTO's
-    turn-counting ruling makes comparable between the two sides at all — plus
-    the sim log path for every run, so anyone can check what each run sent."""
+    turn-counting ruling makes comparable between the two sides at all —
+    plus how many runs were disqualified or destroyed the card (CTO review
+    on #328: a side's score is not just its turns and correctness) and the
+    sim log path for every run, so anyone can check what each run sent."""
     turns = [r["turns"] for r in results]
     return {
         "runs": len(results),
         "median_turns": statistics.median(turns),
         "turns_range": [min(turns), max(turns)],
         "correct": sum(1 for r in results if r["correct"]),
+        "disqualified": sum(1 for r in results if r["disqualified"]),
+        "destroyed": sum(1 for r in results if r["destroyed"]),
         "sim_logs": [r["sim_log"] for r in results],
     }
 
@@ -125,6 +136,7 @@ def run_benchmark(task_path: str, *, play_with_shal: Play, play_without_shal: Pl
                                state_dir=base / "without_shal")
     return {
         "ok": True,
+        "side_effect": "write",   # writes two state dirs, `runs` runs each
         "task": str(task_path),
         "runs": runs,
         "with_shal": summarize(with_results),

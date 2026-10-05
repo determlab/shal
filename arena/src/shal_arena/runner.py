@@ -250,6 +250,13 @@ def raw_scpi(run_id: str, address: str, cmd: str, *,
     is_query = cmd.strip().endswith("?")
     try:
         with sim_log.record_for(str(address)):
+            # the same neutral marker `take_measurement` writes, BEFORE the
+            # exchange and regardless of its outcome (CTO review on #328): a
+            # probe instrument's own disqualification rule (`answer`, "no
+            # measure marker at any probe address") must read identically on
+            # both sides, or a without-SHAL run is disqualified even when
+            # every command it sent was correct.
+            sim_log.mark_measured(str(address))
             bus, child_addr = _sim_bus_for_topology(topology)
             reply = bus.exchange(child_addr, {"scpi": cmd, "query": is_query})
     except Exception as e:  # noqa: BLE001 - a live answer to THIS call, never persisted
@@ -257,7 +264,12 @@ def raw_scpi(run_id: str, address: str, cmd: str, *,
             f"{cmd!r} raised {type(e).__name__}: {e}",
             fix="the instrument did not answer this raw command — if that's "
                 "unexpected, check the datasheet's command syntax") from e
-    return {"ok": True, "side_effect": "none" if is_query else "write",
+    # "write" like every other runner call (check/measure/drive): each one
+    # mutates the RUN's own record (a turn, a sim log line) regardless of
+    # whether the underlying instrument op itself only reads (CTO review on
+    # #328 — a query still costs a turn and writes the sim log, so it is
+    # never side-effect-free at the run level).
+    return {"ok": True, "side_effect": "write",
            "run_id": run_id, "address": instrument.address, "cmd": cmd,
            "reply": reply["reply"]}
 

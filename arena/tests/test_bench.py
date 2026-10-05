@@ -98,11 +98,14 @@ def test_output_contains_median_and_range_per_side(tmp_path: Path) -> None:
     result = run_benchmark(str(SAMPLE_TASK), play_with_shal=_play_with_shal,
                            play_without_shal=_play_without_shal, runs=MIN_RUNS,
                            state_dir=tmp_path)
+    assert result["side_effect"] == "write"
     for side in ("with_shal", "without_shal"):
         summary = result[side]
         assert isinstance(summary["median_turns"], (int, float))
         lo, hi = summary["turns_range"]
         assert lo <= summary["median_turns"] <= hi
+        assert summary["disqualified"] == 0   # the scripted agent above always probes
+        assert summary["destroyed"] == 0      # ... and never drives past the card's limit
         assert len(summary["sim_logs"]) == MIN_RUNS
         for p in summary["sim_logs"]:
             assert Path(p).is_file()
@@ -193,17 +196,28 @@ def test_both_sides_produce_a_sim_log_in_the_same_format(tmp_path: Path) -> None
     take_measurement(with_run, "dmm0", PASSING_DMM_DRIVER, state_dir=with_dir)
     with_lines = [json.loads(ln) for ln in
                  RunStore(with_dir).sim_log_path(with_run).read_text().splitlines()]
-    with_query = next(ln for ln in with_lines if ln["kind"] == "query")
 
     without_run = start_run(str(SAMPLE_TASK), seed=seed, state_dir=without_dir)["run_id"]
     raw_scpi(without_run, "dmm0", "MEAS:VOLT:DC?", state_dir=without_dir)
     without_lines = [json.loads(ln) for ln in
                      RunStore(without_dir).sim_log_path(without_run).read_text().splitlines()]
-    without_query = next(ln for ln in without_lines if ln["kind"] == "query")
 
+    # the SET of entry kinds for the same act must match on both sides — a
+    # query-only comparison (CTO review on #328) missed that `raw_scpi` wrote
+    # no `measure` marker at all, which silently disqualified every
+    # without-SHAL answer (see test_raw_scpi_measure_marker_not_disqualified).
+    assert {ln["kind"] for ln in with_lines} == {ln["kind"] for ln in without_lines} == {
+        "measure", "query"}
+
+    with_query = next(ln for ln in with_lines if ln["kind"] == "query")
+    without_query = next(ln for ln in without_lines if ln["kind"] == "query")
     assert set(with_query) == set(without_query) == {"ts", "address", "kind", "cmd"}
     assert with_query["cmd"] == without_query["cmd"] == "MEAS:VOLT:DC?"
     assert with_query["address"] == without_query["address"] == "dmm0"
+
+    with_measure = next(ln for ln in with_lines if ln["kind"] == "measure")
+    without_measure = next(ln for ln in without_lines if ln["kind"] == "measure")
+    assert set(with_measure) == set(without_measure) == {"ts", "address", "kind"}
 
 
 def test_without_shal_damage_logs_in_the_same_shape_as_with_shal(tmp_path: Path) -> None:
@@ -281,3 +295,44 @@ def test_run_side_and_summarize_compose(tmp_path: Path) -> None:
     summary = summarize(results)
     assert summary["runs"] == MIN_RUNS
     assert summary["median_turns"] >= 1
+
+
+# -- CTO review on #328 ------------------------------------------------------- #
+
+def test_raw_scpi_measure_marker_not_disqualified(tmp_path: Path) -> None:
+    """A without-SHAL probe must leave the same 'measure' marker a with-SHAL
+    one does, or `answer`'s disqualification check (no marker at any probe
+    address) fires on every raw run regardless of how it answered."""
+    seed = _seed_not_open()
+    run_id = start_run(str(SAMPLE_TASK), seed=seed, state_dir=tmp_path)["run_id"]
+    raw_scpi(run_id, "dmm0", "MEAS:VOLT:DC?", state_dir=tmp_path)
+    fault_id = pick_fault(_card_for(SAMPLE_TASK), seed)
+    record = answer(run_id, fault_id, state_dir=tmp_path)
+    assert record["correct"] is True
+    assert record["disqualified"] is False
+
+
+def test_raw_scpi_reports_write_even_for_a_query(tmp_path: Path) -> None:
+    """Every runner call that reaches the sim mutates the run's own record (a
+    turn, a sim log line) even when the underlying instrument op is a read —
+    `check`/`measure`/`drive` all already report 'write' for the same reason."""
+    run_id = start_run(str(SAMPLE_TASK), state_dir=tmp_path)["run_id"]
+    out = raw_scpi(run_id, "dmm0", "MEAS:VOLT:DC?", state_dir=tmp_path)
+    assert out["side_effect"] == "write"
+
+
+def test_bench_counts_a_destroyed_card_as_a_failed_run(tmp_path: Path) -> None:
+    """Scope: '30 V on a 5 V card destroys it and the task fails' — a
+    destroyed card is a failed run even when the final answer happens to name
+    the right fault; `correct` must not paper over the damage."""
+    def _play_destroy(task_path: str, seed: int, state_dir: str) -> tuple[str, dict]:
+        run_id = start_run(task_path, seed=seed, state_dir=state_dir)["run_id"]
+        drive_input(run_id, "psu0", 6.5, state_dir=state_dir)  # destroys: > 6.0 V abs max
+        fault_id = pick_fault(_card_for(Path(task_path)), seed)
+        return run_id, answer(run_id, fault_id, state_dir=state_dir)
+
+    results = run_side(str(SAMPLE_TASK), _play_destroy, runs=MIN_RUNS, seed_base=0,
+                       state_dir=tmp_path)
+    summary = summarize(results)
+    assert summary["destroyed"] == MIN_RUNS
+    assert summary["correct"] == 0
