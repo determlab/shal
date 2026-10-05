@@ -20,6 +20,11 @@ stop for a person.
 pip install pyshal
 ```
 
+That installs pyshal 0.3.0, the latest PyPI release, which every command below
+runs on except where noted. A command marked **(main only, not in the PyPI
+release yet)** needs the unreleased source instead:
+`pip install git+https://github.com/determlab/shal`.
+
 ## First success
 
 No account, no API key, no hardware. The command needs one file: a topology you
@@ -58,31 +63,34 @@ write did not.
 - `shal call sim.yaml ambient_temp read_celsius --json` — run one op. Reads and
   `write` ops run. Exit codes: 0 ran, 1 the op failed, 2 refused by the gate
   (nothing sent), 3 could not run.
-- `shal routes sim.yaml ambient_temp --json` — the routes a node declares, in order
-  (a node without `routes:` shows its one main route). On a node with routes, each
-  tool in `shal tools --json` has `routes`, and `shal call ... --via <name>` pins one
-  route for the call; over MCP the tool takes an optional `via`. An unknown name is
-  an error that lists the valid ones.
+- `shal routes sim.yaml ambient_temp --json` (main only, not in the PyPI release yet):
+  the routes a node declares, in order (a node without `routes:` shows its one main
+  route). On a node with routes, each tool in `shal tools --json` has `routes`, and
+  `shal call ... --via <name>` pins one route for the call; over MCP the tool takes
+  an optional `via`. An unknown name is an error that lists the valid ones.
 - `shal check shal,sim-sensor --json` — check a driver against the authoring
   contract. Exit 0 no problems, 1 problems, 2 the check could not run.
-- `shal records [DIR] --verdict fail --json` — read the record store under
-  `DIR` (default `.`; `DIR/records.db`), filtered, newest first. Read-only. A
-  missing store is exit 1 with a `fix`; a newer `record_version` refuses the
-  read unless `--skip-newer`.
+- `shal records [DIR] --verdict fail --json` (main only, not in the PyPI release yet):
+  read the record store under `DIR` (default `.`; `DIR/records.db`), filtered,
+  newest first. Read-only. A missing store is exit 1 with a `fix`; a newer
+  `record_version` refuses the read unless `--skip-newer`.
 - `shal docs` — the guide to add a device. `shal docs --list` lists the reference
   drivers; `shal docs --example tmp102` prints one (driver, sim twin, test, topology).
   A new driver starts from one of these. [docs/CATALOG.md](docs/CATALOG.md) is where
   a new driver goes and what to name it (its `vendor,part` compatible).
-- `shal docs --samples` — the samples: small programs a person runs to see what SHAL
-  does. `shal docs --sample <name> --to DIR` writes one into a new or empty folder and
-  prints the one command that runs it. Samples are not references, and not in `--list`.
+- `shal docs --samples` **(main only, not in the PyPI release yet)** — the samples:
+  small programs a person runs to see what SHAL does. `shal docs --sample <name>
+  --to DIR` writes one into a new or empty folder and prints the one command that
+  runs it. Samples are not references, and not in `--list`.
 - `shal mcp sim.yaml` — serve the same tools to an MCP host over stdio. Needs the
   extra: `pip install "pyshal[mcp]"`.
 - Python: `hal = shal.load("sim.yaml")`, then `hal.tool_schemas()` and
   `hal.call_tool("ambient_temp__read_celsius", {})` → `{'ok': True, 'result': 26.33}`.
 
-`--json`: `shal probe`, `shal tools`, `shal docs --list`, `shal docs --samples`,
-`shal call`, `shal routes`, `shal check` and `shal records` take it. Each prints one JSON document on stdout; `--help` shows its shape. On an
+`--json`: `shal probe`, `shal tools`, `shal docs --list`, `shal call` and `shal
+check` take it; `shal docs --samples`, `shal routes` and `shal records` take it
+too **(main only, not in the PyPI release yet)**. Each prints one JSON document
+on stdout; `--help` shows its shape. On an
 error the exit code is the same, the message is on stderr, and stdout holds
 `{"ok": false, "error": {"type": <short name>, "message": <text>, "fix": <the
 command or change that fixes it>}}` — the same object in every command, and `fix`
@@ -91,7 +99,7 @@ each with the `shal call` line that runs it.
 
 ## Routes
 
-Needs pyshal 0.4.0 or later.
+Needs pyshal 0.4.0 or later — main only, not in the PyPI release yet.
 
 A node sits under its main bus. Extra channels are named jumps in `routes:`. A
 changing op is never re-sent on another route after an unknown delivery.
@@ -118,7 +126,7 @@ root:
 
 Save it as `routes.yaml`. `shal tools routes.yaml --json` lists `ambient_temp` once, with
 `routes: ["bench", "jump"]`; `shal call routes.yaml ambient_temp read_celsius --via jump --json`
-pins the second one.
+pins the second one (main only, not in the PyPI release yet).
 
 ## Side effects
 
