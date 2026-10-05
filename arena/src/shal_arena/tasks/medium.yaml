@@ -1,0 +1,17 @@
+arena_task: 1
+id: medium
+title: "Is the 5V rail in spec at 12V input?"
+level: medium
+card: ../cards/medium.yaml
+instruments:
+  - case: scpi-psu
+    address: psu0
+    drives: card.vin
+  - case: dmm
+    address: dmm0
+    probe: card.tp_5v
+question:
+  text: "Power the card at 12.0 V. Is the 5V rail in spec? Answer ok, or name the fault."
+  answer: {kind: enum, values: [ok, low_voltage, noise, open]}
+seed: 101
+limits: {max_turns: 60, max_minutes: 30}
