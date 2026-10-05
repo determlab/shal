@@ -91,7 +91,7 @@ PACKAGE = "pyshal"
 _SECTION = re.compile(r"^##\s+Quick Start\s*$")
 _FENCE = re.compile(r"^```\s*([\w-]*)\s*$")
 _SAVE_AS = re.compile(r"\bSave (?:this|it)(?: file)? as `([^`]+)`")
-_EXITS = re.compile(r"\bexits (\d+)\b")
+_EXITS = re.compile(r"\bexits? (\d+)\b")
 _SHELL_OPS = {"|", "||", "&", "&&", ";", ">", ">>", "<", "2>", "2>&1"}
 # A shown reading: `label: 25.59` or a bare `25.59` (decimal with a point).
 _READING = re.compile(r"^(?P<label>(?:[A-Za-z_][\w.]*: )?)-?\d+\.\d+$")
@@ -181,6 +181,10 @@ def _first_paragraph(text: str) -> str:
     return re.split(r"\n\s*\n", text.strip(), maxsplit=1)[0] if text.strip() else ""
 
 
+def _last_paragraph(text: str) -> str:
+    return re.split(r"\n\s*\n", text.strip())[-1] if text.strip() else ""
+
+
 def _argv(cmd: str, line: int) -> list[str]:
     argv = shlex.split(cmd, comments=True, posix=True)
     bad = [t for t in argv if t in _SHELL_OPS]
@@ -190,27 +194,34 @@ def _argv(cmd: str, line: int) -> list[str]:
     return argv
 
 
+def _shell_runs(b: Block) -> list[Run]:
+    """The ``$ cmd`` / bare-command lines of a shell block, as ordered `Run`s (no exit
+    code or output attached yet — the caller fills those in from the block's `after`)."""
+    runs: list[Run] = []
+    prompted = any(ln.startswith("$ ") for ln in b.text.split("\n"))
+    for ln in b.text.split("\n"):
+        if prompted:
+            if ln.startswith("$ "):
+                runs.append(Run(raw=ln[2:], argv=_argv(ln[2:], b.line), line=b.line,
+                                expected=[]))
+            elif runs:
+                runs[-1].expected.append(ln)  # type: ignore[union-attr]
+            elif ln.strip():
+                raise ReadmeError(f"README line {b.line}: output before any `$ ` prompt")
+        elif ln.strip() and not ln.lstrip().startswith("#"):
+            runs.append(Run(raw=ln.strip(), argv=_argv(ln, b.line), line=b.line))
+    if not runs:
+        raise ReadmeError(f"README line {b.line}: ```{b.lang} block has no command")
+    return runs
+
+
 def plan(blocks: list[Block]) -> list[Save | Run]:
     """Turn the Quick Start blocks into ordered steps (files to save, commands to run)."""
     steps: list[Save | Run] = []
     last_shell: Block | None = None
     for b in blocks:
         if b.lang in SHELL_LANGS:
-            runs: list[Run] = []
-            prompted = any(ln.startswith("$ ") for ln in b.text.split("\n"))
-            for ln in b.text.split("\n"):
-                if prompted:
-                    if ln.startswith("$ "):
-                        runs.append(Run(raw=ln[2:], argv=_argv(ln[2:], b.line), line=b.line,
-                                        expected=[]))
-                    elif runs:
-                        runs[-1].expected.append(ln)  # type: ignore[union-attr]
-                    elif ln.strip():
-                        raise ReadmeError(f"README line {b.line}: output before any `$ ` prompt")
-                elif ln.strip() and not ln.lstrip().startswith("#"):
-                    runs.append(Run(raw=ln.strip(), argv=_argv(ln, b.line), line=b.line))
-            if not runs:
-                raise ReadmeError(f"README line {b.line}: ```{b.lang} block has no command")
+            runs = _shell_runs(b)
             runs[-1].exit_code = _exit_code(b.after)
             steps.extend(runs)
             last_shell = b
@@ -238,9 +249,14 @@ def plan(blocks: list[Block]) -> list[Save | Run]:
     return steps
 
 
+def _exit_code_opt(text: str) -> int | None:
+    m = _EXITS.search(_first_paragraph(text))
+    return int(m.group(1)) if m else None
+
+
 def _exit_code(after: str) -> int:
-    m = _EXITS.search(_first_paragraph(after))
-    return int(m.group(1)) if m else 0
+    code = _exit_code_opt(after)
+    return 0 if code is None else code
 
 
 def _is_pip_install(argv: list[str]) -> bool:
@@ -259,6 +275,160 @@ def substitute_wheel(argv: list[str], wheel: Path) -> list[str]:
     if not hit:
         raise ReadmeError(f"the README's pip line `{shlex.join(argv)}` does not install {PACKAGE}")
     return out
+
+
+def rc_wheels_argv(argv: list[str], find_links: Path) -> list[str]:
+    """The pip line with the package resolved from a local release-candidate wheel
+    directory (``RC_WHEELS``, shal#342) instead of PyPI: ``--no-index --find-links
+    <dir>``, package name/extras unchanged."""
+    if not _is_pip_install(argv):
+        raise ReadmeError("RC_WHEELS only applies to a `pip install` line, "
+                          f"not `{shlex.join(argv)}`")
+    return [argv[0], argv[1], "--no-index", "--find-links", str(find_links), *argv[2:]]
+
+
+# --- doc snippets beyond the Quick Start: README's first screen + AGENTS.md (#342) --
+#
+# quickstart_blocks()/plan() above are anchored to the single '## Quick Start' heading
+# and require every yaml/python block there to carry "Save this as `NAME`" — true for
+# every block in that one section. The first screen is bigger: it also holds the
+# Install section and the architecture intro, which show yaml/python snippets that are
+# illustrative only (no save, nothing runs them). doc_blocks()/doc_test_plan() below
+# are the lenient counterpart: a file block with no "Save as" prose is left alone
+# instead of erroring, and a shell block can opt out with a trailing
+# `<!-- doc-test: skip REASON -->` comment on the prose right before it (fenced-off
+# blocks: hardware, secrets, or a step this runner cannot execute at all).
+
+_SKIP = re.compile(r"<!--\s*doc-test:\s*skip\b\s*(.*?)\s*-->", re.S)
+
+
+def doc_blocks(text: str, start: int = 0, end: int | None = None) -> list[Block]:
+    """Fenced blocks between 0-based line `start` (inclusive) and `end` (exclusive;
+    end of text when None) — no heading anchor, the caller picks the range."""
+    lines = text.replace("\r\n", "\n").split("\n")
+    stop = len(lines) if end is None else end
+    blocks: list[Block] = []
+    prose: list[str] = []
+    fence: Block | None = None
+    body: list[str] = []
+    for i in range(start, stop):
+        ln = lines[i]
+        if fence is None:
+            m = _FENCE.match(ln)
+            if m:
+                fence = Block(lang=m.group(1).lower(), text="", line=i + 1,
+                              before="\n".join(prose).strip())
+                if blocks:
+                    blocks[-1].after = fence.before
+                prose, body = [], []
+            else:
+                prose.append(ln)
+        elif ln.strip() == "```":
+            fence.text = "\n".join(body)
+            blocks.append(fence)
+            fence = None
+        else:
+            body.append(ln)
+    if fence is not None:
+        raise ReadmeError(f"doc line {fence.line}: code fence never closed")
+    if blocks:
+        blocks[-1].after = "\n".join(prose).strip()
+    return blocks
+
+
+def first_screen_end(text: str) -> int:
+    """0-based line index of the heading right after '## Quick Start' — the end of
+    README's first screen (shal#342): title through Quick Start, nothing past it."""
+    lines = text.replace("\r\n", "\n").split("\n")
+    starts = [i for i, ln in enumerate(lines) if _SECTION.match(ln)]
+    if len(starts) != 1:
+        raise ReadmeError(f"expected one '## Quick Start' heading, found {len(starts)}")
+    end = starts[0] + 1
+    while end < len(lines) and not lines[end].startswith("## "):
+        end += 1
+    return end
+
+
+def doc_test_plan(blocks: list[Block]) -> tuple[list[Save | Run], list[tuple[int, str]]]:
+    """Runnable steps for the ```bash/```sh blocks among `blocks`, plus the skips.
+
+    A file block (```yaml/python/json/toml) is saved only when prose right before it
+    reads "Save this/it as `NAME`"; with no such prose it is illustrative text and is
+    left alone — neither saved nor an error. An unlabeled/```text block right after a
+    command is its expected output, exactly as `plan()` attaches it. A shell block
+    whose prose carries `<!-- doc-test: skip REASON -->` is not run; its (line, reason)
+    goes into the second return value instead.
+    """
+    steps: list[Save | Run] = []
+    skips: list[tuple[int, str]] = []
+    last_run: Run | None = None
+    for b in blocks:
+        if b.lang in FILE_LANGS:
+            m = _SAVE_AS.search(b.before)
+            if m:
+                steps.append(Save(name=m.group(1), content=b.text + "\n", line=b.line))
+            last_run = None
+        elif b.lang in OUTPUT_LANGS:
+            if last_run is not None and not b.before and last_run.expected is None:
+                last_run.expected = b.text.split("\n")
+                after_code = _exit_code_opt(b.after)
+                if after_code is not None:
+                    last_run.exit_code = after_code
+            last_run = None
+        elif b.lang in SHELL_LANGS:
+            skip = _SKIP.search(b.before)
+            if skip is not None:
+                skips.append((b.line, skip.group(1) or "(no reason given)"))
+                last_run = None
+                continue
+            runs = _shell_runs(b)
+            after_code = _exit_code_opt(b.after)
+            before_code = _exit_code_opt(_last_paragraph(b.before))
+            runs[-1].exit_code = after_code if after_code is not None else (before_code or 0)
+            steps.extend(runs)
+            last_run = runs[-1]
+        else:
+            last_run = None
+    for s in steps:
+        if isinstance(s, Run):
+            s.installs = _is_pip_install(s.argv)
+    return steps, skips
+
+
+def run_doc_steps(steps: list[Save | Run], venv: Path, workdir: Path, *,
+                  find_links: Path | None = None) -> None:
+    """Run `steps` (shal#342): a `Save` writes its file; a `Run` runs its command in
+    `workdir`, with `venv`'s bin/Scripts dir first on PATH. Raises `ReadmeError` or
+    `StepFailed` naming the doc line and the command on a bad exit code or output
+    mismatch. With `find_links` set (``RC_WHEELS``), a `pip install pyshal[...]` step
+    installs from that directory instead of PyPI (package name/extras unchanged).
+    """
+    env = dict(os.environ)
+    env.pop("PYTHONPATH", None)
+    env.pop("PYTHONHOME", None)
+    env["VIRTUAL_ENV"] = str(venv)
+    env["PATH"] = str(venv_bin(venv)) + os.pathsep + env.get("PATH", "")
+    env["PYTHONUNBUFFERED"] = "1"
+    for s in steps:
+        if isinstance(s, Save):
+            (workdir / s.name).parent.mkdir(parents=True, exist_ok=True)
+            (workdir / s.name).write_text(s.content, encoding="utf-8")
+            continue
+        argv = rc_wheels_argv(s.argv, find_links) if s.installs and find_links else list(s.argv)
+        exe = shutil.which(argv[0], path=env["PATH"])
+        if exe is None:
+            raise ReadmeError(f"doc line {s.line}: `{argv[0]}` not found on PATH")
+        proc = subprocess.run([exe, *argv[1:]], cwd=workdir, env=env, stdout=subprocess.PIPE,
+                              stderr=subprocess.STDOUT, timeout=900)
+        out = proc.stdout.decode("utf-8", errors="replace")
+        if proc.returncode != s.exit_code:
+            raise StepFailed(f"doc line {s.line}: `{s.raw}` exited {proc.returncode}, "
+                             f"expected {s.exit_code}\n{out}")
+        if s.expected is not None and not output_matches(s.expected, out):
+            diff = "\n".join(difflib.unified_diff(
+                _norm(s.expected), _norm(out), "doc shows", "command printed", lineterm=""))
+            raise StepFailed(f"doc line {s.line}: `{s.raw}` printed something other than "
+                             f"the doc shows\n{diff}")
 
 
 def _norm(text: list[str] | str) -> list[str]:

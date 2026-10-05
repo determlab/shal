@@ -177,6 +177,9 @@ import shal
 
 For development:
 
+<!-- doc-test: skip clones a second checkout of the repo over the network and chains
+     it with `&&`, which the doc-test runner does not interpret; CI's own `test` job
+     already runs `pip install -e ".[dev]"` against this checkout directly -->
 ```bash
 git clone https://github.com/determlab/shal && cd shal
 pip install -e ".[dev]"   # pytest, ruff
@@ -290,6 +293,7 @@ take `--json` too (main only, not in the PyPI release yet).
 package, so there is nothing to clone and no network needed.
 (main only, not in the PyPI release yet):
 
+<!-- doc-test: skip main only, not in the PyPI release yet; the doc-test venv installs pyshal from PyPI (0.3.0), which lacks --samples -->
 ```bash
 shal docs --samples                     # what there is
 shal docs --sample limits --to mydir    # write one out, and print how to run it
