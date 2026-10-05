@@ -145,7 +145,10 @@ class CardSim:
     # -- measurements --------------------------------------------------- #
     def rail_voltage(self, rail: str) -> float:
         spec = self.rails[rail]
-        if self.state != OK:
+        if self.destroyed:
+            return 0.0
+        # a breach drops only the rails fed by the input it breached
+        if any(lim.input == spec.from_input for lim in self._breaches(self.applied)):
             return 0.0
         return spec.nominal_v
 
@@ -242,11 +245,19 @@ def load_card_sim(path: str | Path, *, log_path: str | Path | None = None) -> Ca
 
 
 def load_instruments(path: str | Path) -> dict[str, InstrumentSpec]:
-    """Instrument catalogue yaml: ``instruments: {id: {replacement_usd, fuse_a,
-    fuse_source}}``. This is where ``replacement_usd`` lives."""
+    """Instrument catalogue yaml: ``instruments: {<case>: {replacement_usd, fuse_a,
+    fuse_source}}``, keyed by the instrument's ``case``. This is where ``replacement_usd`` lives."""
     doc = yaml.safe_load(Path(path).read_text(encoding="utf-8"))
     out = {}
     for iid, e in (doc.get("instruments") or {}).items():
         out[iid] = InstrumentSpec(iid, _num(e["replacement_usd"], f"{iid}.replacement_usd"),
                                   e.get("fuse_a"), e.get("fuse_source"))
     return out
+
+
+CATALOGUE_PATH = Path(__file__).parent / "catalogue" / "instruments.yaml"
+
+
+def catalogue() -> dict[str, InstrumentSpec]:
+    """The packaged instrument catalogue, keyed by ``case`` (issue #325)."""
+    return load_instruments(CATALOGUE_PATH)

@@ -7,11 +7,9 @@ instruments:
   - case: scpi-psu
     address: psu0
     drives: card.vin
-    replacement_usd: 1200
   - case: dmm
     address: dmm0
     probe: card.tp_3v3
-    replacement_usd: 1500
 question:
   text: "Power the card at 5.0 V. Is the 3V3 rail in spec? Answer ok, or name the fault."
   answer: {kind: enum, values: [ok, low_voltage, noise, open]}

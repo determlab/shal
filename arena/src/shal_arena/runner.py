@@ -25,7 +25,7 @@ import yaml
 from shal.conformance import check_driver as _conformance_check_driver
 
 from . import fault as _fault
-from .card_sim import CardSim
+from .card_sim import CardSim, Dmm, catalogue
 from .cases import CaseSpec, resolve_case
 from .errors import ArenaError, CheckCouldNotRun, MeasurementFailed
 from .loader import LoadedTask, load_task
@@ -83,12 +83,18 @@ def _topology_for_instrument(task: Task, card: Card, instrument: Instrument,
     return _fault.harness_for_run(case, rail=rail, realized=realized, seed=seed)
 
 
+def _fault_is_unplugged(topology: dict) -> bool:
+    bench = next(iter(topology["root"].values()))
+    return any(c.get("fault") == "unplugged" for c in bench["children"].values())
+
+
 def _instrument_view(instrument: Instrument) -> dict[str, Any]:
     case = resolve_case(instrument.case)
+    spec = catalogue().get(instrument.case)
     view = {
         "address": instrument.address,
         "case": instrument.case,
-        "replacement_usd": instrument.replacement_usd,
+        "replacement_usd": spec.replacement_usd if spec else None,
         "datasheet": _read_datasheet(case),
     }
     if instrument.drives is not None:
@@ -127,7 +133,9 @@ def drive_input(run_id: str, address: str, volts: float, *,
     'drives' instrument, independent of the run's hidden fault — this never
     reads or reveals it (DoD 4)."""
     store = RunStore(state_dir)
-    state = store.load(run_id)
+    # one call that reaches the sim is one turn; also refuses a closed run
+    # before anything is applied (issue #325).
+    state = store.increment_turns(run_id)
     loaded = load_task(state.task_path)
     instrument = next((i for i in loaded.task.instruments
                        if str(i.address) == str(address)), None)
@@ -305,6 +313,17 @@ def take_measurement(run_id: str, address: str, driver_path: str | Path, *,
                 "params — measuring it needs a different driver shape")
 
     topology = _topology_for_instrument(loaded.task, loaded.card, instrument, state.seed, case)
+    card_sim = _load_card_sim(loaded, state, store, run_id)
+    rail = (next((r for r in loaded.card.rails
+                  if instrument.probe == f"card.{r.test_point}"), None)
+            if instrument.probe is not None else None)
+    if (rail is not None and rail.nominal_v != 0 and card_sim.rail_voltage(rail.name) == 0.0
+            and not (isinstance(topology, dict) and _fault_is_unplugged(topology))):
+        # the card is in protection or destroyed: the rail reads dead, not the
+        # healthy fixed value (issue #325).
+        topology = _fault.harness_for_run(
+            case, rail=rail, seed=state.seed,
+            realized=_fault.RealizedFault("dead", {"shift_v": -rail.nominal_v}))
     sim_log = SimLog(store.sim_log_path(run_id))
     try:
         with sim_log.record_for(str(address)), _load(topology) as hal:
@@ -324,7 +343,9 @@ def take_measurement(run_id: str, address: str, driver_path: str | Path, *,
             f"{read_op} raised {type(e).__name__}: {e}",
             fix="the instrument did not answer this call — if that's unexpected, "
                 "check your driver.py's handling of the case's SCPI dialect") from e
-    return {
+    card = {"state": card_sim.state, "applied": dict(card_sim.applied),
+            "supply_a": card_sim.supply_current()}
+    result = {
         "ok": True,
         "side_effect": "write",
         "run_id": run_id,
@@ -332,7 +353,19 @@ def take_measurement(run_id: str, address: str, driver_path: str | Path, *,
         "case": instrument.case,
         "op": read_op,
         "reading": reading,
+        "card": card,
     }
+    spec = catalogue().get(instrument.case)
+    if spec is not None and spec.fuse_a is not None:
+        # a DMM's current input sits in the card's supply path: a burned fuse
+        # reads 0 A, a destroyed card draws what the damage model says.
+        dmm = Dmm(spec, log_path=store.sim_log_path(run_id), address=str(address))
+        dmm.fuse_blown = str(address) in state.fuses_blown
+        result["current_a"] = dmm.measure_current(card_sim.supply_current())
+        result["fuse"] = dmm.state
+        if dmm.fuse_blown and str(address) not in state.fuses_blown:
+            store.set_fuse_blown(run_id, str(address))
+    return result
 
 
 def answer(run_id: str, value: str, *, state_dir: str | Path = DEFAULT_STATE_DIR

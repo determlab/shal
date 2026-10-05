@@ -92,6 +92,24 @@ def test_drive_cli_shows_state_change_in_json_and_sim_log(tmp_path: Path) -> Non
     assert any(ln["kind"] == "damage" and ln["address"] == "psu0" for ln in lines), lines
 
 
+def test_refused_input_on_closed_run_exits_nonzero_with_fix_in_json(
+        tmp_path: Path, capsys) -> None:
+    from shal_arena.cli import main
+
+    state_dir = str(tmp_path / "state")
+    assert main(["run", str(SAMPLE_TASK), "--state-dir", state_dir, "--json"]) == 0
+    run_id = json.loads(capsys.readouterr().out)["run_id"]
+    assert main(["answer", run_id, "ok", "--state-dir", state_dir, "--json"]) == 0
+    capsys.readouterr()
+    code = main(["drive", run_id, "psu0", "5.0", "--state-dir", state_dir, "--json"])
+    assert code != 0
+    doc = json.loads(capsys.readouterr().out)
+    assert doc["ok"] is False
+    assert set(doc["error"]) == {"type", "message", "fix"}
+    assert "closed" in doc["error"]["message"]
+    assert "shal-arena run" in doc["error"]["fix"]
+
+
 def test_check_reports_exit_1_when_driver_has_problems(tmp_path: Path) -> None:
     from .conftest import FAILING_DRIVER
     state_dir = tmp_path / "state"

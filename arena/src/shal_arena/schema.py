@@ -79,7 +79,6 @@ class Instrument:
     address: Any
     drives: str | None     # "card.<input>"
     probe: str | None      # "card.<test_point>"
-    replacement_usd: float
 
 
 @dataclass(frozen=True)
@@ -150,7 +149,11 @@ def _validate_instruments(value: Any) -> tuple[Instrument, ...]:
     for i, entry in enumerate(value):
         where = f"task.instruments[{i}]"
         _require_dict(entry, where)
-        _require_keys(entry, required={"case", "address", "replacement_usd"},
+        if "replacement_usd" in entry:
+            _fail(f"{where}.replacement_usd: not allowed in a task file",
+                  f"remove replacement_usd from {where}; it lives only in "
+                  "card_sim/catalogue/instruments.yaml, keyed by case")
+        _require_keys(entry, required={"case", "address"},
                       optional={"drives", "probe"}, where=where)
         case = _require_str(entry, "case", where)
         address = entry.get("address")
@@ -167,11 +170,9 @@ def _validate_instruments(value: Any) -> tuple[Instrument, ...]:
         if not wiring.startswith("card."):
             _fail(f"{where}.{wiring_key}: must name a card.<name>, got {wiring!r}",
                   f"set {where}.{wiring_key} to 'card.<input or test point>'")
-        replacement_usd = _require_number(entry, "replacement_usd", where, minimum=0)
         out.append(Instrument(case=case, address=address,
                                drives=wiring if has_drives else None,
-                               probe=wiring if has_probe else None,
-                               replacement_usd=replacement_usd))
+                               probe=wiring if has_probe else None))
     return tuple(out)
 
 

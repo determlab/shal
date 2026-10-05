@@ -14,6 +14,16 @@ from shal_arena.loader import load_task
 from .conftest import SAMPLE_TASK
 
 
+def test_task_file_with_replacement_usd_is_rejected(minimal_task: Path) -> None:
+    doc = yaml.safe_load(minimal_task.read_text(encoding="utf-8"))
+    doc["instruments"][0]["replacement_usd"] = 100
+    minimal_task.write_text(yaml.safe_dump(doc), encoding="utf-8")
+    with pytest.raises(TaskFormatError) as ei:
+        load_task(minimal_task)
+    assert "replacement_usd" in ei.value.message
+    assert "instruments.yaml" in ei.value.fix
+
+
 def test_sample_task_loads_and_cross_checks() -> None:
     loaded = load_task(SAMPLE_TASK)
     assert loaded.task.id == "rail-3v3"
