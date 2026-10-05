@@ -1,0 +1,15 @@
+arena_card: 1
+id: buck-12v-5v
+description: "Fictional card, no real part. 12 V input, buck to 5.0 V, one test point tp_5v."
+inputs:
+  vin: {nominal_v: 12.0}
+rails:
+  5v: {from: vin, nominal_v: 5.0, tol_pct: 3, test_point: tp_5v, min_input_v: 10.5}
+damage:
+  - {input: vin, above_v: 13.5, effect: protection, source: "buck-12v-5v datasheet 5.2 OVP (fictional datasheet)"}
+  - {input: vin, above_v: 15.0, effect: destroyed, source: "buck-12v-5v datasheet 4.1 abs max (fictional datasheet)"}
+faults:
+  - {id: ok, rail: 5v}
+  - {id: low_voltage, rail: 5v, shift_v: -0.50}
+  - {id: noise, rail: 5v, ripple_vpp: 0.30}
+  - {id: open, rail: 5v}
