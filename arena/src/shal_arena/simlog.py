@@ -75,8 +75,13 @@ class SimLog:
     def record_for(self, address: str) -> Iterator[None]:
         """Attach the recorder for the duration of one `with` block — every
         SCPI exchange the sim bus handles while it is open is appended,
-        tagged with ``address``."""
+        tagged with ``address``. Touches the file on entry (issue #314: an
+        attempt that reaches no exchange at all — an unreachable instrument
+        refuses before the bus logs anything — must still leave a real log
+        path behind, not a path that only sometimes exists depending on how
+        the attempt went)."""
         self.path.parent.mkdir(parents=True, exist_ok=True)
+        self.path.touch(exist_ok=True)
         logger = logging.getLogger(_LOGGER_NAME)
         prev_level = logger.level
         handler = _JsonLinesHandler(self.path, address)
