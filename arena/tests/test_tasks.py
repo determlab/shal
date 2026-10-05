@@ -43,6 +43,7 @@ from shal_arena.store import RunStore
 from .conftest import PASSING_DMM_DRIVER, PASSING_DRIVER
 
 _TASKS_DIR = Path(__file__).resolve().parents[1] / "src" / "shal_arena" / "tasks"
+_CARDS_DIR = Path(__file__).resolve().parents[1] / "src" / "shal_arena" / "cards"
 _LEVELS = ("easy", "medium", "hard")
 TASK_PATHS = {level: _TASKS_DIR / f"{level}.yaml" for level in _LEVELS}
 
@@ -77,40 +78,119 @@ def test_task_and_card_are_the_packaged_pair_shal_arena_run_uses(level: str) -> 
     assert loaded.card_path.parent.parent == TASK_PATHS[level].parent.parent
 
 
-@pytest.mark.parametrize("level", _LEVELS)
-def test_fault_moves_the_probed_reading_off_nominal(level: str, tmp_path: Path) -> None:
-    """For THIS task's own (default) seed, a probing measurement must tell
-    the realized fault apart from a healthy reading: 'open' makes the
-    instrument unreachable (a `MeasurementFailed`, itself a detectable
-    signal distinct from any reading at all); a value-class fault
-    ('low_voltage' / 'high_voltage' / 'noise') must move the reading off the
-    rail's nominal voltage; 'ok' must read at nominal."""
+def _seeds_realizing(card, fault_id: str, *, count: int, search_limit: int = 2000) -> list[int]:
+    """The first ``count`` seeds (out of ``search_limit`` tried, from 0) for
+    which `pick_fault` realizes ``fault_id`` on ``card``."""
+    seeds: list[int] = []
+    for seed in range(search_limit):
+        if pick_fault(card, seed) == fault_id:
+            seeds.append(seed)
+            if len(seeds) >= count:
+                break
+    return seeds
+
+
+_TASK_FAULT_PAIRS = [
+    (level, fault_id)
+    for level in _LEVELS
+    for fault_id in [f.id for f in load_task(TASK_PATHS[level]).card.faults]
+]
+
+
+@pytest.mark.parametrize("level,fault_id", _TASK_FAULT_PAIRS)
+def test_every_fault_is_detectable_by_measurement(level: str, fault_id: str,
+                                                   tmp_path: Path) -> None:
+    """Every fault id a card can realize (not only the one picked by the
+    task's own default seed) must be distinguishable, by a probing
+    measurement, from a healthy reading: 'open' makes the instrument
+    unreachable (a `MeasurementFailed`, itself a detectable signal distinct
+    from any reading at all); a value-class fault ('low_voltage' /
+    'high_voltage' / 'noise') must move the reading off the rail's nominal
+    voltage; 'ok' must read at nominal.
+
+    'noise' is checked across (at least) 10 seeds, not one: its realized
+    ripple is rescaled 0.7-1.3x per seed (`fault.py` `_NOISE_SCALE_RANGE`,
+    `realized_fault`), so a single seed proves only that one scaled ripple,
+    not the fault class — e.g. 'hard' (ripple_vpp 0.15) can realize anywhere
+    from 0.105 to 0.195 Vpp."""
     from shal_arena.errors import MeasurementFailed
 
-    state_dir = tmp_path / "state"
     loaded = load_task(TASK_PATHS[level])
     task, card = loaded.task, loaded.card
     probe_instrument = next(i for i in task.instruments if i.probe is not None)
     rail = next(r for r in card.rails if f"card.{r.test_point}" == probe_instrument.probe)
-    fault_id = pick_fault(card, task.seed)
 
-    result = start_run(TASK_PATHS[level], state_dir=state_dir)
-    run_id = result["run_id"]
-    try:
-        measured = take_measurement(run_id, str(probe_instrument.address),
-                                    PASSING_DMM_DRIVER, state_dir=state_dir)
-    except MeasurementFailed:
-        assert fault_id == "open", (
-            f"{level}: measurement failed for a fault other than 'open' ({fault_id!r})")
-        return
+    seed_count = 10 if fault_id == "noise" else 1
+    seeds = _seeds_realizing(card, fault_id, count=seed_count)
+    assert len(seeds) >= seed_count, (
+        f"{level}: could not find {seed_count} seed(s) realizing fault {fault_id!r}")
 
-    reading = measured["reading"]
-    if fault_id == "ok":
-        assert reading == pytest.approx(rail.nominal_v, abs=1e-6)
-    else:
-        assert reading != pytest.approx(rail.nominal_v, abs=1e-6), (
-            f"{level}: fault {fault_id!r} left the reading at nominal "
-            f"({rail.nominal_v}) — not detectable by measurement")
+    for seed in seeds:
+        state_dir = tmp_path / f"state-{seed}"
+        result = start_run(TASK_PATHS[level], seed=seed, state_dir=state_dir)
+        run_id = result["run_id"]
+        try:
+            measured = take_measurement(run_id, str(probe_instrument.address),
+                                        PASSING_DMM_DRIVER, state_dir=state_dir)
+        except MeasurementFailed:
+            assert fault_id == "open", (
+                f"{level}: seed {seed} measurement failed for fault {fault_id!r}, "
+                "not 'open'")
+            continue
+
+        reading = measured["reading"]
+        if fault_id == "ok":
+            assert reading == pytest.approx(rail.nominal_v, abs=1e-6)
+        else:
+            assert reading != pytest.approx(rail.nominal_v, abs=1e-6), (
+                f"{level}: seed {seed}, fault {fault_id!r} left the reading at "
+                f"nominal ({rail.nominal_v}) — not detectable by measurement")
+
+
+# --------------------------------------------------------------------------- #
+# card file names match card ids; every task's card path resolves (#334 step 2)
+# --------------------------------------------------------------------------- #
+
+_ALL_CARD_PATHS = sorted(_CARDS_DIR.glob("*.yaml"))
+_ALL_TASK_PATHS = sorted(_TASKS_DIR.glob("*.yaml"))
+
+
+@pytest.mark.parametrize("card_path", _ALL_CARD_PATHS, ids=lambda p: p.stem)
+def test_card_file_stem_equals_card_id(card_path: Path) -> None:
+    doc = yaml.safe_load(card_path.read_text(encoding="utf-8"))
+    assert card_path.stem == doc["id"], (
+        f"{card_path.name}: file stem does not match card id {doc['id']!r}")
+
+
+@pytest.mark.parametrize("task_path", _ALL_TASK_PATHS, ids=lambda p: p.stem)
+def test_task_card_path_resolves_to_an_existing_file(task_path: Path) -> None:
+    doc = yaml.safe_load(task_path.read_text(encoding="utf-8"))
+    card_path = (task_path.parent / doc["card"]).resolve()
+    assert card_path.is_file(), (
+        f"{task_path.name}: card: {doc['card']!r} does not resolve to a file ({card_path})")
+
+
+# --------------------------------------------------------------------------- #
+# every card is marked fictional (#334 step 3)
+# --------------------------------------------------------------------------- #
+
+@pytest.mark.parametrize("card_path", _ALL_CARD_PATHS, ids=lambda p: p.stem)
+def test_card_description_says_fictional(card_path: Path) -> None:
+    doc = yaml.safe_load(card_path.read_text(encoding="utf-8"))
+    assert doc["description"].startswith("Fictional card"), (
+        f"{card_path.name}: description does not start with 'Fictional card' "
+        f"({doc['description']!r})")
+
+
+@pytest.mark.parametrize("card_path", _ALL_CARD_PATHS, ids=lambda p: p.stem)
+def test_card_damage_sources_say_fictional(card_path: Path) -> None:
+    doc = yaml.safe_load(card_path.read_text(encoding="utf-8"))
+    damage = doc.get("damage") or []
+    assert damage, f"{card_path.name}: card has no damage entries at all"
+    for d in damage:
+        assert "fictional" in d["source"].lower(), (
+            f"{card_path.name}: damage source for input {d['input']!r} does not say "
+            f"'fictional' ({d['source']!r})")
 
 
 # --------------------------------------------------------------------------- #

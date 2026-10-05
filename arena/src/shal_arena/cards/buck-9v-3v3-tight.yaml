@@ -9,7 +9,7 @@ damage:
   - {input: vin, above_v: 10.0, effect: protection, source: "buck-9v-3v3-tight datasheet 6.3 OVP (fictional datasheet)"}
   - {input: vin, above_v: 11.0, effect: destroyed, source: "buck-9v-3v3-tight datasheet 5.1 abs max (fictional datasheet)"}
 faults:
-  - {id: ok}
+  - {id: ok, rail: 3v3}
   - {id: low_voltage, rail: 3v3, shift_v: -0.30}
   - {id: high_voltage, rail: 3v3, shift_v: 0.30}
   - {id: noise, rail: 3v3, ripple_vpp: 0.15}
