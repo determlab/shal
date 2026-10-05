@@ -1,0 +1,89 @@
+name: RC wheels
+
+# Builds the wheel(s) this repo would release, from main, on every push, and
+# saves them as workflow artifacts. Nothing is published anywhere (#339 D1).
+# This is step 1 of the release-candidate chain: a clean-machine run (#340)
+# installs only these artifacts, never an index, to prove what we'd actually
+# ship still works.
+#
+# The version built here always carries a PEP 440 local segment
+# (+rc.<7-char sha>), so it can never collide with, or be confused for, a
+# version actually published to PyPI (CTO review on #339/#104/#33).
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Stamp the RC version (local segment only; never committed)
+        run: |
+          sha7="${GITHUB_SHA:0:7}"
+          sed -i "0,/^version = \"/s/^version = \"\\([^\"]*\\)\"/version = \"\\1+rc.${sha7}\"/" pyproject.toml
+          sed -i "0,/^version = \"/s/^version = \"\\([^\"]*\\)\"/version = \"\\1+rc.${sha7}\"/" arena/pyproject.toml
+      - name: Build pyshal
+        run: |
+          pip install build
+          python -m build --outdir dist-pyshal
+      - name: Build shal-arena
+        run: python -m build --outdir dist-shal-arena arena
+      - name: Write rc-manifest.json (pyshal)
+        run: |
+          python - <<'PY'
+          import glob, hashlib, json, os
+
+          wheels = glob.glob("dist-pyshal/*.whl")
+          assert len(wheels) == 1, f"expected exactly one pyshal wheel, found {wheels}"
+          wheel = wheels[0]
+          version = os.path.basename(wheel).split("-")[1]
+          sha256 = hashlib.sha256(open(wheel, "rb").read()).hexdigest()
+          with open("dist-pyshal/rc-manifest.json", "w") as f:
+              json.dump({
+                  "package": "pyshal",
+                  "version": version,
+                  "sha": "${{ github.sha }}",
+                  "repo": "${{ github.repository }}",
+                  "filename": os.path.basename(wheel),
+                  "sha256": sha256,
+              }, f)
+          PY
+      - name: Write rc-manifest.json (shal-arena)
+        run: |
+          python - <<'PY'
+          import glob, hashlib, json, os
+
+          wheels = glob.glob("dist-shal-arena/*.whl")
+          assert len(wheels) == 1, f"expected exactly one shal-arena wheel, found {wheels}"
+          wheel = wheels[0]
+          version = os.path.basename(wheel).split("-")[1]
+          sha256 = hashlib.sha256(open(wheel, "rb").read()).hexdigest()
+          with open("dist-shal-arena/rc-manifest.json", "w") as f:
+              json.dump({
+                  "package": "shal-arena",
+                  "version": version,
+                  "sha": "${{ github.sha }}",
+                  "repo": "${{ github.repository }}",
+                  "filename": os.path.basename(wheel),
+                  "sha256": sha256,
+              }, f)
+          PY
+      - uses: actions/upload-artifact@v4
+        with:
+          name: rc-pyshal
+          path: dist-pyshal/
+          retention-days: 30
+      - uses: actions/upload-artifact@v4
+        with:
+          name: rc-shal-arena
+          path: dist-shal-arena/
+          retention-days: 30
