@@ -8,7 +8,10 @@ Arena builds on (issue #310).
 
 No account, no hardware: every instrument is a simulator (`shal,sim-scpi`,
 already shipped by `pyshal`), and the player's only deliverable per
-instrument is `driver.py`.
+instrument is `driver.py` — copy
+[`examples/reference_driver/driver.py`](examples/reference_driver/driver.py)
+as your starting point; it already passes `check-driver` for the `scpi-psu`
+case below.
 
 ## Install
 
@@ -16,29 +19,204 @@ instrument is `driver.py`.
 pip install -e ".[dev]"   # from arena/, with pyshal already installed
 ```
 
-## Play
+## Agent path: card, replay, rack and setup.yaml
+
+Every command below is non-interactive, takes `--json`, and is pasted
+straight from a real run. `rail-3v3.yaml`'s own `seed:` picks a fixed fault
+for anyone who runs the task plain — so this walkthrough passes `--seed 1`
+instead, to demonstrate the flow without ever printing (or needing you to
+know) which fault the task's own default seed picks. `<run-id>` is the
+`run_id` the first command printed — sub it in for every command after. An
+error from any command is `{"ok": false, "error": {"type", "message",
+"fix"}}` on stdout, `fix` never empty, matching `shal`'s own `--json` error
+shape (`AGENTS.md`).
+
+**Card** — start a run and read its card (the task, the question, and each
+instrument's datasheet):
 
 ```bash
-shal-arena run src/shal_arena/tasks/rail-3v3.yaml --json
-#  -> {"run_id": "...", "task": {...}, "instruments": [...], ...}
-
-shal-arena check-driver <run-id> psu0 ./driver.py --json
-#  -> lights the psu0 tile when your driver passes the ADK-style check
-#     (issue #311 Agent path; `check` still works as an alias)
-
-shal-arena measure <run-id> dmm0 ./driver.py --json
-#  -> takes YOUR OWN reading through your bound driver: {"reading": 2.9, ...}
-#     (issue #312 Agent path — this is what `answer` checks the sim log for)
-
-shal-arena answer <run-id> low_voltage --json
-#  -> closes the run; "correct": true/false, plus "disqualified", "score"
-#     (the 13-field score file) and "sim_log" (where every `measure` call's
-#     SCPI command was recorded)
+shal-arena run src/shal_arena/tasks/rail-3v3.yaml --seed 1 --json
 ```
 
-Every command is non-interactive and takes `--json`; an error is
-`{"ok": false, "error": {"type", "message", "fix"}}` on stdout, `fix` never
-empty, matching `shal`'s own `--json` error shape (`AGENTS.md`).
+```
+{
+  "ok": true,
+  "side_effect": "write",
+  "run_id": "run-20261005T202840Z-38a82937",
+  "task": {
+    "id": "rail-3v3",
+    "title": "Is the 3V3 rail in spec?",
+    "level": "easy",
+    "card_description": "Fictional card, no real part. 5 V input, buck to 3.3 V, one test point tp_3v3.",
+    "question": "Power the card at 5.0 V. Is the 3V3 rail in spec? Answer ok, or name the fault."
+  },
+  "instruments": [
+    {
+      "address": "psu0",
+      "case": "scpi-psu",
+      "replacement_usd": 1200.0,
+      "datasheet": "# Arena Bench PSU-1 ... (full text; see adk/scpi-psu/docs/datasheet.md) ...",
+      "drives": "card.vin"
+    },
+    {
+      "address": "dmm0",
+      "case": "dmm",
+      "replacement_usd": 1200.0,
+      "datasheet": "# Arena Bench DMM-1 ... (full text; see adk/dmm/docs/datasheet.md) ...",
+      "probe": "card.tp_3v3"
+    }
+  ],
+  "limits": {
+    "max_turns": 60,
+    "max_minutes": 30
+  }
+}
+```
+
+(`datasheet` is each instrument's full command reference, elided above for
+length — it's what you write `driver.py` from; nothing in it or in the
+topology behind it is the hidden fault.)
+
+Write (or copy) a `driver.py` per instrument, check it, then take your own
+reading through it:
+
+```bash
+shal-arena check-driver <run-id> psu0 examples/reference_driver/driver.py --json
+```
+
+```
+{
+  "ok": true,
+  "side_effect": "write",
+  "run_id": "run-20261005T202840Z-38a82937",
+  "address": "psu0",
+  "case": "scpi-psu",
+  "passed": true,
+  "problems": [],
+  "warnings": []
+}
+```
+
+```bash
+shal-arena measure <run-id> psu0 examples/reference_driver/driver.py --json
+```
+
+```
+{
+  "ok": true,
+  "side_effect": "write",
+  "run_id": "run-20261005T202840Z-38a82937",
+  "address": "psu0",
+  "case": "scpi-psu",
+  "op": "measure_voltage",
+  "reading": 0.0,
+  "card": {
+    "state": "ok",
+    "applied": {
+      "vin": 5.0
+    },
+    "supply_a": 0.05
+  }
+}
+```
+
+Answer and close the run. `ok` below is a placeholder answer to show the
+command's shape — the real method for picking a value is reading the
+instruments, not the one this walkthrough happens to pass:
+
+```bash
+shal-arena answer <run-id> ok --json
+```
+
+```
+{
+  "ok": true,
+  "side_effect": "write",
+  "run_id": "run-20261005T202840Z-38a82937",
+  "task_path": "src/shal_arena/tasks/rail-3v3.yaml",
+  "card_path": "/path/to/arena/src/shal_arena/cards/buck-5v-3v3.yaml",
+  "given": "ok",
+  "fault_id": "low_voltage",
+  "correct": false,
+  "closed_at": "2026-10-05T20:28:47Z",
+  "disqualified": true,
+  "score": {
+    "task_id": "rail-3v3",
+    "seed": 1,
+    "fault_type": "low_voltage",
+    "faults_total": 1,
+    "faults_caught": 0,
+    "false_fails": 0,
+    "error_fail_correct": 0,
+    "duration_s": 7.0,
+    "turns": 2,
+    "gate_stops": 0,
+    "schema_version": 1,
+    "game_version": "0.4.0",
+    "record_sha256": "1a50e0855e36a80e3c4a6cb55cfe7034ef5769a6d58dfef83ff8425ecd39f3ba"
+  },
+  "sim_log": ".shal-arena/run-20261005T202840Z-38a82937.simlog.jsonl"
+}
+```
+
+This run is honestly `"disqualified": true`: the reference driver above
+only covers `psu0` (which `drives` the card, it doesn't `probe` it), so
+`measure` was never called on `dmm0`, the one instrument this task's
+question is actually about. Call `measure` on the probe instrument you
+intend to answer about to avoid that.
+
+**Replay** — build the offline result card for a closed run:
+
+```bash
+shal-arena replay <run-id> --json
+```
+
+```
+{
+  "ok": true,
+  "side_effect": "write",
+  "run_id": "run-20261005T202840Z-38a82937",
+  "card_path": ".shal-arena/run-20261005T202840Z-38a82937.card.html"
+}
+```
+
+`<run-id>.card.html` is a single offline file: headline, false-fail count
+stated openly, the call-by-call replay (a refused `drive` in red), "Copy
+result" and "Save as image", and the one network reference anywhere on the
+page (github.com/determlab/shal). It refuses instead of writing anything
+until `answer` has closed the run — there is no record/score file yet.
+
+**Rack** — drag instrument tiles into a `setup.yaml`, as a page:
+
+```bash
+shal-arena rack --out rack.html --json
+```
+
+```
+{
+  "ok": true,
+  "side_effect": "write",
+  "rack_path": "rack.html"
+}
+```
+
+**setup.yaml** — the rack page's own mechanism, without the page:
+
+```bash
+shal-arena setup-yaml scpi-psu dmm --json
+```
+
+```
+{
+  "ok": true,
+  "side_effect": "none",
+  "setup_yaml": "shal_version: 1\nroot:\n  bench0:\n    driver: shal,sim-scpi\n    address: sim0\n    children:\n      scpi_psu:\n        driver: arena,bench-psu1\n        address: 1\n  bench1:\n    driver: shal,sim-scpi\n    address: sim1\n    children:\n      dmm:\n        driver: arena,bench-dmm1\n        address: 1\n"
+}
+```
+
+Pass `--out <path>` to also write that YAML to a file. `setup-yaml` and the
+page it backs take any of the packaged case names (`shal-arena setup-yaml
+--help`, or see `src/shal_arena/cases.py`'s `CASES`).
 
 ## Task and card format (v1)
 
@@ -94,41 +272,28 @@ Issue #313 ships the damage model and the generic card simulator
 Issue #314 adds benchmark mode: the same task played with SHAL (today's
 `run`/`check-driver`/`measure`/`drive`/`answer`, unmodified) and without it
 (raw SCPI access — no driver.py, no gate, no record), on the identical seeded
-world, so the two are comparable:
+world, so the two are comparable. Illustrative only below — unlike every
+other block in this file, `bench` needs a `--policy` file you write (one
+Python file defining `play_with_shal(task_path, seed, state_dir)` and
+`play_without_shal(...)`, each returning `(run_id, the dict answer
+returned)`), so there's no single command a cold agent can paste and run:
 
-```bash
+```
 shal-arena bench src/shal_arena/tasks/rail-3v3.yaml --runs 10 --policy ./policy.py --json
 #  -> {"with_shal": {"median_turns": ..., "turns_range": [...], "sim_logs": [...]}, "without_shal": {...}}
 ```
 
-`--policy` is a Python file defining `play_with_shal(task_path, seed,
-state_dir)` and `play_without_shal(...)`, each returning `(run_id, the dict
-answer returned)` — your own agent, or a scripted one; `shal-arena` plays no
-model of its own (running an actual model across many tasks and publishing
-numbers is out of scope for this ticket — see `shal_arena.bench`'s own
-docstring). One turn = one call that reaches the sim on either side (`check`,
-`measure`, `drive`, or a raw SCPI command, via the new `shal_arena.runner.
-raw_scpi`); `answer` is never a turn. `--runs` below 10 is refused, naming the
-fix. Results always report both sides — a task where "without SHAL" does
-better is never filtered out.
+Your own agent, or a scripted one — `shal-arena` plays no model of its own
+(running an actual model across many tasks and publishing numbers is out of
+scope for this ticket — see `shal_arena.bench`'s own docstring). One turn =
+one call that reaches the sim on either side (`check`, `measure`, `drive`,
+or a raw SCPI command, via `shal_arena.runner.raw_scpi`); `answer` is never
+a turn. `--runs` below 10 is refused, naming the fix. Results always report
+both sides — a task where "without SHAL" does better is never filtered out.
 
 Issue #315 adds the replay/result-card and rack pages, both offline single
-HTML files built by `shal_arena.replay`:
-
-```bash
-shal-arena answer <run-id> ok --json      # closes the run first
-shal-arena replay <run-id> --json         # -> {"card_path": "..."}
-#  writes <run-id>.card.html: headline, false-fail count stated openly, the
-#  call-by-call replay (a refused `drive` in red), "Copy result" and "Save
-#  as image", and the one network reference anywhere on the page
-#  (github.com/determlab/shal). Never buildable before `answer` has closed
-#  the run — there is no record/score file yet, so it refuses instead.
-
-shal-arena rack --out rack.html           # drag instrument tiles -> setup.yaml
-shal-arena setup-yaml scpi-psu dmm --json # the rack's own mechanism, no page
-```
-
-The turn count the card shows is `score["turns"]` — the field that already
-counts `check`+`measure`+`drive` turns the CTO's ruling on #314 fixed (a
-`drive` that refuses or otherwise fails still costs its turn; `answer` never
-does).
+HTML files built by `shal_arena.replay` — see "Agent path" above for a
+real, worked example of `replay`, `rack` and `setup-yaml`. The turn count
+the card shows is `score["turns"]` — the field that already counts
+`check`+`measure`+`drive` turns the CTO's ruling on #314 fixed (a `drive`
+that refuses or otherwise fails still costs its turn; `answer` never does).
