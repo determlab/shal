@@ -110,11 +110,16 @@ def _short_sha(sha256: str) -> str:
 def _headline(score: dict[str, Any]) -> str:
     caught, total = score["faults_caught"], score["faults_total"]
     false_fails = score["false_fails"]
-    return f"{caught} of {total} faults caught. {false_fails} false fails."
+    noun = "false fail" if false_fails == 1 else "false fails"
+    return f"{caught} of {total} faults caught. {false_fails} {noun}."
 
 
 def _bottom_line(score: dict[str, Any]) -> str:
     return f"replay · simulated · seed {score['seed']}"
+
+
+_SAFETY_LINE = "Simulated instruments only. Nothing here touches real hardware."
+_GATE_STOP_SENTENCE = "Stopped by the gate before it ran. Nothing was changed."
 
 
 _KIND_LABEL = {
@@ -129,18 +134,23 @@ def _timeline_row_html(entry: dict[str, Any]) -> str:
     label = html.escape(_KIND_LABEL.get(kind, kind))
     address = html.escape(str(entry.get("address") or ""))
     css_class = "row-refused" if kind == "refused" else f"row-{kind}"
+    gate_note_html = ""
     if kind == "check":
         result = "pass" if entry["detail"].get("passed") else "fail"
         css_class = "row-check-pass" if entry["detail"].get("passed") else "row-check-fail"
     elif kind == "refused":
         result = "refused"
+        # the gate stopped a would-be `drive_input` write (issue #330); never
+        # shown for a bad-argument error, which raises before any sim-log
+        # line is written and so never reaches this row at all.
+        gate_note_html = f'<br><span class="gate-note">{html.escape(_GATE_STOP_SENTENCE)}</span>'
     elif kind in ("protection", "damage"):
         result = kind
     else:
         result = "ok"
     return (
         f'<tr class="{css_class}"><td>{html.escape(entry["ts"])}</td>'
-        f"<td>{label}</td><td>{address}</td><td>{html.escape(result)}</td></tr>"
+        f"<td>{label}</td><td>{address}</td><td>{html.escape(result)}{gate_note_html}</td></tr>"
     )
 
 
@@ -203,6 +213,7 @@ def render_card(data: CardData) -> str:
 <div class="badge">Replay</div>
 <h1>{html.escape(headline)}</h1>
 <div class="bottom-line">{html.escape(bottom_line)}</div>
+<div class="safety-line">{html.escape(_SAFETY_LINE)}</div>
 <div class="meta-line">fault: {fault_type} · game {game_version} · turns {turns} ·
 record {short_sha}</div>
 {disqualified_html}

@@ -19,7 +19,12 @@ import shal
 import yaml
 
 from shal_arena.errors import ArenaError, CheckCouldNotRun, MeasurementFailed
-from shal_arena.replay.card import RunNotFinished, build_result_card, load_card_data
+from shal_arena.replay.card import (
+    RunNotFinished,
+    _headline,
+    build_result_card,
+    load_card_data,
+)
 from shal_arena.replay.rack import (
     _JS_BUILD_SETUP_YAML,
     build_setup_yaml,
@@ -113,6 +118,65 @@ def test_a_refused_drive_still_counts_its_turn_directly_on_the_store(tmp_path: P
 
     state = RunStore(state_dir).load(run_id)
     assert state.turns == 1
+
+
+# --------------------------------------------------------------------------- #
+# issue #358: singular/plural `false fail(s)` wording on the headline.
+# --------------------------------------------------------------------------- #
+
+def test_headline_false_fails_is_singular_only_at_one() -> None:
+    base = {"faults_caught": 1, "faults_total": 3}
+    assert _headline({**base, "false_fails": 0}) == "1 of 3 faults caught. 0 false fails."
+    assert _headline({**base, "false_fails": 1}) == "1 of 3 faults caught. 1 false fail."
+    assert _headline({**base, "false_fails": 2}) == "1 of 3 faults caught. 2 false fails."
+
+
+# --------------------------------------------------------------------------- #
+# issue #358: the safety line sits under the existing bottom line.
+# --------------------------------------------------------------------------- #
+
+def test_card_html_has_the_safety_line_and_keeps_the_bottom_line(tmp_path: Path) -> None:
+    run_id, state_dir = _play_full_run(tmp_path)
+    card_html = build_result_card(run_id, state_dir=state_dir)
+
+    assert "Simulated instruments only. Nothing here touches real hardware." in card_html
+    assert "replay · simulated · seed" in card_html
+
+
+# --------------------------------------------------------------------------- #
+# issue #358: the gate-stop sentence appears next to a refused drive, and
+# only there — never for a bad-argument drive error.
+# --------------------------------------------------------------------------- #
+
+def test_gate_refused_drive_shows_the_stop_sentence_on_the_card(tmp_path: Path) -> None:
+    state_dir = tmp_path / "state"
+    result = start_run(SAMPLE_TASK, state_dir=state_dir)
+    run_id = result["run_id"]
+
+    # 6.5 V on psu0 breaches buck-5v-3v3's 6.0 V abs-max (damage); the SHAL
+    # gate (issue #330) refuses it before anything is applied.
+    refusal = drive_input(run_id, "psu0", 6.5, state_dir=state_dir)
+    assert refusal["sent"] is False and refusal["rejected"] == "approval"
+
+    answer(run_id, "ok", state_dir=state_dir)
+    card_html = build_result_card(run_id, state_dir=state_dir)
+
+    assert "drive — refused" in card_html
+    assert "Stopped by the gate before it ran. Nothing was changed." in card_html
+
+
+def test_bad_argument_drive_never_shows_the_gate_stop_sentence(tmp_path: Path) -> None:
+    state_dir = tmp_path / "state"
+    result = start_run(SAMPLE_TASK, state_dir=state_dir)
+    run_id = result["run_id"]
+
+    with pytest.raises(CheckCouldNotRun):  # bad address: raises before any sim-log write
+        drive_input(run_id, "no-such-address", 5.0, state_dir=state_dir)
+
+    answer(run_id, "ok", state_dir=state_dir)
+    card_html = build_result_card(run_id, state_dir=state_dir)
+
+    assert "Stopped by the gate before it ran. Nothing was changed." not in card_html
 
 
 # --------------------------------------------------------------------------- #
