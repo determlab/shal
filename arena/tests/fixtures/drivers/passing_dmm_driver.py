@@ -1,7 +1,7 @@
 """A `driver.py` that passes the `dmm` case's ADK-style check. `override=True`
-on registration mirrors `passing_psu_driver.py`: re-importing this file in a
-later test replaces whatever `arena,bench-dmm1` candidate an earlier test's
-fixture left behind, so tests can run in any order."""
+on registration makes re-importing this file in a later test replace whatever
+`arena,bench-dmm1` candidate an earlier test's fixture left behind, so tests
+can run in any order without an "ambiguous compatible" collision."""
 from __future__ import annotations
 
 from shal import registry

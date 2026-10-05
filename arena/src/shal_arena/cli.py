@@ -1,7 +1,8 @@
-"""``shal-arena`` — the CLI front door for SHAL Arena (issue #310).
+"""``shal-arena`` — the CLI front door for SHAL Arena (issue #310; the
+``check-driver`` command is issue #311's Agent path).
 
     shal-arena run tasks/rail-3v3.yaml --json
-    shal-arena check <run-id> psu0 ./driver.py --json
+    shal-arena check-driver <run-id> psu0 ./driver.py --json
     shal-arena answer <run-id> low_voltage --json
 
 Non-interactive by design: no prompt ever blocks a command, so an agent can
@@ -57,7 +58,7 @@ def _cmd_run(args: argparse.Namespace) -> int:
 
 def _cmd_check(args: argparse.Namespace) -> int:
     try:
-        result = check_instrument_driver(args.run_id, args.address, args.driver,
+        result = check_instrument_driver(args.run_id, args.instrument, args.manifest,
                                          state_dir=args.state_dir)
     except ArenaError as e:
         return _report_error(e, args.json)
@@ -65,7 +66,7 @@ def _cmd_check(args: argparse.Namespace) -> int:
         _json_out(result)
     else:
         tile = "LIT" if result["passed"] else "not lit"
-        print(f"{args.address}: tile {tile}")
+        print(f"{args.instrument}: tile {tile}")
         for p in result["problems"]:
             print(f"  PROBLEM  {p}")
     return 0 if result["passed"] else 1
@@ -104,10 +105,12 @@ def _build_parser() -> argparse.ArgumentParser:
     add_common(p_run)
     p_run.set_defaults(func=_cmd_run)
 
-    p_check = sub.add_parser("check", help="ADK-style driver check: lights a tile on pass")
+    p_check = sub.add_parser(
+        "check-driver", aliases=["check"],
+        help="ADK-style driver check: lights a tile on pass (issue #311 Agent path)")
     p_check.add_argument("run_id")
-    p_check.add_argument("address", help="the instrument address from `run`'s output")
-    p_check.add_argument("driver", help="path to your driver.py")
+    p_check.add_argument("instrument", help="the instrument address from `run`'s output")
+    p_check.add_argument("manifest", help="path to your driver.py")
     add_common(p_check)
     p_check.set_defaults(func=_cmd_check)
 

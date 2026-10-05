@@ -1,6 +1,7 @@
-"""The packaged ADK cases (CTO ruling, issue #310): each ``case:`` named in a
-``task.yaml`` is one of these. A case ships two things, same split as
-`shal docs --example <name>` for the main SDK:
+"""The packaged ADK cases (CTO ruling, issue #310; packaged into
+``shal_arena/adk/`` by issue #311): each ``case:`` named in a ``task.yaml`` is
+one of these. A case ships two things, same split as `shal docs --example
+<name>` for the main SDK:
 
 - ``docs/`` — a datasheet-style description of a fictional instrument's
   command set. This is what the player reads to write ``driver.py``; nothing
@@ -11,7 +12,8 @@
   runner imports the player's ``driver.py`` (which registers the same
   ``compatible``, exactly like an ADK reference driver) and then runs
   `shal.conformance.check_driver(compatible, topology=harness/topology.yaml)`
-  against it — the "ADK-style driver check" in the issue's Scope.
+  against it — the "ADK-style driver check" in the issue's Scope, exposed to
+  an agent as ``shal-arena check-driver`` (issue #311 Agent path).
 
 Building new instrument sims is explicitly out of scope for this ticket
 (issue #310 "Out of scope: ... sims"); both cases below reuse `shal`'s own
@@ -28,7 +30,7 @@ from pathlib import Path
 
 from .errors import TaskFormatError
 
-_CASES_DIR = Path(__file__).resolve().parent / "cases"
+_CASES_DIR = Path(__file__).resolve().parent / "adk"
 
 _sim_imported: set[str] = set()
 

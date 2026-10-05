@@ -22,8 +22,9 @@ pip install -e ".[dev]"   # from arena/, with pyshal already installed
 shal-arena run src/shal_arena/tasks/rail-3v3.yaml --json
 #  -> {"run_id": "...", "task": {...}, "instruments": [...], ...}
 
-shal-arena check <run-id> psu0 ./driver.py --json
+shal-arena check-driver <run-id> psu0 ./driver.py --json
 #  -> lights the psu0 tile when your driver passes the ADK-style check
+#     (issue #311 Agent path; `check` still works as an alias)
 
 shal-arena answer <run-id> low_voltage --json
 #  -> closes the run; "correct": true/false, plus "disqualified", "score"
