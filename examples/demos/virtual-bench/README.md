@@ -7,19 +7,13 @@ below.
 
 ## Install
 
-`pytest-shal` isn't on PyPI yet (it's pinned to a commit of its own repo), so
-this needs two installs instead of one:
-
 ```bash
-pip install pyshal pytest
-pip install --no-deps "pytest-shal @ git+https://github.com/determlab/pytest-shal@e240b07"
+pip install pytest "pyshal @ git+https://github.com/determlab/shal@18482bd65daff0f1d69b30a17c7ed155dd308662"
+pip install "pytest-shal @ git+https://github.com/determlab/pytest-shal@9eb77552aa1618783a96201140765b1492525aaf"
 ```
 
-The second line prints a resolver warning —
-`pytest-shal 0.0.1 requires pyshal<0.4,>=0.3.0, but you have pyshal 0.4.0 which
-is incompatible` — because pytest-shal's own pin predates pyshal's #217 (the
-per-Hal approver it actually needs, which shipped in pyshal 0.4.0). `--no-deps`
-skips that resolution on purpose; the plugin runs fine against this pyshal.
+After the next PyPI release (pyshal 0.4.0 and a pytest-shal release) this
+becomes `pip install pyshal pytest-shal`.
 
 ## Run it
 
@@ -81,8 +75,8 @@ doesn't carry it yet. A one-line fix (`pytest_shal/plugin.py::_note`, the
 
 ## Agent path
 
-Read only this file, run `python run_bench.py` from a clean venv (the two
-installs above), read the printed JSON's `verdict` and `cause`. On
+Read only this file, run `python run_bench.py` from a clean venv (the install
+block above), read the printed JSON's `verdict` and `cause`. On
 `verdict: error`, `cause: transport` means the instrument at the address
 named in stderr never answered — check the simulated wiring (`bench.yaml`'s
 `address:`/`config.probe:`), or drop `--unplug`/`$SHAL_SIM_UNPLUG` if this
