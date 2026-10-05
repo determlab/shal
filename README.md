@@ -166,6 +166,11 @@ any node for its sim and **nothing in your code changes**.
 pip install pyshal      # package is `pyshal`; you import it as `shal`
 ```
 
+That installs pyshal 0.3.0, the latest PyPI release, which every command below
+runs on except where noted. A command marked **(main only, not in the PyPI
+release yet)** needs the unreleased source instead:
+`pip install git+https://github.com/determlab/shal`.
+
 ```python
 import shal
 ```
@@ -277,12 +282,13 @@ shal docs --list --json
 `shal tools` lists every tool with its kind (`read`, `write` or `gated`);
 `shal probe` runs the reads and lists the writes it did not run; `shal docs
 --list` lists the reference drivers. [Routes and `shal records`](#routes-and-the-record-store)
-take `--json` too, from pyshal 0.4.0.
+take `--json` too (main only, not in the PyPI release yet).
 
 ### Next
 
 **Samples — small programs that show what SHAL does.** They ship inside the
-package, so there is nothing to clone and no network needed:
+package, so there is nothing to clone and no network needed.
+(main only, not in the PyPI release yet):
 
 ```bash
 shal docs --samples                     # what there is
@@ -464,25 +470,27 @@ guide, and `shal check <compatible>` tells you what your driver is still missing
 
 ## Routes and the record store
 
-Needs pyshal 0.4.0 or later.
+Needs pyshal 0.4.0 or later (main only, not in the PyPI release yet).
 
 `shal routes` prints the routes a node declares, in order (a node without
 `routes:` shows its one main route). `shal call ... --via <name>` pins one route
 for a call:
 
 ```bash
-shal routes sim.yaml ambient_temp --json
+shal routes sim.yaml ambient_temp --json   # main only, not in the PyPI release yet
 ```
 
 A setup that writes records (`record.write()`) keeps them in `records.db` in its
-directory. `shal records` reads that store, newest first, and never writes to it:
+directory. `shal records` reads that store, newest first, and never writes to it
+(main only, not in the PyPI release yet):
 
 ```bash
 shal records . --verdict fail --json   # DIR (default .), filtered, one JSON document
 ```
 
 A directory with no `records.db` is exit 1 with a `fix` in the message. A store
-written by a newer `record_version` is refused unless you pass `--skip-newer`.
+written by a newer `record_version` is refused unless you pass `--skip-newer`
+(main only, not in the PyPI release yet).
 
 ---
 
@@ -582,13 +590,13 @@ hardware — swap in a real transport later, and your code doesn't change.
 - ✅ Machine-readable CLI: `--json` on `shal probe`, `shal tools` and
   `shal docs --list`
 
-**In main, released with v0.4.0:**
+**In main, released with v0.4.0 (main only, not in the PyPI release yet):**
 
 - ✅ Named routes for multi-path devices (`routes:` in the topology,
   `shal routes`, `shal call --via <name>`; a changing op is never re-sent on
-  another route after an unknown delivery)
+  another route after an unknown delivery) — main only, not in the PyPI release yet
 - ✅ `shal records` reads the record store, and `--json` on `shal call`,
-  `shal routes`, `shal check` and `shal records`
+  `shal routes`, `shal check` and `shal records` — main only, not in the PyPI release yet
 
 **Designed, in progress — Phase 2:**
 
