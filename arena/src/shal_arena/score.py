@@ -26,6 +26,10 @@ import time
 from pathlib import Path
 from typing import Any
 
+# not a direct dependency of arena/pyproject.toml — pyshal already requires
+# it (shal.conformance uses it too), and adding a pyproject.toml dependency
+# is a .agent-loop.yml hard stop (a human should decide whether to make this
+# explicit rather than relying on pyshal's own transitive requirement).
 import jsonschema
 
 SCHEMA_VERSION = 1
