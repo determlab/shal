@@ -152,6 +152,39 @@ def test_above_the_declared_limit_is_rejected(volts: float) -> None:
     assert healthy == pytest.approx(TARGET_VOLTS, rel=TOLERANCE)
 
 
+def test_cli_call_rejects_over_limit_set_voltage_with_json() -> None:
+    """Issue #350 (CTO review, #359, part 2): the same over-limit 5 V request,
+    driven through the real CLI entry point (`python -m shal.cli call`, as
+    tests/test_cli_call.py does) instead of the Python API.
+
+    `set_voltage` is labelled `actuator` (it energizes the simulated output
+    now), so `shal call` refuses it for approval (D4: the agent that runs a
+    command cannot approve its own call) BEFORE it ever reaches the limits
+    Guard — the same refusal a healthy 3.3 V request would get. So the CLI's
+    machine-readable error here is `ApprovalRequired`, not `LimitsRejected`;
+    what this test proves is the property that actually matters at this
+    boundary: the CLI can never push a voltage to the simulated PSU, in or
+    out of the declared 3.6 V limit, and its JSON always says so (`sent:
+    false`) and always carries a `fix`. The limit Guard itself (`LimitError`,
+    "nothing was sent") is exercised above, through the Python API under an
+    approver — the only way `set_voltage` ever actually runs.
+    """
+    result = subprocess.run(
+        [sys.executable, "-m", "shal.cli", "call", str(DEMO_DIR / "bench.yaml"),
+         "psu", "set_voltage", "5", "--json"],
+        cwd=ROOT, capture_output=True, text=True, timeout=60,
+    )
+    assert result.returncode != 0, result.stdout
+    doc = json.loads(result.stdout)
+    assert doc["ok"] is False
+    assert doc["sent"] is False  # nothing was sent to the simulated PSU
+    assert doc["rejected"] == "approval"
+    error = doc["error"]
+    assert set(error) == {"type", "message", "fix"}
+    assert error["type"] == "ApprovalRequired"
+    assert error["fix"]  # the one command/change that fixes it (AGENTS.md's JSON contract)
+
+
 # ---------------------------------------------------------------------------
 # README install block (issue #345): every `pip install` source must name a
 # pinned git commit or a pinned package version — never a bare, unpinned
