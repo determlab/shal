@@ -170,9 +170,11 @@ def drive_input(run_id: str, address: str, volts: float, *,
     result = card_sim.apply_input(input_name, volts, gate=_refuse_damage,
                                   address=str(address))
     store.set_card_state(run_id, applied=card_sim.applied, destroyed=card_sim.destroyed)
+    # side_effect stays "write" from as_dict() even on a refusal: it counted a
+    # turn and wrote a refused line to the sim log (CTO review on #330,
+    # following the #328 ruling for apply_input itself).
     out = {"run_id": run_id, "address": instrument.address, **result.as_dict()}
     if not result.sent:  # the gate stopped it: nothing was applied (issue #330)
-        out["side_effect"] = "none"
         out["reason"] = (f"{volts} V on {input_name} would damage the card; "
                          "the SHAL gate refused it and nothing was sent")
         out["fix"] = "pick a voltage inside the card's documented input range"

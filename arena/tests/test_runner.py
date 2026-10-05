@@ -152,7 +152,9 @@ def test_overvoltage_drive_is_refused_by_the_gate_on_the_shal_side(tmp_path: Pat
     drive = drive_input(run_id, "psu0", 30.0, state_dir=tmp_path)
     assert drive["sent"] is False
     assert drive["rejected"] == "approval"
-    assert drive["side_effect"] == "none"
+    # still "write": it counted a turn and wrote a refused line to the sim
+    # log (CTO review on #330, following the #328 ruling).
+    assert drive["side_effect"] == "write"
     assert drive["fix"]
     state = RunStore(tmp_path).load(run_id)
     assert state.card_destroyed is False
