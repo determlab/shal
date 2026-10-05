@@ -4,7 +4,7 @@ description: "Fictional card, no real part. 9 V input, buck to 3.3 V, tight 2% t
 inputs:
   vin: {nominal_v: 9.0}
 rails:
-  3v3: {from: vin, nominal_v: 3.3, tol_pct: 2, test_point: tp_3v3, min_input_v: 8.5}
+  3v3: {from: vin, nominal_v: 3.3, tol_pct: 2, test_point: tp_3v3, min_input_v: 8.5, tol_source: "buck-9v-3v3-tight datasheet 3.2 output accuracy (fictional datasheet)"}
 damage:
   - {input: vin, above_v: 10.0, effect: protection, source: "buck-9v-3v3-tight datasheet 6.3 OVP (fictional datasheet)"}
   - {input: vin, above_v: 11.0, effect: destroyed, source: "buck-9v-3v3-tight datasheet 5.1 abs max (fictional datasheet)"}
