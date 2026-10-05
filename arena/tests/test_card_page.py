@@ -7,7 +7,9 @@ never a hand-written fixture — so these tests exercise the same artifacts
 `shal-arena replay` would write for an actual run."""
 from __future__ import annotations
 
+import json
 import re
+import shutil
 import subprocess
 import sys
 from pathlib import Path
@@ -18,7 +20,12 @@ import yaml
 
 from shal_arena.errors import ArenaError, CheckCouldNotRun, MeasurementFailed
 from shal_arena.replay.card import RunNotFinished, build_result_card, load_card_data
-from shal_arena.replay.rack import build_setup_yaml, rack_tiles, render_rack_page
+from shal_arena.replay.rack import (
+    _JS_BUILD_SETUP_YAML,
+    build_setup_yaml,
+    rack_tiles,
+    render_rack_page,
+)
 from shal_arena.runner import (
     answer,
     check_instrument_driver,
@@ -211,6 +218,30 @@ def test_build_setup_yaml_rejects_an_empty_rack() -> None:
         build_setup_yaml([])
 
 
+def test_rack_page_js_builder_matches_the_python_builder(tmp_path: Path) -> None:
+    """CTO review on #327: the page's embedded `_JS_BUILD_SETUP_YAML` is a
+    second, hand-written copy of `build_setup_yaml` (one for a browser drag,
+    one for a pytest/CLI call) — this pins the two together so a future edit
+    to either one that drifts from the other fails here, not in a browser."""
+    node = shutil.which("node")
+    if node is None:
+        pytest.skip("node not available")
+
+    case_names = ["dmm", "scpi-psu"]
+    compat_by_case = {t.case: t.compatible for t in rack_tiles()}
+    script = tmp_path / "build.mjs"
+    script.write_text(
+        _JS_BUILD_SETUP_YAML
+        + "\nconsole.log(buildSetupYaml(" + json.dumps(case_names) + ", "
+        + json.dumps(compat_by_case) + "));\n",
+        encoding="utf-8")
+
+    proc = subprocess.run([node, str(script)], capture_output=True, text=True, timeout=30)
+    assert proc.returncode == 0, proc.stderr
+
+    assert yaml.safe_load(proc.stdout) == yaml.safe_load(build_setup_yaml(case_names))
+
+
 def test_rack_page_renders_offline_and_has_both_tiles() -> None:
     page = render_rack_page()
     assert "<!doctype html>" in page.lower()
@@ -233,7 +264,6 @@ def _run_cli(*args: str) -> subprocess.CompletedProcess:
 def test_cli_replay_writes_the_card_after_answer(tmp_path: Path) -> None:
     state_dir = tmp_path / "state"
     run_proc = _run_cli("run", str(SAMPLE_TASK), "--state-dir", str(state_dir), "--json")
-    import json
     run_id = json.loads(run_proc.stdout)["run_id"]
     _run_cli("measure", run_id, "dmm0", str(PASSING_DMM_DRIVER),
              "--state-dir", str(state_dir), "--json")
@@ -250,7 +280,6 @@ def test_cli_replay_writes_the_card_after_answer(tmp_path: Path) -> None:
 def test_cli_replay_before_answer_refuses(tmp_path: Path) -> None:
     state_dir = tmp_path / "state"
     run_proc = _run_cli("run", str(SAMPLE_TASK), "--state-dir", str(state_dir), "--json")
-    import json
     run_id = json.loads(run_proc.stdout)["run_id"]
 
     proc = _run_cli("replay", run_id, "--state-dir", str(state_dir), "--json")
@@ -263,7 +292,29 @@ def test_cli_replay_before_answer_refuses(tmp_path: Path) -> None:
 def test_cli_setup_yaml_matches_the_python_builder(tmp_path: Path) -> None:
     proc = _run_cli("setup-yaml", "dmm", "scpi-psu", "--json")
     assert proc.returncode == 0, proc.stderr
-    import json
     doc = json.loads(proc.stdout)
     assert yaml.safe_load(doc["setup_yaml"]) == yaml.safe_load(
         build_setup_yaml(["dmm", "scpi-psu"]))
+    assert doc["side_effect"] == "none"  # no --out: nothing written to disk
+
+
+def test_cli_replay_and_rack_json_declare_their_side_effect(tmp_path: Path) -> None:
+    """CTO review on #327: every action declares its side effect — `replay`,
+    `rack` and `setup-yaml --out` all write a file, so their `--json` must
+    say `"side_effect": "write"`, not leave it out."""
+    state_dir = tmp_path / "state"
+    run_proc = _run_cli("run", str(SAMPLE_TASK), "--state-dir", str(state_dir), "--json")
+    run_id = json.loads(run_proc.stdout)["run_id"]
+    _run_cli("measure", run_id, "dmm0", str(PASSING_DMM_DRIVER),
+             "--state-dir", str(state_dir), "--json")
+    _run_cli("answer", run_id, "ok", "--state-dir", str(state_dir), "--json")
+
+    replay_proc = _run_cli("replay", run_id, "--state-dir", str(state_dir),
+                           "--out", str(tmp_path / "card.html"), "--json")
+    assert json.loads(replay_proc.stdout)["side_effect"] == "write"
+
+    rack_proc = _run_cli("rack", "--out", str(tmp_path / "rack.html"), "--json")
+    assert json.loads(rack_proc.stdout)["side_effect"] == "write"
+
+    setup_proc = _run_cli("setup-yaml", "dmm", "--out", str(tmp_path / "setup.yaml"), "--json")
+    assert json.loads(setup_proc.stdout)["side_effect"] == "write"

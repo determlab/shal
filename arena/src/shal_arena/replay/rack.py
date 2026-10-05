@@ -235,7 +235,7 @@ document.getElementById('download-btn').addEventListener('click', () => {{
   a.href = url;
   a.download = 'setup.yaml';
   a.click();
-  URL.revokeObjectURL(url);
+  setTimeout(() => URL.revokeObjectURL(url), 0);
 }});
 
 document.getElementById('copy-btn').addEventListener('click', () => {{

@@ -129,7 +129,8 @@ def _cmd_replay(args: argparse.Namespace) -> int:
     out_path = Path(args.out) if args.out else Path(args.state_dir) / f"{args.run_id}.card.html"
     out_path.write_text(card_html, encoding="utf-8")
     if args.json:
-        _json_out({"ok": True, "run_id": args.run_id, "card_path": str(out_path)})
+        _json_out({"ok": True, "side_effect": "write", "run_id": args.run_id,
+                  "card_path": str(out_path)})
     else:
         print(f"wrote {out_path}")
     return 0
@@ -139,7 +140,7 @@ def _cmd_rack(args: argparse.Namespace) -> int:
     out_path = Path(args.out)
     out_path.write_text(render_rack_page(), encoding="utf-8")
     if args.json:
-        _json_out({"ok": True, "rack_path": str(out_path)})
+        _json_out({"ok": True, "side_effect": "write", "rack_path": str(out_path)})
     else:
         print(f"wrote {out_path}")
     return 0
@@ -153,7 +154,8 @@ def _cmd_setup_yaml(args: argparse.Namespace) -> int:
     if args.out:
         Path(args.out).write_text(doc, encoding="utf-8")
     if args.json:
-        _json_out({"ok": True, "setup_yaml": doc})
+        _json_out({"ok": True, "side_effect": "write" if args.out else "none",
+                  "setup_yaml": doc})
     else:
         print(doc, end="")
     return 0

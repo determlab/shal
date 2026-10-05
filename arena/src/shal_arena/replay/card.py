@@ -244,7 +244,7 @@ document.getElementById('save-image-btn').addEventListener('click', () => {{
     a.href = url;
     a.download = 'result-card.png';
     a.click();
-    URL.revokeObjectURL(url);
+    setTimeout(() => URL.revokeObjectURL(url), 0);
   }});
 }});
 </script>
