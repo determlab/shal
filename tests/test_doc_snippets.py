@@ -170,8 +170,14 @@ def test_released_commands_other_than_whitelisted_are_marked_in_docs() -> None:
 # (`--no-index --find-links`) instead of PyPI, and a skip whose reason names
 # `MAIN_ONLY_MARK` runs too (shal#361) — the release-candidate wheel has what PyPI
 # doesn't. Without `RC_WHEELS`, nothing here changes: those blocks stay skipped.
+#
+# shal#362/#368: without `RC_WHEELS`, the default mode carries exactly 2 skips —
+# README's "git clone ... && cd shal" dev-install step and its `docs
+# --samples`/`--sample` block (both `MAIN_ONLY_MARK`-tagged, not yet on PyPI).
+# The cap is set to that count on purpose, not padded, so a third skip anywhere
+# fails this test immediately instead of waiting for a later audit to notice.
 
-MAX_DOC_TEST_SKIPS = 4
+MAX_DOC_TEST_SKIPS = 2
 
 
 def _rc_wheels() -> Path | None:
@@ -209,6 +215,29 @@ def test_readme_first_screen_commands_run_in_a_temp_venv(
 def test_agents_md_commands_run_in_a_temp_venv(doc_test_venv: Path, tmp_path: Path) -> None:
     blocks = doc_blocks(AGENTS.read_text(encoding="utf-8"))
     _run_doc_test(AGENTS, blocks, doc_test_venv, tmp_path)
+
+
+def test_a_third_doc_test_skip_fails_naming_the_cap(tmp_path: Path) -> None:
+    """Agent path (shal#362/#368): a doc carrying one more `doc-test: skip` than
+    `MAX_DOC_TEST_SKIPS` allows fails this test before any command runs, naming the
+    actual count and the cap — the skip-count check happens before the venv is
+    touched, so this stays fast and offline."""
+    fake_doc = tmp_path / "fake.md"
+    skip_count = MAX_DOC_TEST_SKIPS + 1
+    fake_doc.write_text(
+        "\n\n".join(
+            f"<!-- doc-test: skip block {i} -->\n\n```bash\ntrue\n```"
+            for i in range(skip_count)
+        ),
+        encoding="utf-8",
+    )
+    blocks = doc_blocks(fake_doc.read_text(encoding="utf-8"))
+
+    with pytest.raises(
+        AssertionError,
+        match=rf"carries {skip_count} doc-test skips \(cap is {MAX_DOC_TEST_SKIPS}\)",
+    ):
+        _run_doc_test(fake_doc, blocks, tmp_path / "unused-venv", tmp_path / "unused-workdir")
 
 
 def test_a_bad_install_line_fails_naming_the_block_and_its_line_number(
