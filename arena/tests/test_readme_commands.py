@@ -18,19 +18,23 @@ _README = _ARENA_ROOT / "README.md"
 _REFERENCE_DRIVER = _ARENA_ROOT / "examples" / "reference_driver" / "driver.py"
 
 _BASH_BLOCK_RE = re.compile(r"```bash\n(.*?)```", re.DOTALL)
+_FENCED_BLOCK_RE = re.compile(r"```(\w*)\n(.*?)```", re.DOTALL)
 _TIMEOUT = 60
 
 
-def _readme_bash_commands() -> list[str]:
-    """Every non-comment, non-blank line inside a ```bash fenced block of
-    the README, in document order."""
+def _readme_bash_commands() -> list[list[str]]:
+    """Every shell command inside a ```bash fenced block of the README, as
+    already-tokenized argv lists, in document order. `shlex.split(...,
+    comments=True)` drops a blank line or a `#`-led comment the same way a
+    shell would — a trailing inline comment on a real command line is
+    stripped too, rather than sent through as literal `#`/comment tokens."""
     text = _README.read_text(encoding="utf-8")
     commands = []
     for block in _BASH_BLOCK_RE.findall(text):
         for line in block.splitlines():
-            line = line.strip()
-            if line and not line.startswith("#"):
-                commands.append(line)
+            tokens = shlex.split(line, comments=True)
+            if tokens:
+                commands.append(tokens)
     return commands
 
 
@@ -62,12 +66,12 @@ def test_reference_driver_exists_and_is_copyable() -> None:
 
 
 def test_every_readme_bash_command_runs_and_prints_valid_json(tmp_path: Path) -> None:
-    commands = [c for c in _readme_bash_commands() if c.startswith("shal-arena ")]
+    commands = [c for c in _readme_bash_commands() if c[0] == "shal-arena"]
     assert commands, "README should document at least one shal-arena command"
 
     run_id: str | None = None
     for command in commands:
-        tokens = shlex.split(command)[1:]  # drop the leading "shal-arena"
+        tokens = command[1:]  # drop the leading "shal-arena"
         tokens = [run_id if (t == "<run-id>" and run_id) else t for t in tokens]
         assert "<run-id>" not in tokens, (
             f"no run id captured yet for the README command: {command!r}")
@@ -80,6 +84,34 @@ def test_every_readme_bash_command_runs_and_prints_valid_json(tmp_path: Path) ->
 
         if tokens and tokens[0] == "run":
             run_id = doc["run_id"]
+
+
+def test_readme_never_names_the_default_seed_fault() -> None:
+    """issue #346 CTO review (round 1): `rail-3v3.yaml`'s own `seed:`
+    deterministically picks one fault (`pick_fault`); pasting a run's
+    output that names it would hand a cold reader the task's answer for
+    free — and spoil the #314 benchmark, which plays this same
+    default-seed task. The walkthrough above runs with `--seed 1` instead
+    of the task's default specifically to avoid this. Checked only inside
+    the README's non-`bash` fenced blocks (the pasted command *output*,
+    where a real `fault_id`/`fault_type` value would actually appear) —
+    not the whole document, since the fault-type names themselves are
+    also plain English words the Scope section's prose legitimately uses
+    to describe what each one does, for every card, not just this one."""
+    from shal_arena.loader import load_task
+    from shal_arena.runner import pick_fault
+
+    loaded = load_task(_ARENA_ROOT / "src" / "shal_arena" / "tasks" / "rail-3v3.yaml")
+    default_fault = pick_fault(loaded.card, loaded.task.seed)
+    text = _README.read_text(encoding="utf-8")
+
+    for lang, body in _FENCED_BLOCK_RE.findall(text):
+        if lang == "bash":
+            continue
+        assert default_fault not in body, (
+            f"README pastes {default_fault!r} as output — the fault "
+            "rail-3v3.yaml's own default seed picks; run the walkthrough "
+            "with a different --seed")
 
 
 def test_reference_driver_passes_check_driver(tmp_path: Path) -> None:

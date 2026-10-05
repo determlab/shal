@@ -22,12 +22,14 @@ pip install -e ".[dev]"   # from arena/, with pyshal already installed
 ## Agent path: card, replay, rack and setup.yaml
 
 Every command below is non-interactive, takes `--json`, and is pasted
-straight from a real run (`--seed 1`, so this walkthrough doesn't give away
-what the task's own default seed picks). `<run-id>` is the `run_id` the
-first command printed — sub it in for every command after. An error from
-any command is
-`{"ok": false, "error": {"type", "message", "fix"}}` on stdout, `fix` never
-empty, matching `shal`'s own `--json` error shape (`AGENTS.md`).
+straight from a real run. `rail-3v3.yaml`'s own `seed:` picks a fixed fault
+for anyone who runs the task plain — so this walkthrough passes `--seed 1`
+instead, to demonstrate the flow without ever printing (or needing you to
+know) which fault the task's own default seed picks. `<run-id>` is the
+`run_id` the first command printed — sub it in for every command after. An
+error from any command is `{"ok": false, "error": {"type", "message",
+"fix"}}` on stdout, `fix` never empty, matching `shal`'s own `--json` error
+shape (`AGENTS.md`).
 
 **Card** — start a run and read its card (the task, the question, and each
 instrument's datasheet):
@@ -40,7 +42,7 @@ shal-arena run src/shal_arena/tasks/rail-3v3.yaml --seed 1 --json
 {
   "ok": true,
   "side_effect": "write",
-  "run_id": "run-20261005T203012Z-d1bd0923",
+  "run_id": "run-20261005T202840Z-38a82937",
   "task": {
     "id": "rail-3v3",
     "title": "Is the 3V3 rail in spec?",
@@ -86,7 +88,7 @@ shal-arena check-driver <run-id> psu0 examples/reference_driver/driver.py --json
 {
   "ok": true,
   "side_effect": "write",
-  "run_id": "run-20261005T203012Z-d1bd0923",
+  "run_id": "run-20261005T202840Z-38a82937",
   "address": "psu0",
   "case": "scpi-psu",
   "passed": true,
@@ -103,7 +105,7 @@ shal-arena measure <run-id> psu0 examples/reference_driver/driver.py --json
 {
   "ok": true,
   "side_effect": "write",
-  "run_id": "run-20261005T203012Z-d1bd0923",
+  "run_id": "run-20261005T202840Z-38a82937",
   "address": "psu0",
   "case": "scpi-psu",
   "op": "measure_voltage",
@@ -118,7 +120,9 @@ shal-arena measure <run-id> psu0 examples/reference_driver/driver.py --json
 }
 ```
 
-Answer and close the run:
+Answer and close the run. `ok` below is a placeholder answer to show the
+command's shape — the real method for picking a value is reading the
+instruments, not the one this walkthrough happens to pass:
 
 ```bash
 shal-arena answer <run-id> ok --json
@@ -128,13 +132,13 @@ shal-arena answer <run-id> ok --json
 {
   "ok": true,
   "side_effect": "write",
-  "run_id": "run-20261005T203012Z-d1bd0923",
+  "run_id": "run-20261005T202840Z-38a82937",
   "task_path": "src/shal_arena/tasks/rail-3v3.yaml",
   "card_path": "/path/to/arena/src/shal_arena/cards/buck-5v-3v3.yaml",
   "given": "ok",
   "fault_id": "low_voltage",
   "correct": false,
-  "closed_at": "2026-10-05T20:30:20Z",
+  "closed_at": "2026-10-05T20:28:47Z",
   "disqualified": true,
   "score": {
     "task_id": "rail-3v3",
@@ -144,14 +148,14 @@ shal-arena answer <run-id> ok --json
     "faults_caught": 0,
     "false_fails": 0,
     "error_fail_correct": 0,
-    "duration_s": 8.0,
+    "duration_s": 7.0,
     "turns": 2,
     "gate_stops": 0,
     "schema_version": 1,
     "game_version": "0.4.0",
-    "record_sha256": "539895ff8964142344832e452155d5e8ee06e2c0983507ce7da16244cae1b397"
+    "record_sha256": "1a50e0855e36a80e3c4a6cb55cfe7034ef5769a6d58dfef83ff8425ecd39f3ba"
   },
-  "sim_log": ".shal-arena/run-20261005T203012Z-d1bd0923.simlog.jsonl"
+  "sim_log": ".shal-arena/run-20261005T202840Z-38a82937.simlog.jsonl"
 }
 ```
 
@@ -171,8 +175,8 @@ shal-arena replay <run-id> --json
 {
   "ok": true,
   "side_effect": "write",
-  "run_id": "run-20261005T203012Z-d1bd0923",
-  "card_path": ".shal-arena/run-20261005T203012Z-d1bd0923.card.html"
+  "run_id": "run-20261005T202840Z-38a82937",
+  "card_path": ".shal-arena/run-20261005T202840Z-38a82937.card.html"
 }
 ```
 
