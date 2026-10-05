@@ -135,7 +135,7 @@ def drive_input(run_id: str, address: str, volts: float, *,
     store = RunStore(state_dir)
     # one call that reaches the sim is one turn; also refuses a closed run
     # before anything is applied (issue #325).
-    state = store.increment_turns(run_id)
+    state = store.increment_turns(run_id, "drive", address)
     loaded = load_task(state.task_path)
     instrument = next((i for i in loaded.task.instruments
                        if str(i.address) == str(address)), None)
@@ -221,7 +221,7 @@ def check_instrument_driver(run_id: str, address: str, driver_path: str | Path, 
     with no action from the player (every player runs it, pass or fail, just
     to light the tile). `take_measurement` is the player's own read."""
     store = RunStore(state_dir)
-    store.increment_turns(run_id)
+    store.increment_turns(run_id, "check", address)
     state = store.load(run_id)
     loaded = load_task(state.task_path)
     instrument = next((i for i in loaded.task.instruments
@@ -287,7 +287,7 @@ def take_measurement(run_id: str, address: str, driver_path: str | Path, *,
     from shal.hal import load as _load
 
     store = RunStore(state_dir)
-    store.increment_turns(run_id)
+    store.increment_turns(run_id, "measure", address)
     state = store.load(run_id)
     loaded = load_task(state.task_path)
     instrument = next((i for i in loaded.task.instruments

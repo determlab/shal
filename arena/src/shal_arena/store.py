@@ -55,6 +55,9 @@ class RunState:
     card_destroyed: bool = False
     # issue #325: addresses of DMMs whose current-input fuse has burned.
     fuses_blown: list[str] = field(default_factory=list)
+    # issue #315: one entry per turn ({"kind": check|measure|drive, "address"})
+    # for the replay. Never an outcome (a failed read would hint at `open`).
+    calls: list[dict[str, Any]] = field(default_factory=list)
 
 
 class RunStore:
@@ -146,13 +149,15 @@ class RunStore:
         self._write_public(state)
         return state
 
-    def increment_turns(self, run_id: str) -> RunState:
+    def increment_turns(self, run_id: str, kind: str = "turn",
+                        address: str | None = None) -> RunState:
         """Issue #312 score field ``turns``: one call that reaches the sim
         (`check`, `measure`, `drive`), whatever its result, is one turn.
         Called before the call itself runs, so a turn is counted even if it
         later raises. A closed run refuses (issue #325)."""
         state = self.load_open(run_id)
         state.turns += 1
+        state.calls.append({"kind": kind, "address": None if address is None else str(address)})
         self._write_public(state)
         return state
 
@@ -170,6 +175,7 @@ class RunStore:
             "given": given,
             "fault_id": fault_id,
             "correct": given == fault_id,
+            "calls": list(state.calls),
             "closed_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
         }
         self._record_path(run_id).write_text(json.dumps(record, indent=2), encoding="utf-8")
