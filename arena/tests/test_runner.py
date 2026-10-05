@@ -178,6 +178,52 @@ def test_drive_input_on_a_probe_instrument_is_refused(tmp_path: Path) -> None:
     assert ei.value.fix
 
 
+def test_apply_input_on_a_closed_run_is_refused_and_card_state_unchanged(
+        tmp_path: Path) -> None:
+    run_id = start_run(SAMPLE_TASK, state_dir=tmp_path)["run_id"]
+    drive_input(run_id, "psu0", 5.2, state_dir=tmp_path)
+    answer(run_id, "ok", state_dir=tmp_path)
+    before = RunStore(tmp_path).load(run_id)
+    with pytest.raises(UnknownRun) as ei:
+        drive_input(run_id, "psu0", 6.5, state_dir=tmp_path)
+    assert run_id in ei.value.message and "closed" in ei.value.message
+    assert "shal-arena run" in ei.value.fix
+    after = RunStore(tmp_path).load(run_id)
+    assert after.card_applied == before.card_applied == {"vin": 5.2}
+    assert after.card_destroyed is False
+    assert after.turns == before.turns
+
+
+def test_drive_counts_a_turn_and_answer_does_not(tmp_path: Path) -> None:
+    run_id = start_run(SAMPLE_TASK, state_dir=tmp_path)["run_id"]
+    store = RunStore(tmp_path)
+    assert store.load(run_id).turns == 0
+    drive_input(run_id, "psu0", 5.0, state_dir=tmp_path)
+    assert store.load(run_id).turns == 1
+    # a call that errors after reaching the runner still costs its turn
+    with pytest.raises(CheckCouldNotRun):
+        drive_input(run_id, "dmm0", 5.0, state_dir=tmp_path)
+    assert store.load(run_id).turns == 2
+    answer(run_id, "ok", state_dir=tmp_path)
+    assert store.load(run_id).turns == 2
+
+
+def test_gate_refused_drive_costs_one_turn(tmp_path: Path) -> None:
+    """The gate refuses a breaching apply_input (CardSim, `rejected: approval`);
+    the runner counts the turn before the sim is reached, so it costs one."""
+    from shal_arena.card_sim import CardSim
+
+    run_id = start_run(SAMPLE_TASK, state_dir=tmp_path)["run_id"]
+    store = RunStore(tmp_path)
+    store.increment_turns(run_id)
+    sim = CardSim({"id": "c", "inputs": {"vin": {"nominal_v": 5.0}}, "rails": {},
+                   "limits": [{"input": "vin", "above_v": 6.0, "effect": "damage",
+                               "source": "datasheet"}]})
+    res = sim.apply_input("vin", 9.0, gate=lambda action: False)
+    assert res.rejected == "approval" and res.sent is False and sim.state == "ok"
+    assert store.load(run_id).turns == 1
+
+
 def test_number_kind_answers_are_not_supported_yet(tmp_path: Path, minimal_task: Path) -> None:
     import yaml
     doc = yaml.safe_load(minimal_task.read_text(encoding="utf-8"))

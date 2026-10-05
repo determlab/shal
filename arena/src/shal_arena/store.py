@@ -21,7 +21,7 @@ from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import Any
 
-from .errors import UnknownRun
+from .errors import RunClosed, UnknownRun
 
 DEFAULT_STATE_DIR = ".shal-arena"
 
@@ -53,6 +53,8 @@ class RunState:
     # just the voltages the player has driven and whether the card is dead.
     card_applied: dict[str, float] = field(default_factory=dict)
     card_destroyed: bool = False
+    # issue #325: addresses of DMMs whose current-input fuse has burned.
+    fuses_blown: list[str] = field(default_factory=list)
 
 
 class RunStore:
@@ -109,10 +111,24 @@ class RunStore:
         tiles = {addr: Tile(**t) for addr, t in doc.pop("tiles", {}).items()}
         return RunState(tiles=tiles, **doc)
 
-    def set_tile(self, run_id: str, address: str, *, case: str, passed: bool) -> RunState:
+    def load_open(self, run_id: str) -> RunState:
+        """`load`, but refuses a closed run (issue #325), naming the fix."""
         state = self.load(run_id)
         if state.status != "open":
-            raise UnknownRun(f"run {run_id!r} is closed", fix="start a new run")
+            raise RunClosed(
+                f"run {run_id} is closed; it takes no more input",
+                fix="start a new run with `shal-arena run <task.yaml> --json`")
+        return state
+
+    def set_fuse_blown(self, run_id: str, address: str) -> RunState:
+        state = self.load_open(run_id)
+        if str(address) not in state.fuses_blown:
+            state.fuses_blown.append(str(address))
+            self._write_public(state)
+        return state
+
+    def set_tile(self, run_id: str, address: str, *, case: str, passed: bool) -> RunState:
+        state = self.load_open(run_id)
         state.tiles[str(address)] = Tile(case=case, passed=passed,
                                          checked_at=time.strftime("%Y-%m-%dT%H:%M:%SZ",
                                                                    time.gmtime()))
@@ -124,21 +140,18 @@ class RunStore:
         """issue #313: persist `CardSim.applied`/`CardSim.destroyed` after a
         `drive` call, so the next CLI invocation for this run restores the
         same card instead of starting it fresh from nominal every time."""
-        state = self.load(run_id)
-        if state.status != "open":
-            raise UnknownRun(f"run {run_id!r} is closed", fix="start a new run")
+        state = self.load_open(run_id)
         state.card_applied = dict(applied)
         state.card_destroyed = destroyed
         self._write_public(state)
         return state
 
     def increment_turns(self, run_id: str) -> RunState:
-        """Issue #312 score field ``turns``: one `check` call, whatever its
-        result, is one turn. Called before the check itself runs, so a turn
-        is counted even if the check later raises."""
-        state = self.load(run_id)
-        if state.status != "open":
-            raise UnknownRun(f"run {run_id!r} is closed", fix="start a new run")
+        """Issue #312 score field ``turns``: one call that reaches the sim
+        (`check`, `measure`, `drive`), whatever its result, is one turn.
+        Called before the call itself runs, so a turn is counted even if it
+        later raises. A closed run refuses (issue #325)."""
+        state = self.load_open(run_id)
         state.turns += 1
         self._write_public(state)
         return state

@@ -44,7 +44,6 @@ instruments:
   - case: scpi-psu
     address: psu0
     drives: card.vin
-    replacement_usd: 100
 question:
   text: "ok or low_voltage?"
   answer: {kind: enum, values: [ok, low_voltage]}

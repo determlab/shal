@@ -40,6 +40,11 @@ class UnknownRun(ArenaError):
     exit_code = 2
 
 
+class RunClosed(UnknownRun):
+    """Input (`check`, `measure`, `drive`) sent to a run that `answer` already
+    closed (issue #325): refused, nothing sent, card state unchanged."""
+
+
 class CheckCouldNotRun(ArenaError):
     """The ADK-style driver check could not even run: the driver file does not
     exist, does not import, or raised before `conformance.check_driver` could
