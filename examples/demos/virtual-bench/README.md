@@ -7,15 +7,19 @@ below.
 
 ## Install
 
-`pytest-shal` isn't on PyPI yet (it's pinned to a commit of its own repo), so
-this needs two installs instead of one:
+Neither `pyshal` 0.4.0 nor `pytest-shal` is on PyPI yet (PyPI's `pyshal` is
+still 0.3.0, and `pytest-shal` is pinned to a commit of its own repo), so this
+needs two pinned-commit installs instead of one:
 
 ```bash
-pip install pyshal pytest
+pip install pytest==9.1.1
+pip install "pyshal @ git+https://github.com/determlab/shal@18482bd65daff0f1d69b30a17c7ed155dd308662"
 pip install --no-deps "pytest-shal @ git+https://github.com/determlab/pytest-shal@e240b07"
 ```
 
-The second line prints a resolver warning —
+Once pyshal 0.4.0 is released to PyPI, this becomes `pip install pyshal pytest-shal`.
+
+The third line prints a resolver warning —
 `pytest-shal 0.0.1 requires pyshal<0.4,>=0.3.0, but you have pyshal 0.4.0 which
 is incompatible` — because pytest-shal's own pin predates pyshal's #217 (the
 per-Hal approver it actually needs, which shipped in pyshal 0.4.0). `--no-deps`
