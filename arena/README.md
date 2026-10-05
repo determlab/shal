@@ -22,9 +22,10 @@ pip install -e ".[dev]"   # from arena/, with pyshal already installed
 ## Agent path: card, replay, rack and setup.yaml
 
 Every command below is non-interactive, takes `--json`, and is pasted
-straight from a real run (seed 4172, so the fault is always `noise` on this
-exact task). `<run-id>` is the `run_id` the first command printed — sub it in
-for every command after. An error from any command is
+straight from a real run (`--seed 1`, so this walkthrough doesn't give away
+what the task's own default seed picks). `<run-id>` is the `run_id` the
+first command printed — sub it in for every command after. An error from
+any command is
 `{"ok": false, "error": {"type", "message", "fix"}}` on stdout, `fix` never
 empty, matching `shal`'s own `--json` error shape (`AGENTS.md`).
 
@@ -32,14 +33,14 @@ empty, matching `shal`'s own `--json` error shape (`AGENTS.md`).
 instrument's datasheet):
 
 ```bash
-shal-arena run src/shal_arena/tasks/rail-3v3.yaml --json
+shal-arena run src/shal_arena/tasks/rail-3v3.yaml --seed 1 --json
 ```
 
 ```
 {
   "ok": true,
   "side_effect": "write",
-  "run_id": "run-20261005T195440Z-c31f2547",
+  "run_id": "run-20261005T203012Z-d1bd0923",
   "task": {
     "id": "rail-3v3",
     "title": "Is the 3V3 rail in spec?",
@@ -85,7 +86,7 @@ shal-arena check-driver <run-id> psu0 examples/reference_driver/driver.py --json
 {
   "ok": true,
   "side_effect": "write",
-  "run_id": "run-20261005T195440Z-c31f2547",
+  "run_id": "run-20261005T203012Z-d1bd0923",
   "address": "psu0",
   "case": "scpi-psu",
   "passed": true,
@@ -102,7 +103,7 @@ shal-arena measure <run-id> psu0 examples/reference_driver/driver.py --json
 {
   "ok": true,
   "side_effect": "write",
-  "run_id": "run-20261005T195440Z-c31f2547",
+  "run_id": "run-20261005T203012Z-d1bd0923",
   "address": "psu0",
   "case": "scpi-psu",
   "op": "measure_voltage",
@@ -127,30 +128,30 @@ shal-arena answer <run-id> ok --json
 {
   "ok": true,
   "side_effect": "write",
-  "run_id": "run-20261005T195440Z-c31f2547",
+  "run_id": "run-20261005T203012Z-d1bd0923",
   "task_path": "src/shal_arena/tasks/rail-3v3.yaml",
   "card_path": "/path/to/arena/src/shal_arena/cards/buck-5v-3v3.yaml",
   "given": "ok",
-  "fault_id": "noise",
+  "fault_id": "low_voltage",
   "correct": false,
-  "closed_at": "2026-10-05T19:56:49Z",
+  "closed_at": "2026-10-05T20:30:20Z",
   "disqualified": true,
   "score": {
     "task_id": "rail-3v3",
-    "seed": 4172,
-    "fault_type": "noise",
+    "seed": 1,
+    "fault_type": "low_voltage",
     "faults_total": 1,
     "faults_caught": 0,
     "false_fails": 0,
     "error_fail_correct": 0,
-    "duration_s": 129.0,
+    "duration_s": 8.0,
     "turns": 2,
     "gate_stops": 0,
     "schema_version": 1,
     "game_version": "0.4.0",
-    "record_sha256": "2739eb5bdcf8f6379ace7f5ffa12fa0d77f7104e3f060530a7c4ca0f56715914"
+    "record_sha256": "539895ff8964142344832e452155d5e8ee06e2c0983507ce7da16244cae1b397"
   },
-  "sim_log": ".shal-arena/run-20261005T195440Z-c31f2547.simlog.jsonl"
+  "sim_log": ".shal-arena/run-20261005T203012Z-d1bd0923.simlog.jsonl"
 }
 ```
 
@@ -170,8 +171,8 @@ shal-arena replay <run-id> --json
 {
   "ok": true,
   "side_effect": "write",
-  "run_id": "run-20261005T195440Z-c31f2547",
-  "card_path": ".shal-arena/run-20261005T195440Z-c31f2547.card.html"
+  "run_id": "run-20261005T203012Z-d1bd0923",
+  "card_path": ".shal-arena/run-20261005T203012Z-d1bd0923.card.html"
 }
 ```
 
