@@ -19,9 +19,13 @@ from run_readme import (  # noqa: E402
     ReadmeError,
     Run,
     Save,
+    doc_blocks,
+    doc_test_plan,
+    first_screen_end,
     output_matches,
     plan,
     quickstart_blocks,
+    rc_wheels_argv,
     substitute_wheel,
 )
 
@@ -275,3 +279,115 @@ def test_dist_and_published_are_one_or_the_other(tmp_path: Path) -> None:
     for args in (["--venv", "v"], ["--venv", "v", "--published", "--dist", str(tmp_path)]):
         with pytest.raises(SystemExit):
             run_readme.main(args)
+
+
+# --- doc_blocks / doc_test_plan / rc_wheels_argv (#342): README's first screen and
+# AGENTS.md are bigger than the Quick Start section alone, and hold illustrative
+# yaml/python blocks with no "Save this as" prose — quickstart_blocks()/plan() would
+# treat those as a README defect. The lenient counterpart below must not. ----------
+
+MULTI_SECTION = f"""## Install
+
+{FENCE}bash
+pip install something
+{FENCE}
+
+## Quick Start
+
+{FENCE}bash
+shal probe sim.yaml
+{FENCE}
+
+### A subsection
+
+{FENCE}bash
+shal tools sim.yaml
+{FENCE}
+
+## Next section
+
+{FENCE}bash
+not part of the first screen
+{FENCE}
+"""
+
+
+def test_doc_blocks_does_not_stop_at_a_heading_unlike_quickstart_blocks() -> None:
+    blocks = doc_blocks(MULTI_SECTION)
+    assert [b.text.strip() for b in blocks] == [
+        "pip install something", "shal probe sim.yaml", "shal tools sim.yaml",
+        "not part of the first screen",
+    ]
+
+
+def test_first_screen_end_is_the_heading_right_after_quick_start() -> None:
+    lines = MULTI_SECTION.splitlines()
+    end = first_screen_end(MULTI_SECTION)
+    assert lines[end] == "## Next section"
+    blocks = doc_blocks(MULTI_SECTION, 0, end)
+    assert [b.text.strip() for b in blocks] == [
+        "pip install something", "shal probe sim.yaml", "shal tools sim.yaml",
+    ]
+
+
+def test_first_screen_end_requires_exactly_one_quick_start_heading() -> None:
+    with pytest.raises(ReadmeError, match="found 0"):
+        first_screen_end("## Install\n")
+    with pytest.raises(ReadmeError, match="found 2"):
+        first_screen_end("## Quick Start\n## Quick Start\n")
+
+
+def test_doc_test_plan_ignores_a_file_block_with_no_save_prose() -> None:
+    md = f"Some illustrative code:\n\n{FENCE}python\nprint('not run')\n{FENCE}\n"
+    steps, skips = doc_test_plan(doc_blocks(md))
+    assert steps == [] and skips == []
+
+
+def test_doc_test_plan_saves_a_named_file_block_then_runs_a_command_that_needs_it() -> None:
+    md = (f"Save this as `sim.yaml`.\n\n{FENCE}yaml\nroot: {{}}\n{FENCE}\n\n"
+          f"{FENCE}bash\nshal probe sim.yaml\n{FENCE}\n")
+    steps, skips = doc_test_plan(doc_blocks(md))
+    assert skips == []
+    save, run = steps
+    assert isinstance(save, Save) and save.name == "sim.yaml"
+    assert isinstance(run, Run) and run.argv == ["shal", "probe", "sim.yaml"]
+
+
+def test_doc_test_plan_skips_a_marked_block_and_reports_its_reason() -> None:
+    md = (f"Needs a real bench.\n\n<!-- doc-test: skip needs hardware -->\n"
+          f"{FENCE}bash\nshal probe bench.yaml\n{FENCE}\n")
+    steps, skips = doc_test_plan(doc_blocks(md))
+    assert steps == []
+    assert skips == [(4, "needs hardware")]
+
+
+def test_doc_test_plan_exit_code_falls_back_to_the_paragraph_right_before_the_block() -> None:
+    md = (f"`shal call` refuses a gated op with exit 2:\n\n"
+          f"{FENCE}bash\nshal call sim.yaml ambient_temp set_target 30 --json\n{FENCE}\n\n"
+          f"No more to say.\n")
+    steps, skips = doc_test_plan(doc_blocks(md))
+    assert skips == []
+    [run] = steps
+    assert isinstance(run, Run) and run.exit_code == 2
+
+
+def test_doc_test_plan_exit_code_prefers_the_paragraph_right_after_the_block() -> None:
+    md = (f"`shal call` refuses a gated op with exit 2:\n\n"
+          f"{FENCE}bash\nshal probe sim.yaml\n{FENCE}\n\n"
+          f"It exits 0 here, same as always.\n")
+    steps, skips = doc_test_plan(doc_blocks(md))
+    [run] = steps
+    assert run.exit_code == 0
+
+
+def test_rc_wheels_argv_substitutes_find_links_and_keeps_the_package_name() -> None:
+    rc = Path("/tmp/rc-wheels")
+    assert rc_wheels_argv(["pip", "install", "pyshal"], rc) == [
+        "pip", "install", "--no-index", "--find-links", str(rc), "pyshal"]
+    assert rc_wheels_argv(["pip", "install", "pyshal[mcp]"], rc) == [
+        "pip", "install", "--no-index", "--find-links", str(rc), "pyshal[mcp]"]
+
+
+def test_rc_wheels_argv_rejects_a_non_pip_install_line() -> None:
+    with pytest.raises(ReadmeError, match="RC_WHEELS only applies to a `pip install` line"):
+        rc_wheels_argv(["shal", "probe", "sim.yaml"], Path("/tmp/rc-wheels"))

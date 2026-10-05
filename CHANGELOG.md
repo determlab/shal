@@ -35,6 +35,17 @@ All notable changes to this project are documented here. The format follows
   other actuator and ask for approval. Sonos reads stay `none`.
 
 ### Added
+- **Docs are tests: README's first screen and AGENTS.md run for real (#342).**
+  `tests/test_doc_snippets.py` extracts every fenced ```bash/```sh block from
+  README.md's first screen (top of file through the heading right after Quick
+  Start) and from AGENTS.md, and runs each one in a temp venv — a `pip install`
+  typo or a stale command now fails CI instead of a stranger. A block that
+  can't run this way (needs hardware/secrets, or shell syntax the runner
+  doesn't interpret) carries `<!-- doc-test: skip REASON -->`, capped so skips
+  can't quietly grow; `RC_WHEELS=<dir>` runs the install lines against local
+  release-candidate wheels instead of PyPI. `dev/quickstart/run_readme.py`
+  gained the lenient extraction (`doc_blocks`, `doc_test_plan`,
+  `run_doc_steps`) this reuses, alongside the existing Quick-Start-only runner.
 - **`shal,sim-dmm`** (#303): a simulated bench DMM on `shal,sim-scpi`.
   `config.probe` names a `shal,sim-psu` address on the same bus; `measure_voltage`
   and `measure_current` read that PSU's own measurement (so `load_ohms` and

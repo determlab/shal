@@ -6,7 +6,10 @@ snippet and this test runs the new one; break it and this test fails.
 """
 from __future__ import annotations
 
+import os
 import re
+import sys
+import venv as venv_module
 from pathlib import Path
 
 import pytest
@@ -15,6 +18,16 @@ _ROOT = Path(__file__).resolve().parents[1]
 README = _ROOT / "README.md"
 SDK = _ROOT / "src" / "shal" / "SDK.md"
 AGENTS = _ROOT / "AGENTS.md"
+
+sys.path.insert(0, str(_ROOT / "dev" / "quickstart"))
+import run_readme  # noqa: E402
+from run_readme import (  # noqa: E402
+    StepFailed,
+    doc_blocks,
+    doc_test_plan,
+    first_screen_end,
+    run_doc_steps,
+)
 
 
 def _snippet(doc: Path, marker: str) -> str:
@@ -144,3 +157,81 @@ def _unmarked_unreleased_commands(doc: Path) -> list[str]:
 def test_released_commands_other_than_whitelisted_are_marked_in_docs() -> None:
     violations = _unmarked_unreleased_commands(AGENTS) + _unmarked_unreleased_commands(README)
     assert not violations, "\n".join(violations)
+
+
+# --- #342: every ```bash/```sh block on README's first screen (top of file through
+# the heading right after Quick Start) and in AGENTS.md runs as printed, in a temp
+# venv — the same guarantee #354 above already gives the inline `shal ...` mentions,
+# extended to the fenced commands a reader actually copy-pastes. A block that cannot
+# run here (needs hardware/secrets, or — like the "git clone" dev-install step —
+# shell syntax this runner does not interpret) carries `<!-- doc-test: skip REASON
+# -->`; MAX_DOC_TEST_SKIPS caps how many of those a doc may carry before this test
+# itself fails, so a skip can't quietly cover for a command that should run. With
+# `RC_WHEELS=<dir>` set, the `pip install` lines resolve from that directory
+# (`--no-index --find-links`) instead of PyPI.
+
+MAX_DOC_TEST_SKIPS = 4
+
+
+def _rc_wheels() -> Path | None:
+    v = os.environ.get("RC_WHEELS")
+    return Path(v) if v else None
+
+
+@pytest.fixture(scope="module")
+def doc_test_venv(tmp_path_factory: pytest.TempPathFactory) -> Path:
+    """One clean venv shared by every doc-snippet test in this module — `pip install
+    pyshal` only needs to happen once."""
+    venv_dir = tmp_path_factory.mktemp("doc-test-venv")
+    venv_module.create(venv_dir, with_pip=True)
+    return venv_dir
+
+
+def _run_doc_test(doc: Path, blocks: list[run_readme.Block], venv: Path, workdir: Path) -> None:
+    steps, skips = doc_test_plan(blocks)
+    for line, reason in skips:
+        print(f"SKIP {doc.name}:{line}: {reason}")
+    assert len(skips) <= MAX_DOC_TEST_SKIPS, (
+        f"{doc.name} carries {len(skips)} doc-test skips (cap is {MAX_DOC_TEST_SKIPS}); "
+        f"either run the block or lower the cap deliberately:\n{skips}")
+    run_doc_steps(steps, venv, workdir, find_links=_rc_wheels())
+
+
+def test_readme_first_screen_commands_run_in_a_temp_venv(
+        doc_test_venv: Path, tmp_path: Path) -> None:
+    text = README.read_text(encoding="utf-8")
+    blocks = doc_blocks(text, 0, first_screen_end(text))
+    _run_doc_test(README, blocks, doc_test_venv, tmp_path)
+
+
+def test_agents_md_commands_run_in_a_temp_venv(doc_test_venv: Path, tmp_path: Path) -> None:
+    blocks = doc_blocks(AGENTS.read_text(encoding="utf-8"))
+    _run_doc_test(AGENTS, blocks, doc_test_venv, tmp_path)
+
+
+def test_a_bad_install_line_fails_naming_the_block_and_its_line_number(
+        tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """The deliberate-failure case (#342): a bad `pip install` line must fail the run
+    with the offending command and its source line in the message, not just a bare
+    pip traceback. `pip`/the venv are faked (`_fake_run`'s pattern in
+    test_quickstart_readme.py) so this stays fast and offline — the real network
+    install is exercised by the two tests above."""
+    fake_readme = tmp_path / "README.md"
+    fake_readme.write_text(
+        "## Quick Start\n\n```bash\npip install nonexistent-pkg-xyz\n```\n", encoding="utf-8")
+
+    def fake_run(argv: list[str], **_kw: object) -> run_readme.subprocess.CompletedProcess:
+        assert argv[:2] == ["pip", "install"]
+        return run_readme.subprocess.CompletedProcess(
+            argv, 1, b"ERROR: No matching distribution found for nonexistent-pkg-xyz\n")
+
+    monkeypatch.setattr(run_readme.subprocess, "run", fake_run)
+    monkeypatch.setattr(run_readme.shutil, "which", lambda name, path=None: name)
+
+    text = fake_readme.read_text(encoding="utf-8")
+    blocks = doc_blocks(text, 0, first_screen_end(text))
+    steps, skips = doc_test_plan(blocks)
+    assert skips == []
+    with pytest.raises(StepFailed, match=r"line 3: `pip install nonexistent-pkg-xyz` "
+                                         r"exited 1, expected 0"):
+        run_doc_steps(steps, tmp_path / "venv", tmp_path)
