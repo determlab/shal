@@ -1,0 +1,7 @@
+# Arena catalogue: instruments with their replacement cost and fuse rating.
+# replacement_usd belongs here (arena data), never in a SHAL manifest.
+instruments:
+  dmm0:
+    replacement_usd: 1200
+    fuse_a: 0.4
+    fuse_source: "DMM datasheet, current input fuse rating"
