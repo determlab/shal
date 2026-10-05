@@ -88,8 +88,8 @@ Issue #312 adds the rest of what it takes to actually score a run:
   `record_sha256`), validated against `shal_arena.score.SCORE_SCHEMA`;
   `record_sha256` is the sha256 of `<run_id>.record.json`'s own bytes.
 
-Still out of scope: the damage model and the generic card simulator (a later
-arena ticket), and the replay page.
+Issue #313 ships the damage model and the generic card simulator
+(`card_sim`), and `shal-arena drive` (the Agent path to it).
 
 Issue #314 adds benchmark mode: the same task played with SHAL (today's
 `run`/`check-driver`/`measure`/`drive`/`answer`, unmodified) and without it
@@ -111,3 +111,24 @@ docstring). One turn = one call that reaches the sim on either side (`check`,
 raw_scpi`); `answer` is never a turn. `--runs` below 10 is refused, naming the
 fix. Results always report both sides — a task where "without SHAL" does
 better is never filtered out.
+
+Issue #315 adds the replay/result-card and rack pages, both offline single
+HTML files built by `shal_arena.replay`:
+
+```bash
+shal-arena answer <run-id> ok --json      # closes the run first
+shal-arena replay <run-id> --json         # -> {"card_path": "..."}
+#  writes <run-id>.card.html: headline, false-fail count stated openly, the
+#  call-by-call replay (a refused `drive` in red), "Copy result" and "Save
+#  as image", and the one network reference anywhere on the page
+#  (github.com/determlab/shal). Never buildable before `answer` has closed
+#  the run — there is no record/score file yet, so it refuses instead.
+
+shal-arena rack --out rack.html           # drag instrument tiles -> setup.yaml
+shal-arena setup-yaml scpi-psu dmm --json # the rack's own mechanism, no page
+```
+
+The turn count the card shows is `score["turns"]` — the field that already
+counts `check`+`measure`+`drive` turns the CTO's ruling on #314 fixed (a
+`drive` that refuses or otherwise fails still costs its turn; `answer` never
+does).
