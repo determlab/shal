@@ -12,6 +12,11 @@ root:
         address: psu0
         config:
           load_ohms: 10
+          # this rack's own ceiling (shal#350): tighter than the driver's 0-30 V
+          # range, so a 30 V request is rejected pre-I/O, nothing sent to the sim
+          limits:
+            set_voltage:
+              volts: {maximum: 24.0}
       dmm0:
         id: dmm
         driver: shal,sim-dmm

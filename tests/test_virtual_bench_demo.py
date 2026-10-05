@@ -27,13 +27,17 @@ from pathlib import Path
 
 import pytest
 
+import shal
 from shal import record as shal_record
+from shal.errors import LimitError
 
 ROOT = Path(__file__).resolve().parents[1]
 DEMO_DIR = ROOT / "examples" / "demos" / "virtual-bench"
 # determlab/pytest-shal main — includes #31/#32, so the stored record's own
 # `cause` reads "transport" too, not just the printed JSON — see the demo's README.
 PYTEST_SHAL_REF = "f45937de74737473e3b2b896b25bef087468da40"
+TARGET_VOLTS = 3.3  # the healthy setpoint test_bench.py itself asserts (2% DoD)
+TOLERANCE = 0.02
 
 
 def _venv_python(venv_dir: Path) -> Path:
@@ -123,6 +127,26 @@ def test_unplug_dmm_gives_an_error_record_with_cause_transport_and_a_different_e
     error_steps = [s for s in rec.steps if s.verdict == "error"]
     assert error_steps, "the stored record has no error step"
     assert all(s.cause == "transport" for s in error_steps)
+
+
+def test_30v_is_rejected_by_the_declared_limit() -> None:
+    """Issue #350: `bench.yaml`'s PSU declares a limit (`config.limits.set_voltage
+    .volts.maximum: 24.0`) tighter than the driver's own 0-30 V range, so a 30 V
+    request is rejected pre-I/O by the framework's Guard (src/shal/limits.py) —
+    before the approval gate even runs, so the rejected call itself needs no
+    approver. Nothing reaches the simulated instrument: a DMM read right after
+    still gives the healthy value set before the rejected call."""
+    hal = shal.load(DEMO_DIR / "bench.yaml")
+    psu = hal.get_device("psu")
+    dmm = hal.get_device("dmm")
+    with shal.approver(shal.AutoApprove()):
+        psu.set_voltage(TARGET_VOLTS)
+
+    with pytest.raises(LimitError, match="nothing was sent"):
+        psu.set_voltage(30)
+
+    healthy = dmm.measure_voltage()
+    assert healthy == pytest.approx(TARGET_VOLTS, rel=TOLERANCE)
 
 
 # ---------------------------------------------------------------------------
