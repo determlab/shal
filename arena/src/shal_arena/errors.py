@@ -64,3 +64,11 @@ class MeasurementFailed(ArenaError):
     never name the fault" obligation the sim log has."""
 
     exit_code = 1
+
+
+class TooFewRuns(ArenaError):
+    """``bench`` (issue #314 Scope: "at least 10 runs per side") was asked for
+    fewer runs than that — refused before either side plays a single run.
+    Exit 2: a usage mistake, not a crash."""
+
+    exit_code = 2
