@@ -1,8 +1,9 @@
 """``shal-arena`` — the CLI front door for SHAL Arena (issue #310; the
-``check-driver`` command is issue #311's Agent path).
+``check-driver`` command is issue #311's Agent path; ``measure`` is #312's).
 
     shal-arena run tasks/rail-3v3.yaml --json
     shal-arena check-driver <run-id> psu0 ./driver.py --json
+    shal-arena measure <run-id> dmm0 ./driver.py --json
     shal-arena answer <run-id> low_voltage --json
 
 Non-interactive by design: no prompt ever blocks a command, so an agent can
@@ -20,7 +21,7 @@ import sys
 
 from .errors import ArenaError
 from .runner import answer as _answer
-from .runner import check_instrument_driver, start_run
+from .runner import check_instrument_driver, start_run, take_measurement
 
 
 def _json_out(payload: dict) -> None:
@@ -72,6 +73,19 @@ def _cmd_check(args: argparse.Namespace) -> int:
     return 0 if result["passed"] else 1
 
 
+def _cmd_measure(args: argparse.Namespace) -> int:
+    try:
+        result = take_measurement(args.run_id, args.instrument, args.manifest,
+                                  state_dir=args.state_dir)
+    except ArenaError as e:
+        return _report_error(e, args.json)
+    if args.json:
+        _json_out(result)
+    else:
+        print(f"{args.instrument}: {result['op']} -> {result['reading']}")
+    return 0
+
+
 def _cmd_answer(args: argparse.Namespace) -> int:
     try:
         result = _answer(args.run_id, args.value, state_dir=args.state_dir)
@@ -113,6 +127,15 @@ def _build_parser() -> argparse.ArgumentParser:
     p_check.add_argument("manifest", help="path to your driver.py")
     add_common(p_check)
     p_check.set_defaults(func=_cmd_check)
+
+    p_measure = sub.add_parser(
+        "measure",
+        help="take your own reading on an instrument (issue #312 Agent path)")
+    p_measure.add_argument("run_id")
+    p_measure.add_argument("instrument", help="the instrument address from `run`'s output")
+    p_measure.add_argument("manifest", help="path to your driver.py")
+    add_common(p_measure)
+    p_measure.set_defaults(func=_cmd_measure)
 
     p_answer = sub.add_parser("answer", help="answer the question and close the run")
     p_answer.add_argument("run_id")

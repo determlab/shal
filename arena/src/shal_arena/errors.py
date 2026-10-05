@@ -47,3 +47,15 @@ class CheckCouldNotRun(ArenaError):
     `CheckCouldNotRun` — a crash, not "the driver failed its check"."""
 
     exit_code = 3
+
+
+class MeasurementFailed(ArenaError):
+    """``measure`` (issue #312) bound the player's own driver and called its
+    read op, but the exchange itself raised — same exit family as ``shal
+    call``'s own op-failed outcome (AGENTS.md: "1 the op failed"), not a
+    crash in the check machinery. The message is whatever the raised
+    exception says (a live answer to the player's own action, not something
+    written to a file) — this is never persisted, so it carries no "must
+    never name the fault" obligation the sim log has."""
+
+    exit_code = 1

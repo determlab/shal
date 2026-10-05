@@ -13,7 +13,15 @@ MCP host, raw Python) can change its shape.
 "An answer with no matching measurement in the log is disqualified"
 (`runner.answer`) reads this log back for at least one ``query`` at a probe
 instrument's address — proof the player actually measured, not just typed an
-answer.
+answer. The log carries ONLY what the bus's own structured record produces:
+a successful exchange logs ``query``/``write`` as always; a failed one (the
+`open` fault, or a driver bug) logs nothing at all here (CTO review on #322:
+an earlier version wrote a fixed ``"attempt"``/``"unreachable"`` entry for
+every failure, and since a correct driver only ever fails to read on the
+`open` fault, that entry — regardless of its exact wording — named the fault
+as surely as writing its id would have). A failed measurement is reported
+live to whoever just tried it (`runner.take_measurement`'s own return value
+or raised error), never written here.
 """
 from __future__ import annotations
 
@@ -77,33 +85,14 @@ class SimLog:
             logger.removeHandler(handler)
             logger.setLevel(prev_level)
 
-    def append(self, *, address: str, kind: str, cmd: str) -> None:
-        """A log line the bus handler above could not produce itself — used
-        for the one case where a measurement attempt never reaches the sim's
-        own ``exchange`` record at all: the instrument is unreachable (the
-        `open` fault, extending `fault: unplugged`) and the hop raises before
-        the bus gets to log anything. ``cmd`` is always a fixed, generic
-        marker (never the raised exception's own text) — Scope: never write
-        anything to a player-readable file that could name the fault."""
-        self.path.parent.mkdir(parents=True, exist_ok=True)
-        entry = {
-            "ts": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
-            "address": address,
-            "kind": kind,
-            "cmd": cmd,
-        }
-        with self.path.open("a", encoding="utf-8") as f:
-            f.write(json.dumps(entry) + "\n")
-
     def entries(self) -> list[dict[str, Any]]:
         if not self.path.is_file():
             return []
         return [json.loads(line) for line in
                 self.path.read_text(encoding="utf-8").splitlines() if line.strip()]
 
-    def has_measurement(self, address: str) -> bool:
-        """A `query` (a genuine reading) OR an `attempt` (unreachable, but
-        the player did try) at ``address`` — either is proof the player
-        measured, which is all `answer`'s disqualification check needs."""
-        return any(e["kind"] in ("query", "attempt") and e["address"] == str(address)
+    def has_query(self, address: str) -> bool:
+        """A genuine, successful reading at ``address`` — the only thing
+        `answer`'s disqualification check counts as a measurement."""
+        return any(e["kind"] == "query" and e["address"] == str(address)
                    for e in self.entries())

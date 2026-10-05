@@ -66,7 +66,7 @@ def test_noise_varies_the_reading_around_nominal() -> None:
 
 def test_open_makes_the_instrument_unreachable() -> None:
     # direct driver call, not hal.call_tool: the tool-use surface catches and
-    # reports a HopError rather than raising it, same as runner._take_measurement
+    # reports a HopError rather than raising it, same as runner.take_measurement
     seed = _seed_for("open")
     realized = fault_mod.realized_fault(_CARD, seed)
     topology = fault_mod.harness_for_run(_CASE, rail=_RAIL, realized=realized, seed=seed)

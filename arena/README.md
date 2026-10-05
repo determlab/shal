@@ -26,10 +26,14 @@ shal-arena check-driver <run-id> psu0 ./driver.py --json
 #  -> lights the psu0 tile when your driver passes the ADK-style check
 #     (issue #311 Agent path; `check` still works as an alias)
 
+shal-arena measure <run-id> dmm0 ./driver.py --json
+#  -> takes YOUR OWN reading through your bound driver: {"reading": 2.9, ...}
+#     (issue #312 Agent path — this is what `answer` checks the sim log for)
+
 shal-arena answer <run-id> low_voltage --json
 #  -> closes the run; "correct": true/false, plus "disqualified", "score"
-#     (the 13-field score file) and "sim_log" (where every SCPI command this
-#     run's `check` calls made was recorded)
+#     (the 13-field score file) and "sim_log" (where every `measure` call's
+#     SCPI command was recorded)
 ```
 
 Every command is non-interactive and takes `--json`; an error is
@@ -54,18 +58,25 @@ injection, not a card circuit simulation, and not new instrument simulators
 Issue #312 adds the rest of what it takes to actually score a run:
 
 - **Fault injection at run time.** `shal-arena run`'s seed still picks the
-  fault; `shal-arena check` now binds the probing instrument to a topology
-  generated **in memory only** (never written to any file) that wires the
-  realized fault into the sim: `low_voltage`/`noise` shift or add ripple to
-  the reading, `open` sets `fault: unplugged` (the same sim-only mechanism
+  fault; the probing instrument's reading is bound to a topology generated
+  **in memory only** (never written to any file) that wires the realized
+  fault into the sim: `low_voltage`/`noise` shift or add ripple to the
+  reading, `open` sets `fault: unplugged` (the same sim-only mechanism
   `shal` core ships for issue #304) so the instrument is simply unreachable.
-- **Sim log.** Every SCPI command the sim bus handles during a `check` is
-  recorded, with its time, to `<run_id>.simlog.jsonl` next to the run's
-  public state — captured at `shal`'s own structured bus log, so the format
-  is identical whether the exchange came from the CLI, MCP, or Python.
-  `shal-arena answer` refuses to credit a measurement that never happened:
-  an answer with nothing logged at a probe instrument's address comes back
-  `"disqualified": true`.
+- **`measure` — the player's own reading.** `check-driver` only validates
+  your driver (every player runs it, pass or fail, to light the tile); it
+  never touches the sim log. `shal-arena measure` is the deliberate act of
+  taking a reading through your bound driver, and is the only thing that
+  writes to the sim log: a successful read appends a `query` entry (same
+  format whether it came from the CLI, MCP, or Python — captured at `shal`'s
+  own structured bus log); an unreachable instrument (or a driver bug)
+  raises `MeasurementFailed` live, to you, and writes nothing anywhere — a
+  file naming *how* a read failed would, in practice, name the `open` fault,
+  since nothing else makes a correct driver fail to read.
+- **Disqualification.** `shal-arena answer` refuses to credit a measurement
+  that never happened: an answer with no logged `query` at any probe
+  instrument's address comes back `"disqualified": true` — whether that's
+  because you never called `measure`, or because your one call to it raised.
 - **Score file.** `shal-arena answer` also writes `<run_id>.score.json`
   (13 fields — `task_id`, `seed`, `fault_type`, `faults_total`,
   `faults_caught`, `false_fails`, `error_fail_correct`, `duration_s`,

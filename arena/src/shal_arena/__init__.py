@@ -7,19 +7,21 @@
 
 Or from the shell: ``shal-arena run tasks/rail-3v3.yaml --json``.
 """
-from .errors import ArenaError, CheckCouldNotRun, TaskFormatError, UnknownRun
+from .errors import ArenaError, CheckCouldNotRun, MeasurementFailed, TaskFormatError, UnknownRun
 from .loader import LoadedTask, load_task
-from .runner import NotSupported, answer, check_instrument_driver, start_run
+from .runner import NotSupported, answer, check_instrument_driver, start_run, take_measurement
 
 __all__ = [
     "ArenaError",
     "TaskFormatError",
     "UnknownRun",
     "CheckCouldNotRun",
+    "MeasurementFailed",
     "NotSupported",
     "LoadedTask",
     "load_task",
     "start_run",
     "check_instrument_driver",
+    "take_measurement",
     "answer",
 ]
