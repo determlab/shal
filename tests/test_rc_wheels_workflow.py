@@ -27,3 +27,21 @@ def test_never_publishes():
     text = WORKFLOW.read_text("utf-8")
     for forbidden in ("twine upload", "pypi-publish", "id-token"):
         assert forbidden not in text
+
+
+def test_version_carries_an_rc_local_segment():
+    # CTO review: the built version must never collide with a real PyPI
+    # release, so it always carries a PEP 440 local segment.
+    text = WORKFLOW.read_text("utf-8")
+    assert "+rc." in text
+
+
+def test_manifest_has_repo_filename_and_sha256():
+    text = WORKFLOW.read_text("utf-8")
+    for field in ('"repo"', '"filename"', '"sha256"'):
+        assert field in text
+
+
+def test_asserts_exactly_one_wheel():
+    text = WORKFLOW.read_text("utf-8")
+    assert "exactly one" in text
