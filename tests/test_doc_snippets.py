@@ -22,6 +22,7 @@ AGENTS = _ROOT / "AGENTS.md"
 sys.path.insert(0, str(_ROOT / "dev" / "quickstart"))
 import run_readme  # noqa: E402
 from run_readme import (  # noqa: E402
+    MAIN_ONLY_MARK,
     StepFailed,
     doc_blocks,
     doc_test_plan,
@@ -67,8 +68,6 @@ def test_config_snippet_reads_node_spec_config_with_env_resolved(
 # 0.3.0 (the latest PyPI release) does not have must carry this mark, so a cold
 # agent that just ran `pip install pyshal` is never told to run a command that
 # fails. ---
-
-MAIN_ONLY_MARK = "main only, not in the PyPI release yet"
 
 # The `shal` subcommands and flags pyshal 0.3.0's CLI actually has (CHANGELOG.md
 # "## [0.3.0]" and earlier). `routes` and `records` are 0.4.0; so are the
@@ -168,7 +167,9 @@ def test_released_commands_other_than_whitelisted_are_marked_in_docs() -> None:
 # -->`; MAX_DOC_TEST_SKIPS caps how many of those a doc may carry before this test
 # itself fails, so a skip can't quietly cover for a command that should run. With
 # `RC_WHEELS=<dir>` set, the `pip install` lines resolve from that directory
-# (`--no-index --find-links`) instead of PyPI.
+# (`--no-index --find-links`) instead of PyPI, and a skip whose reason names
+# `MAIN_ONLY_MARK` runs too (shal#361) — the release-candidate wheel has what PyPI
+# doesn't. Without `RC_WHEELS`, nothing here changes: those blocks stay skipped.
 
 MAX_DOC_TEST_SKIPS = 4
 
@@ -188,13 +189,14 @@ def doc_test_venv(tmp_path_factory: pytest.TempPathFactory) -> Path:
 
 
 def _run_doc_test(doc: Path, blocks: list[run_readme.Block], venv: Path, workdir: Path) -> None:
-    steps, skips = doc_test_plan(blocks)
+    find_links = _rc_wheels()
+    steps, skips = doc_test_plan(blocks, rc_wheels=find_links is not None)
     for line, reason in skips:
         print(f"SKIP {doc.name}:{line}: {reason}")
     assert len(skips) <= MAX_DOC_TEST_SKIPS, (
         f"{doc.name} carries {len(skips)} doc-test skips (cap is {MAX_DOC_TEST_SKIPS}); "
         f"either run the block or lower the cap deliberately:\n{skips}")
-    run_doc_steps(steps, venv, workdir, find_links=_rc_wheels())
+    run_doc_steps(steps, venv, workdir, find_links=find_links)
 
 
 def test_readme_first_screen_commands_run_in_a_temp_venv(

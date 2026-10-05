@@ -361,6 +361,35 @@ def test_doc_test_plan_skips_a_marked_block_and_reports_its_reason() -> None:
     assert skips == [(4, "needs hardware")]
 
 
+def test_doc_test_plan_runs_a_main_only_skip_when_rc_wheels_is_on() -> None:
+    """shal#361: a block skipped only because PyPI lacks the command runs once the
+    venv installs the release-candidate wheel instead."""
+    md = (f"Samples (main only, not in the PyPI release yet):\n\n"
+          f"<!-- doc-test: skip {run_readme.MAIN_ONLY_MARK}; PyPI 0.3.0 lacks it -->\n"
+          f"{FENCE}bash\nshal docs --samples\n{FENCE}\n")
+    blocks = doc_blocks(md)
+
+    steps, skips = doc_test_plan(blocks)
+    assert steps == []
+    assert skips == [(4, f"{run_readme.MAIN_ONLY_MARK}; PyPI 0.3.0 lacks it")]
+
+    steps, skips = doc_test_plan(blocks, rc_wheels=True)
+    assert skips == []
+    [run] = steps
+    assert isinstance(run, Run) and run.argv == ["shal", "docs", "--samples"]
+
+
+def test_doc_test_plan_still_skips_a_non_main_only_block_when_rc_wheels_is_on() -> None:
+    """A skip for a reason other than the PyPI-vs-main gap (shell syntax, hardware,
+    secrets) is not unlocked by `rc_wheels` — a release-candidate wheel doesn't fix
+    those."""
+    md = (f"Needs a real bench.\n\n<!-- doc-test: skip needs hardware -->\n"
+          f"{FENCE}bash\nshal probe bench.yaml\n{FENCE}\n")
+    steps, skips = doc_test_plan(doc_blocks(md), rc_wheels=True)
+    assert steps == []
+    assert skips == [(4, "needs hardware")]
+
+
 def test_doc_test_plan_exit_code_falls_back_to_the_paragraph_right_before_the_block() -> None:
     md = (f"`shal call` refuses a gated op with exit 2:\n\n"
           f"{FENCE}bash\nshal call sim.yaml ambient_temp set_target 30 --json\n{FENCE}\n\n"

@@ -301,6 +301,14 @@ def rc_wheels_argv(argv: list[str], find_links: Path) -> list[str]:
 
 _SKIP = re.compile(r"<!--\s*doc-test:\s*skip\b\s*(.*?)\s*-->", re.S)
 
+# A skip reason naming this gap (shal#361): the block is valid, but PyPI's release
+# doesn't have the command yet, so the doc-test venv's `pip install pyshal` can't
+# reach it. With `RC_WHEELS` set, the venv installs the release-candidate wheel
+# instead, which does — so `doc_test_plan(..., rc_wheels=True)` runs that block
+# instead of skipping it. Every other skip (shell syntax this runner cannot
+# interpret, hardware, secrets) stays skipped in both modes.
+MAIN_ONLY_MARK = "main only, not in the PyPI release yet"
+
 
 def doc_blocks(text: str, start: int = 0, end: int | None = None) -> list[Block]:
     """Fenced blocks between 0-based line `start` (inclusive) and `end` (exclusive;
@@ -349,7 +357,8 @@ def first_screen_end(text: str) -> int:
     return end
 
 
-def doc_test_plan(blocks: list[Block]) -> tuple[list[Save | Run], list[tuple[int, str]]]:
+def doc_test_plan(blocks: list[Block], *, rc_wheels: bool = False
+                  ) -> tuple[list[Save | Run], list[tuple[int, str]]]:
     """Runnable steps for the ```bash/```sh blocks among `blocks`, plus the skips.
 
     A file block (```yaml/python/json/toml) is saved only when prose right before it
@@ -357,7 +366,10 @@ def doc_test_plan(blocks: list[Block]) -> tuple[list[Save | Run], list[tuple[int
     left alone — neither saved nor an error. An unlabeled/```text block right after a
     command is its expected output, exactly as `plan()` attaches it. A shell block
     whose prose carries `<!-- doc-test: skip REASON -->` is not run; its (line, reason)
-    goes into the second return value instead.
+    goes into the second return value instead — unless `rc_wheels` is true and the
+    reason names `MAIN_ONLY_MARK` (shal#361), in which case the block runs like any
+    other (the release-candidate wheel the venv installs under `RC_WHEELS` has the
+    command PyPI doesn't).
     """
     steps: list[Save | Run] = []
     skips: list[tuple[int, str]] = []
@@ -378,9 +390,11 @@ def doc_test_plan(blocks: list[Block]) -> tuple[list[Save | Run], list[tuple[int
         elif b.lang in SHELL_LANGS:
             skip = _SKIP.search(b.before)
             if skip is not None:
-                skips.append((b.line, skip.group(1) or "(no reason given)"))
-                last_run = None
-                continue
+                reason = skip.group(1) or "(no reason given)"
+                if not (rc_wheels and MAIN_ONLY_MARK in reason):
+                    skips.append((b.line, reason))
+                    last_run = None
+                    continue
             runs = _shell_runs(b)
             after_code = _exit_code_opt(b.after)
             before_code = _exit_code_opt(_last_paragraph(b.before))

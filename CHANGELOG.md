@@ -35,6 +35,15 @@ All notable changes to this project are documented here. The format follows
   other actuator and ask for approval. Sonos reads stay `none`.
 
 ### Added
+- **`RC_WHEELS` also runs the main-only doc blocks (#361).** The doc tests
+  (#342) skip a fenced block whose prose carries `<!-- doc-test: skip REASON
+  -->`; one such block is README's `shal docs --samples` / `--sample`, marked
+  "main only, not in the PyPI release yet" because PyPI 0.3.0 lacks it. With
+  `RC_WHEELS=<dir>` set, the doc-test venv installs the release-candidate
+  wheel instead of PyPI, so that block now runs too — `doc_test_plan(...,
+  rc_wheels=True)` treats a skip naming that gap as a runnable step. Every
+  other skip (shell syntax this runner cannot interpret, hardware, secrets)
+  stays skipped in both modes; without `RC_WHEELS`, nothing changes.
 - **Docs are tests: README's first screen and AGENTS.md run for real (#342).**
   `tests/test_doc_snippets.py` extracts every fenced ```bash/```sh block from
   README.md's first screen (top of file through the heading right after Quick
