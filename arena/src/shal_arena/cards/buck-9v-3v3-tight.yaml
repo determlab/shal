@@ -1,13 +1,13 @@
 arena_card: 1
 id: buck-9v-3v3-tight
-description: "9 V input, buck to 3.3 V, tight 2% tolerance, one test point tp_3v3."
+description: "Fictional card, no real part. 9 V input, buck to 3.3 V, tight 2% tolerance, one test point tp_3v3."
 inputs:
   vin: {nominal_v: 9.0}
 rails:
   3v3: {from: vin, nominal_v: 3.3, tol_pct: 2, test_point: tp_3v3, min_input_v: 8.5}
 damage:
-  - {input: vin, above_v: 10.0, effect: protection, source: "buck-9v-3v3-tight datasheet 6.3 OVP"}
-  - {input: vin, above_v: 11.0, effect: destroyed, source: "buck-9v-3v3-tight datasheet 5.1 abs max"}
+  - {input: vin, above_v: 10.0, effect: protection, source: "buck-9v-3v3-tight datasheet 6.3 OVP (fictional datasheet)"}
+  - {input: vin, above_v: 11.0, effect: destroyed, source: "buck-9v-3v3-tight datasheet 5.1 abs max (fictional datasheet)"}
 faults:
   - {id: ok}
   - {id: low_voltage, rail: 3v3, shift_v: -0.30}
