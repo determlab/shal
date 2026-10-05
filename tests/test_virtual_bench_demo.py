@@ -17,6 +17,7 @@ from __future__ import annotations
 import json
 import re
 import shlex
+import shutil
 import subprocess
 import sys
 import urllib.error
@@ -75,7 +76,22 @@ def demo_venv(tmp_path_factory: pytest.TempPathFactory) -> Path:
     return venv_dir
 
 
+def _clear_records_store() -> None:
+    """Empty `records.db`/`records/` beside the README before a run.
+
+    pytest-shal timestamps a record to whole-second resolution and ties break
+    on a random suffix (`rec-<second>-<hex>`), so "the newest record" is only
+    well-defined when the store holds records from one run at a time — two
+    runs landing in the same wall-clock second would otherwise make
+    `shal_record.read(...)[-1]` (used by both `run_bench.py` and the assertion
+    below) pick either one at random.
+    """
+    (DEMO_DIR / "records.db").unlink(missing_ok=True)
+    shutil.rmtree(DEMO_DIR / "records", ignore_errors=True)
+
+
 def _run(py: Path, *extra: str) -> subprocess.CompletedProcess:
+    _clear_records_store()
     return subprocess.run([str(py), "run_bench.py", *extra], cwd=DEMO_DIR,
                           capture_output=True, text=True, timeout=120)
 

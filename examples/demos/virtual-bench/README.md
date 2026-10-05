@@ -9,7 +9,7 @@ below.
 
 Neither `pyshal` 0.4.0 nor `pytest-shal` is on PyPI yet (PyPI's `pyshal` is
 still 0.3.0, and `pytest-shal` is pinned to a commit of its own repo), so this
-needs two pinned-commit installs instead of one:
+needs three pinned installs instead of one:
 
 ```bash
 pip install pytest==9.1.1
@@ -77,7 +77,7 @@ the record store holds.
 
 ## Agent path
 
-Read only this file, run `python run_bench.py` from a clean venv (the two
+Read only this file, run `python run_bench.py` from a clean venv (the three
 installs above), read the printed JSON's `verdict` and `cause`. On
 `verdict: error`, `cause: transport` means the instrument at the address
 named in stderr never answered — check the simulated wiring (`bench.yaml`'s
