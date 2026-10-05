@@ -27,13 +27,17 @@ from pathlib import Path
 
 import pytest
 
+import shal
 from shal import record as shal_record
+from shal.errors import LimitError
 
 ROOT = Path(__file__).resolve().parents[1]
 DEMO_DIR = ROOT / "examples" / "demos" / "virtual-bench"
 # determlab/pytest-shal main — includes #31/#32, so the stored record's own
 # `cause` reads "transport" too, not just the printed JSON — see the demo's README.
 PYTEST_SHAL_REF = "f45937de74737473e3b2b896b25bef087468da40"
+TARGET_VOLTS = 3.3  # the healthy setpoint test_bench.py itself asserts (2% DoD)
+TOLERANCE = 0.02
 
 
 def _venv_python(venv_dir: Path) -> Path:
@@ -123,6 +127,62 @@ def test_unplug_dmm_gives_an_error_record_with_cause_transport_and_a_different_e
     error_steps = [s for s in rec.steps if s.verdict == "error"]
     assert error_steps, "the stored record has no error step"
     assert all(s.cause == "transport" for s in error_steps)
+
+
+@pytest.mark.parametrize("volts", [5.0, 30.0])
+def test_above_the_declared_limit_is_rejected(volts: float) -> None:
+    """Issue #350 (CTO review, #359): `bench.yaml`'s PSU declares a limit
+    (`config.limits.set_voltage.volts.maximum: 3.6`) that is the fictional
+    DUT's own abs max, not the driver's 0-30 V range — so both a 5 V and a
+    30 V request exceed it and are rejected pre-I/O by the framework's Guard
+    (src/shal/limits.py), before the approval gate even runs, so the rejected
+    call itself needs no approver. Nothing reaches the simulated instrument: a
+    DMM read right after still gives the healthy value set before the
+    rejected call."""
+    hal = shal.load(DEMO_DIR / "bench.yaml")
+    psu = hal.get_device("psu")
+    dmm = hal.get_device("dmm")
+    with shal.approver(shal.AutoApprove()):
+        psu.set_voltage(TARGET_VOLTS)
+
+    with pytest.raises(LimitError, match="nothing was sent"):
+        psu.set_voltage(volts)
+
+    healthy = dmm.measure_voltage()
+    assert healthy == pytest.approx(TARGET_VOLTS, rel=TOLERANCE)
+
+
+def test_cli_call_rejects_over_limit_set_voltage_with_json() -> None:
+    """Issue #350 (CTO review, #359, part 2): the same over-limit 5 V request,
+    driven through the real CLI entry point (`python -m shal.cli call`, as
+    tests/test_cli_call.py does) instead of the Python API.
+
+    `set_voltage` is labelled `actuator` (it energizes the simulated output
+    now), so `shal call` refuses it for approval (D4: the agent that runs a
+    command cannot approve its own call) BEFORE it ever reaches the limits
+    Guard — the same refusal a healthy 3.3 V request would get. So the CLI's
+    machine-readable error here is `ApprovalRequired`, not `LimitsRejected`;
+    what this test proves is the property that actually matters at this
+    boundary: the CLI can never push a voltage to the simulated PSU, in or
+    out of the declared 3.6 V limit, and its JSON always says so (`sent:
+    false`) and always carries a `fix`. The limit Guard itself (`LimitError`,
+    "nothing was sent") is exercised above, through the Python API under an
+    approver — the only way `set_voltage` ever actually runs.
+    """
+    result = subprocess.run(
+        [sys.executable, "-m", "shal.cli", "call", str(DEMO_DIR / "bench.yaml"),
+         "psu", "set_voltage", "5", "--json"],
+        cwd=ROOT, capture_output=True, text=True, timeout=60,
+    )
+    assert result.returncode != 0, result.stdout
+    doc = json.loads(result.stdout)
+    assert doc["ok"] is False
+    assert doc["sent"] is False  # nothing was sent to the simulated PSU
+    assert doc["rejected"] == "approval"
+    error = doc["error"]
+    assert set(error) == {"type", "message", "fix"}
+    assert error["type"] == "ApprovalRequired"
+    assert error["fix"]  # the one command/change that fixes it (AGENTS.md's JSON contract)
 
 
 # ---------------------------------------------------------------------------

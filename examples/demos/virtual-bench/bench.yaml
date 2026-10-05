@@ -12,6 +12,13 @@ root:
         address: psu0
         config:
           load_ohms: 10
+          # DUT abs max 3.6 V (fictional demo board; shal#350 CTO review): the
+          # limit protects what's under test, not the driver's own 0-30 V
+          # envelope — so a 5 V or 30 V request is rejected pre-I/O, nothing
+          # sent to the sim
+          limits:
+            set_voltage:
+              volts: {maximum: 3.6}
       dmm0:
         id: dmm
         driver: shal,sim-dmm
