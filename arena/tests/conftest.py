@@ -15,6 +15,7 @@ import pytest  # noqa: E402
 FIXTURES = Path(__file__).resolve().parent / "fixtures"
 PASSING_DRIVER = FIXTURES / "drivers" / "passing_psu_driver.py"
 FAILING_DRIVER = FIXTURES / "drivers" / "failing_psu_driver.py"
+PASSING_DMM_DRIVER = FIXTURES / "drivers" / "passing_dmm_driver.py"
 SAMPLE_TASK = _ARENA_SRC / "shal_arena" / "tasks" / "rail-3v3.yaml"
 
 MINIMAL_CARD = """\

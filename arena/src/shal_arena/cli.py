@@ -80,6 +80,9 @@ def _cmd_answer(args: argparse.Namespace) -> int:
         _json_out(result)
     else:
         print("correct" if result["correct"] else f"incorrect (was {result['fault_id']})")
+        if result["disqualified"]:
+            print("disqualified: no measurement logged for this run")
+        print(f"sim log: {result['sim_log']}")
     return 0
 
 
