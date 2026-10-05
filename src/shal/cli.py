@@ -555,11 +555,19 @@ def _cmd_call(args) -> int:
     prompted or passed. The gated set is the one the wrapper captured at bind
     (issue #114, ADR-001 addendum 5b: the topology's ``policy:`` ∪ the host's
     widenings), not the shipped default, so this refusal and the runtime gate
-    cannot disagree. There is no flag: the caller cannot choose its own gate."""
+    cannot disagree. There is no flag: the caller cannot choose its own gate.
+
+    Within the gated branch, limits are checked before approval (shal#364), the
+    same order ``driver.py`` enforces at the op layer: a request outside the op's
+    declared limits is refused as ``LimitsRejected`` and never reaches the
+    ``ApprovalRequired`` refusal, so nobody is asked to approve a call the limits
+    would refuse anyway. Both checks run pre-I/O; nothing reaches the device
+    either way."""
     from .approval import DenyAll, approver
     from .driver import inferred_side_effect
-    from .errors import HOW_TO_APPROVE_LINE
+    from .errors import HOW_TO_APPROVE_LINE, LimitError
     from .hal import _node_gated
+    from .limits import Guard, effective_schema
     from .mcp.server import _import_drivers, _resolve_hal
 
     def emit(payload: dict) -> None:
@@ -589,7 +597,38 @@ def _cmd_call(args) -> int:
         device = node.id or node.path
         pin = _call_pin(node, args.via) if args.via is not None else {}
         side_effect = inferred_side_effect(fn)
+        schema = next(s["input_schema"] for s in hal.tool_schemas() if s["name"] == name)
         if side_effect in _node_gated(node):  # from the label: never invoked
+            # limits are checked BEFORE approval (shal#364): a request outside
+            # the op's declared limits is refused as LimitsRejected, never as
+            # ApprovalRequired, so nobody is asked to approve a call the limits
+            # would refuse anyway. Same schema/Guard the op-layer wrapper uses
+            # (driver.py), run here pre-I/O — nothing reaches the device either way.
+            # The label still decides first: a bad value (one `_call_arguments`
+            # itself refuses) is not reported ahead of the gate refusal, so a
+            # failed parse here just skips the limit check — same as an op with
+            # no declared limits at all.
+            try:
+                gated_arguments = _call_arguments(fn, schema, args.args)
+            except _CallCannotRun:
+                gated_arguments = None
+            if gated_arguments is not None:
+                eff_schema, constrained = effective_schema(node.driver, fn, args.op)
+                if constrained:
+                    guard = Guard(fn, eff_schema, path=node.path, opname=args.op)
+                    try:
+                        guard.check(node.driver, **gated_arguments)
+                    except LimitError as e:
+                        msg = str(e)
+                        print(f"shal call: {msg}", file=sys.stderr)
+                        emit({"ok": False, "rejected": "limits", "tool": name,
+                              "device": device, "op": args.op, "side_effect": side_effect,
+                              "sent": False, "violations": e.violations,
+                              "error": _error_obj(
+                                  "LimitsRejected", msg,
+                                  "pass a value inside the op's declared limits "
+                                  f"(`shal tools {args.topology} --json`)")})
+                        return _CALL_REFUSED
             msg = (f"refused: {device}.{args.op} is labelled '{side_effect}'. A "
                    f"'{side_effect}' op needs a person's approval, and shal call "
                    f"cannot give it. Nothing was sent to the device.\n"
@@ -608,7 +647,6 @@ def _cmd_call(args) -> int:
                   "how_to_approve": HOW_TO_APPROVE_LINE,
                   "error": _error_obj("ApprovalRequired", msg, HOW_TO_APPROVE_LINE)})
             return _CALL_REFUSED
-        schema = next(s["input_schema"] for s in hal.tool_schemas() if s["name"] == name)
         arguments = _call_arguments(fn, schema, args.args)
         with approver(DenyAll()):
             out = hal.call_tool(name, {**arguments, **pin})
