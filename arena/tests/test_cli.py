@@ -9,6 +9,10 @@ import subprocess
 import sys
 from pathlib import Path
 
+from shal_arena.loader import load_task
+from shal_arena.runner import pick_fault
+from shal_arena.store import RunStore
+
 from .conftest import PASSING_DRIVER, SAMPLE_TASK
 
 _TIMEOUT = 30
@@ -54,8 +58,11 @@ def test_run_check_answer_roundtrip_via_cli(tmp_path: Path) -> None:
     assert check_proc.returncode == 0, check_proc.stderr
     assert json.loads(check_proc.stdout)["passed"] is True
 
-    secret = json.loads((state_dir / f"{run_id}.secret.json").read_text(encoding="utf-8"))
-    answer_proc = _run_cli("answer", run_id, secret["fault_id"],
+    # recomputed the same way `answer` does — no secret file exists to peek at
+    # (CTO review on #319): the fault is derived from the run's own stored seed.
+    run_state = RunStore(state_dir).load(run_id)
+    fault_id = pick_fault(load_task(SAMPLE_TASK).card, run_state.seed)
+    answer_proc = _run_cli("answer", run_id, fault_id,
                            "--state-dir", str(state_dir), "--json")
     assert answer_proc.returncode == 0, answer_proc.stderr
     assert json.loads(answer_proc.stdout)["correct"] is True

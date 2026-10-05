@@ -62,6 +62,27 @@ jobs:
         # testpaths=tests keeps them out of the core run, so they run here
         run: python -m pytest examples/drivers
 
+  arena:
+    # SHAL Arena's own package (arena/, issue #310): a separate distribution with
+    # its own pyproject.toml, so root `testpaths = ["tests"]` never runs it —
+    # without this job CI would be green on an arena regression. Installs pyshal
+    # from this checkout (editable) first so shal-arena's `pyshal>=0.4.0,<0.5`
+    # dependency resolves to this commit, not a PyPI release.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install pyshal (editable, this commit) then shal-arena
+        run: |
+          pip install -e .
+          pip install -e "./arena[dev]"
+      - name: Lint
+        run: ruff check arena/src arena/tests
+      - name: Test
+        run: python -m pytest arena/tests -q
+
   packaging:
     # Checks the *built wheel's* metadata, not the source that declares it
     # (#123). `test`/`examples` install `.[dev]` from a repo checkout, so a

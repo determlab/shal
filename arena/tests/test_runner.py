@@ -8,11 +8,22 @@ import json
 from pathlib import Path
 
 import pytest
+
 from shal_arena.errors import CheckCouldNotRun, UnknownRun
-from shal_arena.runner import NotSupported, answer, check_instrument_driver, start_run
+from shal_arena.loader import load_task
+from shal_arena.runner import NotSupported, answer, check_instrument_driver, pick_fault, start_run
 from shal_arena.store import RunStore
 
 from .conftest import FAILING_DRIVER, PASSING_DRIVER, SAMPLE_TASK
+
+
+def _expected_fault(run_id: str, state_dir: Path) -> str:
+    """Test-only: recompute the fault the same way `answer` does, from the
+    run's own public state — never a peek at anything secret, because
+    nothing secret is persisted any more (CTO review on #319)."""
+    state = RunStore(state_dir).load(run_id)
+    loaded = load_task(state.task_path)
+    return pick_fault(loaded.card, state.seed)
 
 
 def test_start_run_returns_task_text_instrument_list_and_run_id(tmp_path: Path) -> None:
@@ -29,19 +40,20 @@ def test_start_run_returns_task_text_instrument_list_and_run_id(tmp_path: Path) 
 
 
 def test_no_file_the_player_can_read_contains_the_hidden_fault(tmp_path: Path) -> None:
-    result = start_run(SAMPLE_TASK, state_dir=tmp_path)
+    state_dir = tmp_path / "state"
+    result = start_run(SAMPLE_TASK, state_dir=state_dir)
     run_id = result["run_id"]
-    store = RunStore(tmp_path)
-    fault_id = store._load_secret(run_id)["fault_id"]  # peek: test-only, not a player path
+    fault_id = _expected_fault(run_id, state_dir)
 
     assert "fault_id" not in json.dumps(result)
-    public_path = tmp_path / f"{run_id}.json"
-    public_doc = json.loads(public_path.read_text(encoding="utf-8"))
-    assert "fault_id" not in public_doc
-    # the fault catalogue itself is public on purpose (CTO ruling) — only WHICH
-    # one was picked for this run must stay hidden, so check the picked id is
-    # absent from the run's own state, not from the card's full catalogue.
-    assert fault_id not in json.dumps(public_doc)
+
+    # Every file under state_dir while the run is open — not just the public
+    # run JSON this test used to check alone (CTO review on #319: that narrower
+    # check passed even while a *.secret.json sat right next to it on disk).
+    for path in state_dir.rglob("*"):
+        if path.is_file():
+            assert fault_id not in path.read_text(encoding="utf-8"), (
+                f"{path} contains the hidden fault {fault_id!r}")
 
 
 def test_check_instrument_driver_lights_tile_on_pass(tmp_path: Path) -> None:
@@ -83,7 +95,7 @@ def test_check_missing_driver_file_names_the_fix(tmp_path: Path) -> None:
 def test_answer_correct_closes_the_run_and_reveals_the_fault(tmp_path: Path) -> None:
     result = start_run(SAMPLE_TASK, state_dir=tmp_path)
     run_id = result["run_id"]
-    fault_id = RunStore(tmp_path)._load_secret(run_id)["fault_id"]
+    fault_id = _expected_fault(run_id, tmp_path)
     record = answer(run_id, fault_id, state_dir=tmp_path)
     assert record["correct"] is True
     assert record["fault_id"] == fault_id
@@ -94,7 +106,7 @@ def test_answer_correct_closes_the_run_and_reveals_the_fault(tmp_path: Path) -> 
 def test_answer_incorrect_is_recorded_as_such(tmp_path: Path) -> None:
     result = start_run(SAMPLE_TASK, state_dir=tmp_path)
     run_id = result["run_id"]
-    fault_id = RunStore(tmp_path)._load_secret(run_id)["fault_id"]
+    fault_id = _expected_fault(run_id, tmp_path)
     wrong = next(v for v in ("ok", "low_voltage", "noise", "open") if v != fault_id)
     record = answer(run_id, wrong, state_dir=tmp_path)
     assert record["correct"] is False

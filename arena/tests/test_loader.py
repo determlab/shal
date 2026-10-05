@@ -7,6 +7,7 @@ from pathlib import Path
 
 import pytest
 import yaml
+
 from shal_arena.errors import TaskFormatError
 from shal_arena.loader import load_task
 

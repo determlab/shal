@@ -2,20 +2,19 @@
 run`` / ``check`` / ``answer`` (DoD 4: "no file the player can read contains
 the hidden fault").
 
-Two files per run, deliberately split:
-
-- ``<run_id>.json`` — public: task/card paths, status, and the tile each
-  instrument's driver check has lit so far. This is the only state file a
-  player-facing command ever prints from.
-- ``<run_id>.secret.json`` — the fault id picked by the seed. Never returned
-  by any command, never merged into the public file, and deleted the moment
-  `close` reveals it into the final record — so after a run ends there is no
-  file left that still calls itself "secret" but isn't.
+Only one file per run, and it never holds the fault: ``<run_id>.json`` keeps
+task/card paths, status, the seed, and the tile each instrument's driver
+check has lit so far. The fault itself is never written to disk while a run
+is open — `runner.answer` recomputes it from the stored seed (the same
+deterministic pick `runner.start_run` made) only at the moment it is needed,
+and only the resulting record (written after the player has already
+answered) names it (CTO review on #319, c2f3379: an earlier version of this
+file persisted the fault to a ``*.secret.json`` next to the public state,
+which was on disk, hence readable, for the run's whole open lifetime).
 """
 from __future__ import annotations
 
 import json
-import os
 import secrets
 import time
 from dataclasses import asdict, dataclass, field
@@ -60,20 +59,16 @@ class RunStore:
     def _public_path(self, run_id: str) -> Path:
         return self.dir / f"{run_id}.json"
 
-    def _secret_path(self, run_id: str) -> Path:
-        return self.dir / f"{run_id}.secret.json"
-
     def _record_path(self, run_id: str) -> Path:
         return self.dir / f"{run_id}.record.json"
 
-    def create(self, *, task_path: str, card_path: str, seed: int, fault_id: str) -> RunState:
+    def create(self, *, task_path: str, card_path: str, seed: int) -> RunState:
         self.dir.mkdir(parents=True, exist_ok=True)
         run_id = new_run_id()
         state = RunState(run_id=run_id, task_path=task_path, card_path=card_path,
                          status="open", seed=seed,
                          created_at=time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()))
         self._write_public(state)
-        self._secret_path(run_id).write_text(json.dumps({"fault_id": fault_id}), encoding="utf-8")
         return state
 
     def _write_public(self, state: RunState) -> None:
@@ -91,15 +86,6 @@ class RunStore:
         tiles = {addr: Tile(**t) for addr, t in doc.pop("tiles", {}).items()}
         return RunState(tiles=tiles, **doc)
 
-    def _load_secret(self, run_id: str) -> dict[str, Any]:
-        path = self._secret_path(run_id)
-        if not path.is_file():
-            # closed runs delete their secret file (it has already been revealed
-            # into the record) — reaching here on an "open" run would be a bug
-            raise UnknownRun(f"run {run_id!r} has no secret state left (already closed)",
-                             fix="start a new run with `shal-arena run`")
-        return json.loads(path.read_text(encoding="utf-8"))
-
     def set_tile(self, run_id: str, address: str, *, case: str, passed: bool) -> RunState:
         state = self.load(run_id)
         if state.status != "open":
@@ -110,12 +96,13 @@ class RunStore:
         self._write_public(state)
         return state
 
-    def answer(self, run_id: str, *, given: str) -> dict[str, Any]:
-        """Close the run, reveal the fault, and write/return the record."""
+    def answer(self, run_id: str, *, given: str, fault_id: str) -> dict[str, Any]:
+        """Close the run and write/return the record. ``fault_id`` is the
+        caller's job to recompute (from the public ``state.seed``) — this
+        store never holds it before this call."""
         state = self.load(run_id)
         if state.status != "open":
             raise UnknownRun(f"run {run_id!r} is already closed", fix="start a new run")
-        fault_id = self._load_secret(run_id)["fault_id"]
         record = {
             "run_id": run_id,
             "task_path": state.task_path,
@@ -129,5 +116,4 @@ class RunStore:
         state.status = "closed"
         state.closed_at = record["closed_at"]
         self._write_public(state)
-        os.remove(self._secret_path(run_id))
         return record

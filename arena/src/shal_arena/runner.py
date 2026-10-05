@@ -20,7 +20,7 @@ from shal.conformance import check_driver as _conformance_check_driver
 from .cases import CaseSpec, resolve_case
 from .errors import ArenaError, CheckCouldNotRun
 from .loader import load_task
-from .schema import Instrument
+from .schema import Card, Instrument
 from .store import DEFAULT_STATE_DIR, RunStore
 
 
@@ -36,6 +36,16 @@ def _read_datasheet(case: CaseSpec) -> str:
     if not files:
         return ""
     return "\n\n".join(f.read_text(encoding="utf-8") for f in files)
+
+
+def pick_fault(card: Card, seed: int) -> str:
+    """The fault a seed picks, deterministically — the one piece of the
+    challenge that must never sit on disk while a run is open. `start_run`
+    picks it to know nothing persistent about it; `answer` picks it again,
+    from the run's own stored seed, at the moment it is needed (CTO review
+    on #319: a prior version persisted this to a ``*.secret.json``, which
+    was on disk, hence readable, for the run's whole open lifetime)."""
+    return random.Random(seed).choice([f.id for f in card.faults])
 
 
 def _instrument_view(instrument: Instrument) -> dict[str, Any]:
@@ -62,11 +72,10 @@ def start_run(task_path: str, *, seed: int | None = None,
     loaded = load_task(task_path)
     task, card = loaded.task, loaded.card
     seed_used = task.seed if seed is None else seed
-    fault_id = random.Random(seed_used).choice([f.id for f in card.faults])
 
     store = RunStore(state_dir)
     state = store.create(task_path=str(loaded.task_path), card_path=str(loaded.card_path),
-                         seed=seed_used, fault_id=fault_id)
+                         seed=seed_used)
     return {
         "ok": True,
         "side_effect": "write",
@@ -154,5 +163,6 @@ def answer(run_id: str, value: str, *, state_dir: str | Path = DEFAULT_STATE_DIR
             f"{loaded.task.question.answer.kind!r} is not scored yet",
             fix="number-kind answers need card simulation, which ships in a later "
                 "arena ticket; this ticket scores enum-kind tasks only")
-    record = store.answer(run_id, given=value)
+    fault_id = pick_fault(loaded.card, state.seed)
+    record = store.answer(run_id, given=value, fault_id=fault_id)
     return {"ok": True, "side_effect": "write", **record}

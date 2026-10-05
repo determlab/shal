@@ -21,6 +21,7 @@ dependencies = [
 [project.optional-dependencies]
 dev = [
     "pytest>=7",
+    "ruff>=0.4",
 ]
 
 [project.scripts]
@@ -39,3 +40,20 @@ shal_arena = [
     "tasks/*.yaml",
     "cards/*.yaml",
 ]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-q"
+
+# Same rule set as the root pyproject.toml, spelled out explicitly rather than
+# left to fall through to ruff's defaults: ruff resolves config from the
+# nearest pyproject.toml to each file it lints, and this one (having its own
+# [tool.ruff]) is nearer than the repo root's for everything under arena/.
+[tool.ruff]
+line-length = 100
+target-version = "py310"
+src = ["src", "tests"]
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "B", "UP"]
+ignore = ["E741"]
