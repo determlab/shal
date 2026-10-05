@@ -8,16 +8,15 @@ Exit codes follow ``shal call``'s own vocabulary (AGENTS.md): 0 the bench
 passed, 1 a check failed, 3 the run could not happen at all, 4 the probed
 instrument never answered (same code as shal#300's ``Unreachable``).
 
-Known gap this script works around: pytest-shal, as merged upstream
-(determlab/pytest-shal @e240b07), builds the error ``Step`` for a test-body
-exception directly instead of through ``shal.record.Step.from_error``, so the
-record it writes for this bench's dead-link run carries ``cause: null``, not
-``cause: "transport"`` (shal #301 added after that plugin code was written).
-This bench has exactly one way to error — the probed instrument never
-answers — so this script derives ``cause`` itself for the one line of JSON it
-prints below. The stored record (``records.db`` / ``records/*.yaml`` beside
-this file) still reads ``cause: null`` until pytest-shal adopts
-``Step.from_error``.
+pytest-shal main (pinned by the README) builds the error ``Step`` through
+``shal.record.Step.from_error``, so the stored record (``records.db`` /
+``records/*.yaml`` beside this file) carries ``cause: "transport"`` for this
+bench's dead-link run, not ``cause: null`` (an older pin, e240b07, predated
+that and left the stored record's ``cause`` null — shal#301 landed in pyshal
+after that plugin code was written). This bench has exactly one way to
+error — the probed instrument never answers — so this script still derives
+``cause`` itself for the one line of JSON it prints below, rather than
+reading the record back.
 """
 from __future__ import annotations
 
