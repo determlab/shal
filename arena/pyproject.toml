@@ -39,6 +39,7 @@ shal_arena = [
     "adk/*/harness/*",
     "tasks/*.yaml",
     "cards/*.yaml",
+    "card_sim/catalogue/*.yaml",
 ]
 
 [tool.pytest.ini_options]

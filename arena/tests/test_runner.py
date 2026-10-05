@@ -11,7 +11,14 @@ import pytest
 
 from shal_arena.errors import CheckCouldNotRun, UnknownRun
 from shal_arena.loader import load_task
-from shal_arena.runner import NotSupported, answer, check_instrument_driver, pick_fault, start_run
+from shal_arena.runner import (
+    NotSupported,
+    answer,
+    check_instrument_driver,
+    drive_input,
+    pick_fault,
+    start_run,
+)
 from shal_arena.store import RunStore
 
 from .conftest import FAILING_DRIVER, PASSING_DRIVER, SAMPLE_TASK
@@ -123,6 +130,51 @@ def test_cannot_answer_a_run_twice(tmp_path: Path) -> None:
 def test_answer_on_unknown_run_id_names_the_fix(tmp_path: Path) -> None:
     with pytest.raises(UnknownRun) as ei:
         answer("run-does-not-exist", "ok", state_dir=tmp_path)
+    assert ei.value.fix
+
+
+def test_drive_input_overvoltage_damages_card_and_logs_it(tmp_path: Path) -> None:
+    """issue #313 Agent path: `CardSim.state`/`apply_input`, reachable through
+    the runner. buck-5v-3v3.yaml's `vin` is destroyed above 6.0 V."""
+    result = start_run(SAMPLE_TASK, state_dir=tmp_path)
+    run_id = result["run_id"]
+
+    drive = drive_input(run_id, "psu0", 6.5, state_dir=tmp_path)
+    assert drive["ok"] is True
+    assert drive["side_effect"] == "write"
+    assert drive["state"] == "damage"
+
+    sim_log_path = RunStore(tmp_path).sim_log_path(run_id)
+    lines = [json.loads(ln) for ln in sim_log_path.read_text(encoding="utf-8").splitlines()]
+    assert any(ln["kind"] == "damage" and ln["address"] == "psu0" for ln in lines)
+
+    # the card stays destroyed for the rest of the run — restored from the
+    # run's own persisted state on this SECOND, separate `drive_input` call.
+    again = drive_input(run_id, "psu0", 5.0, state_dir=tmp_path)
+    assert again["state"] == "damage"
+
+
+def test_drive_input_in_range_leaves_card_ok(tmp_path: Path) -> None:
+    result = start_run(SAMPLE_TASK, state_dir=tmp_path)
+    run_id = result["run_id"]
+    drive = drive_input(run_id, "psu0", 5.0, state_dir=tmp_path)
+    assert drive["state"] == "ok"
+    assert drive["side_effect"] == "write"
+
+
+def test_drive_input_unknown_address_names_the_fix(tmp_path: Path) -> None:
+    result = start_run(SAMPLE_TASK, state_dir=tmp_path)
+    run_id = result["run_id"]
+    with pytest.raises(CheckCouldNotRun) as ei:
+        drive_input(run_id, "no-such-address", 5.0, state_dir=tmp_path)
+    assert ei.value.fix
+
+
+def test_drive_input_on_a_probe_instrument_is_refused(tmp_path: Path) -> None:
+    result = start_run(SAMPLE_TASK, state_dir=tmp_path)
+    run_id = result["run_id"]
+    with pytest.raises(CheckCouldNotRun) as ei:
+        drive_input(run_id, "dmm0", 5.0, state_dir=tmp_path)  # dmm0 probes, it doesn't drive
     assert ei.value.fix
 
 

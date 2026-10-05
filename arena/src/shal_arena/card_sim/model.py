@@ -32,6 +32,8 @@ from typing import Any
 
 import yaml
 
+from ..errors import ArenaError, TaskFormatError
+
 OK = "ok"
 PROTECTION = "protection"
 DAMAGE = "damage"
@@ -78,7 +80,11 @@ class Result:
     detail: dict[str, Any] = field(default_factory=dict)
 
     def as_dict(self) -> dict[str, Any]:
-        d: dict[str, Any] = {"ok": self.ok, "state": self.state, "sent": self.sent}
+        # apply_input is this Result's only producer, and it always changes the
+        # card's own data and appends to the sim log -- side_effect: write,
+        # whether or not the gate ended up sending it (CTO review, issue #313).
+        d: dict[str, Any] = {"ok": self.ok, "state": self.state, "sent": self.sent,
+                             "side_effect": "write"}
         if self.rejected:
             d["rejected"] = self.rejected
         d.update(self.detail)
@@ -86,8 +92,12 @@ class Result:
 
 
 def _num(v: Any, where: str) -> float:
+    # card yaml is community data read by whatever loads this card (CTO
+    # review, issue #313): a bad value must name the fix, not crash with a
+    # bare ValueError.
     if isinstance(v, bool) or not isinstance(v, (int, float)):
-        raise ValueError(f"{where}: must be a number, got {v!r}")
+        raise TaskFormatError(f"{where}: must be a number, got {v!r}",
+                              fix=f"set {where} to a number")
     return float(v)
 
 
@@ -104,7 +114,10 @@ class CardSim:
         for i, e in enumerate(doc.get("limits", doc.get("damage")) or []):
             effect = _EFFECTS.get(e.get("effect"))
             if effect is None:
-                raise ValueError(f"limits[{i}].effect: must be one of {sorted(_EFFECTS)}")
+                raise TaskFormatError(
+                    f"limits[{i}].effect: must be one of {sorted(_EFFECTS)}, "
+                    f"got {e.get('effect')!r}",
+                    fix=f"set limits[{i}].effect to one of {sorted(_EFFECTS)}")
             self.limits.append(Limit(e["input"], _num(e["above_v"], f"limits[{i}].above_v"),
                                      effect, e.get("source")))
         self.faults = [f["id"] for f in doc.get("faults") or []]
@@ -137,7 +150,14 @@ class CardSim:
         return spec.nominal_v
 
     def test_point_voltage(self, test_point: str) -> float:
-        rail = next(r for r in self.rails.values() if r.test_point == test_point)
+        # a plain next() with no default raises StopIteration on a miss, which
+        # a player reading this card's own wiring would never see named (CTO
+        # review, issue #313).
+        rail = next((r for r in self.rails.values() if r.test_point == test_point), None)
+        if rail is None:
+            known = sorted(r.test_point for r in self.rails.values())
+            raise ArenaError(f"no such test point {test_point!r}",
+                             fix=f"probe one of this card's test points: {known}")
         return self.rail_voltage(rail.name)
 
     def supply_current(self) -> float:
@@ -147,7 +167,10 @@ class CardSim:
     def apply_input(self, name: str, volts: float, *, gate: Gate | None = None,
                     address: str = "card") -> Result:
         if name not in self.inputs:
-            raise KeyError(f"unknown input {name!r}; one of {sorted(self.inputs)}")
+            # a bare KeyError is a crash, not a named failure, for data read
+            # from the community card yaml (CTO review, issue #313).
+            raise ArenaError(f"unknown input {name!r}",
+                             fix=f"drive one of this card's inputs: {sorted(self.inputs)}")
         if self.destroyed:  # nothing more can happen to a dead card
             self.applied[name] = volts
             return Result(True, DAMAGE, detail={"input": name, "volts": volts})

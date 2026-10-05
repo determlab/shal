@@ -6,9 +6,13 @@ issue #312 adds fault injection at run time (`_topology_for_instrument`,
 `fault.py`), the sim log (`simlog.py`, populated ONLY by `take_measurement` —
 the player's own deliberate read, never a side effect of `check_instrument_
 driver`'s structural ADK check, per CTO review on #322), and the score file
-(`score.py`, written by `answer`). Card simulation proper (the rail's own
-circuit behaviour under load, damage) is still out of scope here — a later
-arena ticket's job.
+(`score.py`, written by `answer`).
+
+issue #313 adds `drive_input` (the `shal-arena drive` Agent path): the
+card's own damage model (`card_sim.CardSim`) wired in here so an agent can
+reach `apply_input`/`state` at all. It drives the card from whatever a prior
+`drive_input` call on this run already applied (`RunStore.set_card_state`),
+and logs to the same per-run sim log `take_measurement` writes to.
 """
 from __future__ import annotations
 
@@ -17,16 +21,18 @@ import sys
 from pathlib import Path
 from typing import Any
 
+import yaml
 from shal.conformance import check_driver as _conformance_check_driver
 
 from . import fault as _fault
+from .card_sim import CardSim
 from .cases import CaseSpec, resolve_case
 from .errors import ArenaError, CheckCouldNotRun, MeasurementFailed
-from .loader import load_task
+from .loader import LoadedTask, load_task
 from .schema import Card, Instrument, Task
 from .score import build_score
 from .simlog import SimLog
-from .store import DEFAULT_STATE_DIR, RunStore
+from .store import DEFAULT_STATE_DIR, RunState, RunStore
 
 
 class NotSupported(ArenaError):
@@ -90,6 +96,55 @@ def _instrument_view(instrument: Instrument) -> dict[str, Any]:
     else:
         view["probe"] = instrument.probe
     return view
+
+
+def _load_card_sim(loaded: LoadedTask, state: RunState, store: RunStore, run_id: str) -> CardSim:
+    """issue #313: the card as `CardSim` sees it for THIS run — restored from
+    whatever a previous `drive_input` call on this run id already applied
+    (``state.card_applied`` / ``state.card_destroyed``), never recomputed
+    from scratch each call. Logs to this run's own sim log (`RunStore.
+    sim_log_path`), the same file `take_measurement` writes to, so a
+    protection/damage line sits right next to the player's own SCPI
+    exchanges."""
+    doc = yaml.safe_load(Path(loaded.card_path).read_text(encoding="utf-8"))
+    card_sim = CardSim(doc, log_path=store.sim_log_path(run_id))
+    if state.card_applied:
+        card_sim.applied = dict(state.card_applied)
+    card_sim.destroyed = state.card_destroyed
+    return card_sim
+
+
+def drive_input(run_id: str, address: str, volts: float, *,
+                state_dir: str | Path = DEFAULT_STATE_DIR) -> dict[str, Any]:
+    """Apply ``volts`` to the card input the instrument at ``address``
+    drives (issue #313 Agent path): the one place `CardSim.state` /
+    `CardSim.apply_input` are reachable by an agent at all, through the
+    runner and `shal-arena drive` (CTO review on #323 — until this, neither
+    was used outside the sim's own unit tests, and the card never had any
+    state an agent's actions could change).
+
+    Protection and damage here are a consequence of the player's own
+    'drives' instrument, independent of the run's hidden fault — this never
+    reads or reveals it (DoD 4)."""
+    store = RunStore(state_dir)
+    state = store.load(run_id)
+    loaded = load_task(state.task_path)
+    instrument = next((i for i in loaded.task.instruments
+                       if str(i.address) == str(address)), None)
+    if instrument is None:
+        known = ", ".join(str(i.address) for i in loaded.task.instruments)
+        raise CheckCouldNotRun(f"no instrument at address {address!r} on run {run_id!r}",
+                               fix=f"use one of this run's addresses: {known}")
+    if instrument.drives is None:
+        raise CheckCouldNotRun(
+            f"{address}: this instrument probes the card, it does not drive an input",
+            fix="drive the address whose task.instruments entry has 'drives', not 'probe'")
+    input_name = instrument.drives.removeprefix("card.")
+
+    card_sim = _load_card_sim(loaded, state, store, run_id)
+    result = card_sim.apply_input(input_name, volts, address=str(address))
+    store.set_card_state(run_id, applied=card_sim.applied, destroyed=card_sim.destroyed)
+    return {"run_id": run_id, "address": instrument.address, **result.as_dict()}
 
 
 def start_run(task_path: str, *, seed: int | None = None,

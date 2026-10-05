@@ -48,6 +48,11 @@ class RunState:
     tiles: dict[str, Tile] = field(default_factory=dict)
     turns: int = 0                # issue #312: a `check` call, win or lose, is a turn
     closed_at: str | None = None
+    # issue #313: the card's own CardSim state, carried between the separate
+    # CLI invocations of `drive` across one run. Never the hidden fault —
+    # just the voltages the player has driven and whether the card is dead.
+    card_applied: dict[str, float] = field(default_factory=dict)
+    card_destroyed: bool = False
 
 
 class RunStore:
@@ -111,6 +116,19 @@ class RunStore:
         state.tiles[str(address)] = Tile(case=case, passed=passed,
                                          checked_at=time.strftime("%Y-%m-%dT%H:%M:%SZ",
                                                                    time.gmtime()))
+        self._write_public(state)
+        return state
+
+    def set_card_state(self, run_id: str, *, applied: dict[str, float],
+                      destroyed: bool) -> RunState:
+        """issue #313: persist `CardSim.applied`/`CardSim.destroyed` after a
+        `drive` call, so the next CLI invocation for this run restores the
+        same card instead of starting it fresh from nominal every time."""
+        state = self.load(run_id)
+        if state.status != "open":
+            raise UnknownRun(f"run {run_id!r} is closed", fix="start a new run")
+        state.card_applied = dict(applied)
+        state.card_destroyed = destroyed
         self._write_public(state)
         return state
 
