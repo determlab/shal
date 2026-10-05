@@ -69,10 +69,13 @@ def _seed_not_open() -> int:
 
 
 def test_measurement_after_damage_is_not_healthy_and_shows_card_state(tmp_path) -> None:
-    from shal_arena.runner import drive_input, start_run, take_measurement
+    from shal_arena.runner import raw_scpi, start_run, take_measurement
 
     run_id = start_run(str(SAMPLE_TASK), seed=_seed_not_open(), state_dir=tmp_path)["run_id"]
-    drive_input(run_id, "psu0", 6.5, state_dir=tmp_path)  # over the 6.0 V abs max
+    # issue #330: the SHAL-side `drive_input` now gates damaging voltages and
+    # would refuse this, so destroy the card through the gate-free raw side
+    # instead — same physical act, same CardSim, same sim log.
+    raw_scpi(run_id, "psu0", "VOLT 6.5", state_dir=tmp_path)  # over the 6.0 V abs max
     out = take_measurement(run_id, "dmm0", PASSING_DMM_DRIVER, state_dir=tmp_path)
     assert out["reading"] == 0.0
     assert out["card"]["state"] == "damage"

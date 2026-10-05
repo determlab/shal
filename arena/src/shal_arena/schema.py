@@ -233,6 +233,7 @@ class Rail:
     tol_pct: float
     test_point: str
     min_input_v: float
+    tol_source: str | None = None
 
 
 @dataclass(frozen=True)
@@ -304,7 +305,7 @@ def _validate_rails(value: Any, input_names: set[str]) -> tuple[Rail, ...]:
         where = f"card.rails.{name}"
         _require_dict(entry, where)
         _require_keys(entry, required={"from", "nominal_v", "tol_pct", "test_point",
-                                        "min_input_v"}, optional=set(), where=where)
+                                        "min_input_v"}, optional={"tol_source"}, where=where)
         from_input = _require_str(entry, "from", where)
         if from_input not in input_names:
             _fail(f"{where}.from: {from_input!r} is not a card.inputs name",
@@ -315,11 +316,13 @@ def _validate_rails(value: Any, input_names: set[str]) -> tuple[Rail, ...]:
                   f"card.rails.{seen_test_points[test_point]}",
                   f"give {where}.test_point a name unique across card.rails")
         seen_test_points[test_point] = name
+        tol_source = _require_str(entry, "tol_source", where) if "tol_source" in entry else None
         out.append(Rail(name=name, from_input=from_input,
                         nominal_v=_require_number(entry, "nominal_v", where),
                         tol_pct=_require_number(entry, "tol_pct", where, minimum=0),
                         test_point=test_point,
-                        min_input_v=_require_number(entry, "min_input_v", where)))
+                        min_input_v=_require_number(entry, "min_input_v", where),
+                        tol_source=tol_source))
     return tuple(out)
 
 

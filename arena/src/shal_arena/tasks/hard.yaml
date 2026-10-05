@@ -1,0 +1,17 @@
+arena_task: 1
+id: hard
+title: "Is the 3V3 rail in spec at 9V input, tight tolerance?"
+level: hard
+card: ../cards/buck-9v-3v3-tight.yaml
+instruments:
+  - case: scpi-psu
+    address: psu0
+    drives: card.vin
+  - case: dmm
+    address: dmm0
+    probe: card.tp_3v3
+question:
+  text: "Power the card at 9.0 V. The 3V3 rail must stay within 2% of 3.3 V. Is it in spec? Answer ok, or name the fault."
+  answer: {kind: enum, values: [ok, low_voltage, high_voltage, noise, open]}
+seed: 7
+limits: {max_turns: 80, max_minutes: 40}

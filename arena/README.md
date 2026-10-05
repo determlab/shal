@@ -91,6 +91,27 @@ Issue #312 adds the rest of what it takes to actually score a run:
 Issue #313 ships the damage model and the generic card simulator
 (`card_sim`), and `shal-arena drive` (the Agent path to it).
 
+Issue #314 adds benchmark mode: the same task played with SHAL (today's
+`run`/`check-driver`/`measure`/`drive`/`answer`, unmodified) and without it
+(raw SCPI access — no driver.py, no gate, no record), on the identical seeded
+world, so the two are comparable:
+
+```bash
+shal-arena bench src/shal_arena/tasks/rail-3v3.yaml --runs 10 --policy ./policy.py --json
+#  -> {"with_shal": {"median_turns": ..., "turns_range": [...], "sim_logs": [...]}, "without_shal": {...}}
+```
+
+`--policy` is a Python file defining `play_with_shal(task_path, seed,
+state_dir)` and `play_without_shal(...)`, each returning `(run_id, the dict
+answer returned)` — your own agent, or a scripted one; `shal-arena` plays no
+model of its own (running an actual model across many tasks and publishing
+numbers is out of scope for this ticket — see `shal_arena.bench`'s own
+docstring). One turn = one call that reaches the sim on either side (`check`,
+`measure`, `drive`, or a raw SCPI command, via the new `shal_arena.runner.
+raw_scpi`); `answer` is never a turn. `--runs` below 10 is refused, naming the
+fix. Results always report both sides — a task where "without SHAL" does
+better is never filtered out.
+
 Issue #315 adds the replay/result-card and rack pages, both offline single
 HTML files built by `shal_arena.replay`:
 

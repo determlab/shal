@@ -1,0 +1,15 @@
+arena_card: 1
+id: ldo-5v-3v3
+description: "Fictional card, no real part. 5 V input, linear reg to 3.3 V, one test point tp_3v3."
+inputs:
+  vin: {nominal_v: 5.0}
+rails:
+  3v3: {from: vin, nominal_v: 3.3, tol_pct: 3, test_point: tp_3v3, min_input_v: 4.5, tol_source: "ldo-5v-3v3 datasheet 3.2 output accuracy (fictional datasheet)"}
+damage:
+  - {input: vin, above_v: 5.5, effect: protection, source: "ldo-5v-3v3 datasheet 7.3 OVP (fictional datasheet)"}
+  - {input: vin, above_v: 6.0, effect: destroyed, source: "ldo-5v-3v3 datasheet 6.1 abs max (fictional datasheet)"}
+faults:
+  - {id: ok, rail: 3v3}
+  - {id: low_voltage, rail: 3v3, shift_v: -0.40}
+  - {id: noise, rail: 3v3, ripple_vpp: 0.25}
+  - {id: open, rail: 3v3}

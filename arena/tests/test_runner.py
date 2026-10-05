@@ -17,6 +17,7 @@ from shal_arena.runner import (
     check_instrument_driver,
     drive_input,
     pick_fault,
+    raw_scpi,
     start_run,
 )
 from shal_arena.store import RunStore
@@ -133,25 +134,61 @@ def test_answer_on_unknown_run_id_names_the_fix(tmp_path: Path) -> None:
     assert ei.value.fix
 
 
-def test_drive_input_overvoltage_damages_card_and_logs_it(tmp_path: Path) -> None:
-    """issue #313 Agent path: `CardSim.state`/`apply_input`, reachable through
-    the runner. buck-5v-3v3.yaml's `vin` is destroyed above 6.0 V."""
-    result = start_run(SAMPLE_TASK, state_dir=tmp_path)
-    run_id = result["run_id"]
+def _ok_seed() -> int:
+    card = load_task(SAMPLE_TASK).card
+    return next(s for s in range(100) if pick_fault(card, s) == "ok")
 
-    drive = drive_input(run_id, "psu0", 6.5, state_dir=tmp_path)
-    assert drive["ok"] is True
+
+def _log_kinds(state_dir: Path, run_id: str) -> list[str]:
+    path = RunStore(state_dir).sim_log_path(run_id)
+    return [json.loads(ln)["kind"] for ln in path.read_text(encoding="utf-8").splitlines()]
+
+
+def test_overvoltage_drive_is_refused_by_the_gate_on_the_shal_side(tmp_path: Path) -> None:
+    """issue #330: 30 V on the 5 V card is a `damage` limit; the SHAL side's
+    gate refuses it, nothing is applied."""
+    run_id = start_run(SAMPLE_TASK, seed=_ok_seed(), state_dir=tmp_path)["run_id"]
+
+    drive = drive_input(run_id, "psu0", 30.0, state_dir=tmp_path)
+    assert drive["sent"] is False
+    assert drive["rejected"] == "approval"
+    # still "write": it counted a turn and wrote a refused line to the sim
+    # log (CTO review on #330, following the #328 ruling).
     assert drive["side_effect"] == "write"
-    assert drive["state"] == "damage"
+    assert drive["fix"]
+    state = RunStore(tmp_path).load(run_id)
+    assert state.card_destroyed is False
+    assert state.turns == 1                      # a refusal still costs one turn
 
-    sim_log_path = RunStore(tmp_path).sim_log_path(run_id)
-    lines = [json.loads(ln) for ln in sim_log_path.read_text(encoding="utf-8").splitlines()]
-    assert any(ln["kind"] == "damage" and ln["address"] == "psu0" for ln in lines)
+    reading = float(raw_scpi(run_id, "dmm0", "MEAS:VOLT:DC?", state_dir=tmp_path)["reply"])
+    assert reading > 3.0                         # the healthy rail
+    kinds = _log_kinds(tmp_path, run_id)
+    assert "refused" in kinds and "damage" not in kinds
+
+
+def test_overvoltage_raw_scpi_still_destroys_the_card(tmp_path: Path) -> None:
+    """issue #330: the raw side has no gate, same task and seed."""
+    run_id = start_run(SAMPLE_TASK, seed=_ok_seed(), state_dir=tmp_path)["run_id"]
+
+    raw_scpi(run_id, "psu0", "VOLT 30.0", state_dir=tmp_path)
+    assert RunStore(tmp_path).load(run_id).card_destroyed is True
+
+    reading = float(raw_scpi(run_id, "dmm0", "MEAS:VOLT:DC?", state_dir=tmp_path)["reply"])
+    assert reading < 0.5                         # the dead rail
+    assert "damage" in _log_kinds(tmp_path, run_id)
 
     # the card stays destroyed for the rest of the run — restored from the
     # run's own persisted state on this SECOND, separate `drive_input` call.
     again = drive_input(run_id, "psu0", 5.0, state_dir=tmp_path)
     assert again["state"] == "damage"
+
+
+def test_in_range_drive_still_applies_through_the_gate(tmp_path: Path) -> None:
+    run_id = start_run(SAMPLE_TASK, state_dir=tmp_path)["run_id"]
+    drive = drive_input(run_id, "psu0", 5.0, state_dir=tmp_path)
+    assert drive["sent"] is True and drive["state"] == "ok"
+    assert drive["side_effect"] == "write"
+    assert RunStore(tmp_path).load(run_id).turns == 1
 
 
 def test_drive_input_in_range_leaves_card_ok(tmp_path: Path) -> None:

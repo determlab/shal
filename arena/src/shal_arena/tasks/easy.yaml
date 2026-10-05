@@ -1,0 +1,17 @@
+arena_task: 1
+id: easy
+title: "Is the 3V3 rail healthy?"
+level: easy
+card: ../cards/ldo-5v-3v3.yaml
+instruments:
+  - case: scpi-psu
+    address: psu0
+    drives: card.vin
+  - case: dmm
+    address: dmm0
+    probe: card.tp_3v3
+question:
+  text: "Power the card at 5.0 V. Is the 3V3 rail in spec? Answer ok, or name the fault."
+  answer: {kind: enum, values: [ok, low_voltage, noise, open]}
+seed: 2
+limits: {max_turns: 60, max_minutes: 30}

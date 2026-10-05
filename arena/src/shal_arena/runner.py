@@ -13,16 +13,26 @@ card's own damage model (`card_sim.CardSim`) wired in here so an agent can
 reach `apply_input`/`state` at all. It drives the card from whatever a prior
 `drive_input` call on this run already applied (`RunStore.set_card_state`),
 and logs to the same per-run sim log `take_measurement` writes to.
+
+issue #314 adds `raw_scpi` (the "without SHAL" Agent path, for `bench`): no
+driver.py, no gate, no record — a raw ``{"scpi": cmd, "query": bool}``
+exchange with the same sim bus a player's driver would otherwise sit behind,
+built by hand (`_sim_bus_for_topology`) rather than through `shal.hal.load`
+(see that function's own docstring for why). Same seed, same topology, same
+`CardSim` as the SHAL side, so the two sides play literally the same world.
 """
 from __future__ import annotations
 
 import importlib.util
+import re
 import sys
 from pathlib import Path
 from typing import Any
 
 import yaml
+from shal.buses.sim_scpi import SimScpiBus
 from shal.conformance import check_driver as _conformance_check_driver
+from shal.node import Node
 
 from . import fault as _fault
 from .card_sim import CardSim, Dmm, catalogue
@@ -120,6 +130,13 @@ def _load_card_sim(loaded: LoadedTask, state: RunState, store: RunStore, run_id:
     return card_sim
 
 
+def _refuse_damage(action: dict[str, Any]) -> bool:
+    """issue #330: the SHAL side's gate for `drive_input` — a non-interactive
+    deny of any action that would damage the card; protection-only and
+    in-range actions pass. `raw_scpi` has no gate."""
+    return action.get("would_cause") != "damage"
+
+
 def drive_input(run_id: str, address: str, volts: float, *,
                 state_dir: str | Path = DEFAULT_STATE_DIR) -> dict[str, Any]:
     """Apply ``volts`` to the card input the instrument at ``address``
@@ -150,9 +167,127 @@ def drive_input(run_id: str, address: str, volts: float, *,
     input_name = instrument.drives.removeprefix("card.")
 
     card_sim = _load_card_sim(loaded, state, store, run_id)
-    result = card_sim.apply_input(input_name, volts, address=str(address))
+    result = card_sim.apply_input(input_name, volts, gate=_refuse_damage,
+                                  address=str(address))
     store.set_card_state(run_id, applied=card_sim.applied, destroyed=card_sim.destroyed)
-    return {"run_id": run_id, "address": instrument.address, **result.as_dict()}
+    # side_effect stays "write" from as_dict() even on a refusal: it counted a
+    # turn and wrote a refused line to the sim log (CTO review on #330,
+    # following the #328 ruling for apply_input itself).
+    out = {"run_id": run_id, "address": instrument.address, **result.as_dict()}
+    if not result.sent:  # the gate stopped it: nothing was applied (issue #330)
+        out["reason"] = (f"{volts} V on {input_name} would damage the card; "
+                         "the SHAL gate refused it and nothing was sent")
+        out["fix"] = "pick a voltage inside the card's documented input range"
+    return out
+
+
+# "VOLT <value>" (scpi-psu's own datasheet command for a setpoint write) is the
+# one write syntax the packaged catalogue's "drives" case uses today — the
+# same regex the harness's own reference model (adk/scpi-psu/harness/sim.py)
+# and shal core's own shal,sim-psu model parse, so a without-SHAL player who
+# read the datasheet sends exactly what those parse.
+_RAW_SET_V = re.compile(r"^VOLT\s+([0-9.eE+-]+)$")
+
+
+def _sim_bus_for_topology(topology: str | dict) -> tuple[SimScpiBus, Any]:
+    """issue #314: the "without SHAL" side's socket onto THIS run's sim —
+    same topology (static, or in-memory fault-wired) `_topology_for_instrument`
+    hands the SHAL side, built by hand instead of through `shal.hal.load`.
+
+    `shal.hal.load` binds every child's `driver:` compatible through the
+    driver registry (`registry.resolve`), which needs a REGISTERED `Driver`
+    class — exactly what a player's driver.py supplies on the SHAL side, and
+    exactly what "no drivers" (Scope) means there is none of here. A
+    `shal,sim-scpi` bus only reads each child's bare `address`/`spec` to pick
+    its sim model (`SimScpiBus.activate`), so a minimal, un-bound `Node` pair
+    is enough to exchange with it directly — the same ``{"scpi": cmd,
+    "query": bool} -> {"reply": text}`` contract a real ``shal,scpi-raw``
+    link uses (sim_scpi.py's own docstring), returned raw rather than wrapped
+    in any typed op."""
+    doc = (yaml.safe_load(Path(topology).read_text(encoding="utf-8"))
+          if isinstance(topology, (str, Path)) else topology)
+    bench_name, bench_spec = next(iter(doc["root"].items()))
+    bench = Node(bench_name, address=bench_spec.get("address"), id=bench_spec.get("id"))
+    bench.spec = bench_spec
+    child_name, child_spec = next(iter(bench_spec["children"].items()))
+    child = Node(child_name, address=child_spec.get("address"), id=child_spec.get("id"),
+                parent=bench)
+    child.spec = child_spec
+    bench.children[child_name] = child
+    return SimScpiBus(bench), child.address
+
+
+def raw_scpi(run_id: str, address: str, cmd: str, *,
+            state_dir: str | Path = DEFAULT_STATE_DIR) -> dict[str, Any]:
+    """The "without SHAL" Agent path (issue #314 Scope: "the agent gets raw
+    SCPI access (socket-like) to the same sim. No drivers, no gate, no
+    record"). One call is one turn, counted before anything runs — same rule,
+    same place as `check_instrument_driver`/`take_measurement`/`drive_input`
+    (issue #325): a bad command still costs its turn.
+
+    A "drives" instrument's write goes straight into `CardSim.apply_input`,
+    never the bus — the SAME physical act `drive_input` performs on the SHAL
+    side (see its own docstring: it never reaches the bus either), so
+    identical commands apply identical voltages on both sides. A "probe"
+    instrument's command is a real exchange with this run's own sim bus
+    (`_sim_bus_for_topology`), captured by the SAME `SimLog` `take_measurement`
+    uses — captured below the player's surface (simlog.py: "nothing the
+    player does ... can change its shape"), so the two sides' sim logs share
+    one format by construction, not by two implementations trying to agree."""
+    store = RunStore(state_dir)
+    state = store.increment_turns(run_id)
+    loaded = load_task(state.task_path)
+    instrument = next((i for i in loaded.task.instruments
+                       if str(i.address) == str(address)), None)
+    if instrument is None:
+        known = ", ".join(str(i.address) for i in loaded.task.instruments)
+        raise CheckCouldNotRun(f"no instrument at address {address!r} on run {run_id!r}",
+                               fix=f"use one of this run's addresses: {known}")
+    case = resolve_case(instrument.case)
+
+    if instrument.drives is not None:
+        m = _RAW_SET_V.match(cmd.strip())
+        if not m:
+            raise CheckCouldNotRun(
+                f"{address}: {cmd!r} is not a command this instrument's datasheet "
+                "documents for driving an input",
+                fix=f"read {case.docs_dir}/datasheet.md for the write command that "
+                    "sets the output voltage, e.g. 'VOLT 5.0'")
+        input_name = instrument.drives.removeprefix("card.")
+        card_sim = _load_card_sim(loaded, state, store, run_id)
+        result = card_sim.apply_input(input_name, float(m.group(1)), address=str(address))
+        store.set_card_state(run_id, applied=card_sim.applied, destroyed=card_sim.destroyed)
+        return {"run_id": run_id, "address": instrument.address, "cmd": cmd, **result.as_dict()}
+
+    topology = _topology_for_instrument(loaded.task, loaded.card, instrument, state.seed, case)
+    card_sim = _load_card_sim(loaded, state, store, run_id)
+    topology = _dead_rail_override(topology, loaded, instrument, case, card_sim, state.seed)
+    sim_log = SimLog(store.sim_log_path(run_id))
+    is_query = cmd.strip().endswith("?")
+    try:
+        with sim_log.record_for(str(address)):
+            # the same neutral marker `take_measurement` writes, BEFORE the
+            # exchange and regardless of its outcome (CTO review on #328): a
+            # probe instrument's own disqualification rule (`answer`, "no
+            # measure marker at any probe address") must read identically on
+            # both sides, or a without-SHAL run is disqualified even when
+            # every command it sent was correct.
+            sim_log.mark_measured(str(address))
+            bus, child_addr = _sim_bus_for_topology(topology)
+            reply = bus.exchange(child_addr, {"scpi": cmd, "query": is_query})
+    except Exception as e:  # noqa: BLE001 - a live answer to THIS call, never persisted
+        raise MeasurementFailed(
+            f"{cmd!r} raised {type(e).__name__}: {e}",
+            fix="the instrument did not answer this raw command — if that's "
+                "unexpected, check the datasheet's command syntax") from e
+    # "write" like every other runner call (check/measure/drive): each one
+    # mutates the RUN's own record (a turn, a sim log line) regardless of
+    # whether the underlying instrument op itself only reads (CTO review on
+    # #328 — a query still costs a turn and writes the sim log, so it is
+    # never side-effect-free at the run level).
+    return {"ok": True, "side_effect": "write",
+           "run_id": run_id, "address": instrument.address, "cmd": cmd,
+           "reply": reply["reply"]}
 
 
 def start_run(task_path: str, *, seed: int | None = None,
@@ -252,6 +387,24 @@ def check_instrument_driver(run_id: str, address: str, driver_path: str | Path, 
     }
 
 
+def _dead_rail_override(topology: str | dict, loaded: LoadedTask, instrument: Instrument,
+                        case: CaseSpec, card_sim: CardSim, seed: int) -> str | dict:
+    """issue #325: a rail in protection or destroyed must read dead, not its
+    healthy fixed value — on EITHER access path (`take_measurement`'s typed
+    read, `raw_scpi`'s raw one; issue #314), so this is the one place that
+    decides it. Never written to disk: the override topology is in-memory
+    only, same discipline as `fault.harness_for_run` itself."""
+    rail = (next((r for r in loaded.card.rails
+                 if instrument.probe == f"card.{r.test_point}"), None)
+           if instrument.probe is not None else None)
+    if (rail is not None and rail.nominal_v != 0 and card_sim.rail_voltage(rail.name) == 0.0
+            and not (isinstance(topology, dict) and _fault_is_unplugged(topology))):
+        return _fault.harness_for_run(
+            case, rail=rail, seed=seed,
+            realized=_fault.RealizedFault("dead", {"shift_v": -rail.nominal_v}))
+    return topology
+
+
 def _zero_arg_read_op(cls: type) -> str | None:
     from shal.driver import inferred_side_effect
 
@@ -314,16 +467,7 @@ def take_measurement(run_id: str, address: str, driver_path: str | Path, *,
 
     topology = _topology_for_instrument(loaded.task, loaded.card, instrument, state.seed, case)
     card_sim = _load_card_sim(loaded, state, store, run_id)
-    rail = (next((r for r in loaded.card.rails
-                  if instrument.probe == f"card.{r.test_point}"), None)
-            if instrument.probe is not None else None)
-    if (rail is not None and rail.nominal_v != 0 and card_sim.rail_voltage(rail.name) == 0.0
-            and not (isinstance(topology, dict) and _fault_is_unplugged(topology))):
-        # the card is in protection or destroyed: the rail reads dead, not the
-        # healthy fixed value (issue #325).
-        topology = _fault.harness_for_run(
-            case, rail=rail, seed=state.seed,
-            realized=_fault.RealizedFault("dead", {"shift_v": -rail.nominal_v}))
+    topology = _dead_rail_override(topology, loaded, instrument, case, card_sim, state.seed)
     sim_log = SimLog(store.sim_log_path(run_id))
     try:
         with sim_log.record_for(str(address)), _load(topology) as hal:
