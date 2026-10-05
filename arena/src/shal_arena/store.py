@@ -46,6 +46,7 @@ class RunState:
     seed: int
     created_at: str
     tiles: dict[str, Tile] = field(default_factory=dict)
+    turns: int = 0                # issue #312: a `check` call, win or lose, is a turn
     closed_at: str | None = None
 
 
@@ -61,6 +62,23 @@ class RunStore:
 
     def _record_path(self, run_id: str) -> Path:
         return self.dir / f"{run_id}.record.json"
+
+    def record_path(self, run_id: str) -> Path:
+        return self._record_path(run_id)
+
+    def sim_log_path(self, run_id: str) -> Path:
+        """Issue #312: the sim log is player-readable (it never names the
+        fault, only SCPI commands and times), so it lives right next to the
+        public run json, not under a separate private path."""
+        return self.dir / f"{run_id}.simlog.jsonl"
+
+    def score_path(self, run_id: str) -> Path:
+        return self.dir / f"{run_id}.score.json"
+
+    def write_score(self, run_id: str, score: dict) -> Path:
+        path = self.score_path(run_id)
+        path.write_text(json.dumps(score, indent=2), encoding="utf-8")
+        return path
 
     def create(self, *, task_path: str, card_path: str, seed: int) -> RunState:
         self.dir.mkdir(parents=True, exist_ok=True)
@@ -93,6 +111,17 @@ class RunStore:
         state.tiles[str(address)] = Tile(case=case, passed=passed,
                                          checked_at=time.strftime("%Y-%m-%dT%H:%M:%SZ",
                                                                    time.gmtime()))
+        self._write_public(state)
+        return state
+
+    def increment_turns(self, run_id: str) -> RunState:
+        """Issue #312 score field ``turns``: one `check` call, whatever its
+        result, is one turn. Called before the check itself runs, so a turn
+        is counted even if the check later raises."""
+        state = self.load(run_id)
+        if state.status != "open":
+            raise UnknownRun(f"run {run_id!r} is closed", fix="start a new run")
+        state.turns += 1
         self._write_public(state)
         return state
 

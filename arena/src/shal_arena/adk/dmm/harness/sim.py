@@ -1,11 +1,16 @@
-"""Reference sim for the ``dmm`` ADK case (harness — not given to the player).
-Answers a fixed, deterministic reading: card simulation and fault injection
-are out of scope for this ticket (issue #310), so this model is not wired to
-any PSU or rail — it only exercises a correctly-written driver's
-``MEAS:VOLT:DC?`` query, same role the ``rigol_dp832`` ADK reference's
-``sim.py`` plays for that case.
-"""
+"""Reference sim for the ``dmm`` ADK case (harness — not given to the
+player). Answers a ``MEAS:VOLT:DC?`` query, same role the ``rigol_dp832``
+ADK reference's ``sim.py`` plays for that case.
+
+issue #312: the reading is fault-aware, but only when the harness that binds
+this model carries a ``config:`` (written by `fault.harness_for_run`, never
+to disk — see `runner._topology_for_instrument`). With no ``config:`` (the
+static, un-wired harness `shal-arena check` falls back to for any instrument
+not probing the run's faulted rail) it reads the fixed 3.3 V it always has,
+same as issue #310 shipped it."""
 from __future__ import annotations
+
+import random
 
 from shal.buses.sim_scpi import scpi_sim_model
 
@@ -14,7 +19,24 @@ from shal.buses.sim_scpi import scpi_sim_model
 class BenchDmm1Model:
     READING_V = 3.300000
 
+    def __init__(self) -> None:
+        self._nominal_v = self.READING_V
+        self._shift_v = 0.0
+        self._ripple_vpp = 0.0
+        self._rng: random.Random | None = None
+
+    def bind_sim(self, bus, node) -> None:  # noqa: ARG002 - bus unused, same hook shape as core's
+        config = node.spec.get("config") or {}
+        self._nominal_v = config.get("nominal_v", self.READING_V)
+        self._shift_v = config.get("shift_v", 0.0)
+        self._ripple_vpp = config.get("ripple_vpp", 0.0)
+        if self._ripple_vpp:
+            self._rng = random.Random(config.get("seed"))
+
     def scpi(self, cmd: str) -> str:
-        if cmd.strip() == "MEAS:VOLT:DC?":
-            return f"{self.READING_V:.6f}"
-        return ""
+        if cmd.strip() != "MEAS:VOLT:DC?":
+            return ""
+        value = self._nominal_v + self._shift_v
+        if self._ripple_vpp and self._rng is not None:
+            value += self._rng.uniform(-self._ripple_vpp / 2, self._ripple_vpp / 2)
+        return f"{value:.6f}"
