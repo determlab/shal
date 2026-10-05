@@ -26,9 +26,13 @@ from pathlib import Path
 
 import pytest
 
+from shal import record as shal_record
+
 ROOT = Path(__file__).resolve().parents[1]
 DEMO_DIR = ROOT / "examples" / "demos" / "virtual-bench"
-PYTEST_SHAL_REF = "e240b07"  # determlab/pytest-shal, merged #27/#28 — see the demo's README
+# determlab/pytest-shal main — includes #31/#32, so the stored record's own
+# `cause` reads "transport" too, not just the printed JSON — see the demo's README.
+PYTEST_SHAL_REF = "f45937de74737473e3b2b896b25bef087468da40"
 
 
 def _venv_python(venv_dir: Path) -> Path:
@@ -61,10 +65,8 @@ def demo_venv(tmp_path_factory: pytest.TempPathFactory) -> Path:
     if install.returncode != 0:
         pytest.skip(f"could not install the wheel into a clean venv: {install.stderr[-2000:]}")
 
-    # --no-deps: pytest-shal's own pin (pyshal<0.4) predates pyshal#217, which
-    # it actually needs and which this wheel has — see the demo's README.
     plugin = subprocess.run(
-        [str(py), "-m", "pip", "install", "--no-deps",
+        [str(py), "-m", "pip", "install",
          f"pytest-shal @ git+https://github.com/determlab/pytest-shal@{PYTEST_SHAL_REF}"],
         capture_output=True, text=True, timeout=300,
     )
@@ -96,6 +98,15 @@ def test_unplug_dmm_gives_an_error_record_with_cause_transport_and_a_different_e
     # "an exit code different from a failed test" (DoD): a failed check()
     # would exit 1; this is the link-never-answered code (shal#300's exit 4).
     assert result.returncode == 4
+
+    # Not just the printout: the stored record itself must carry the real
+    # cause (issue #345 CTO review) — pytest-shal main builds the error Step
+    # through Step.from_error, unlike the old e240b07 pin.
+    records = shal_record.read(DEMO_DIR)
+    rec = next(r for r in records if r.record == summary["record"])
+    error_steps = [s for s in rec.steps if s.verdict == "error"]
+    assert error_steps, "the stored record has no error step"
+    assert all(s.cause == "transport" for s in error_steps)
 
 
 # ---------------------------------------------------------------------------

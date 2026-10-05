@@ -14,16 +14,10 @@ needs two pinned-commit installs instead of one:
 ```bash
 pip install pytest==9.1.1
 pip install "pyshal @ git+https://github.com/determlab/shal@18482bd65daff0f1d69b30a17c7ed155dd308662"
-pip install --no-deps "pytest-shal @ git+https://github.com/determlab/pytest-shal@e240b07"
+pip install "pytest-shal @ git+https://github.com/determlab/pytest-shal@f45937de74737473e3b2b896b25bef087468da40"
 ```
 
 Once pyshal 0.4.0 is released to PyPI, this becomes `pip install pyshal pytest-shal`.
-
-The third line prints a resolver warning —
-`pytest-shal 0.0.1 requires pyshal<0.4,>=0.3.0, but you have pyshal 0.4.0 which
-is incompatible` — because pytest-shal's own pin predates pyshal's #217 (the
-per-Hal approver it actually needs, which shipped in pyshal 0.4.0). `--no-deps`
-skips that resolution on purpose; the plugin runs fine against this pyshal.
 
 ## Run it
 
@@ -62,7 +56,7 @@ prints "no answer from the instrument at 'dmm0'", not a `check()` failure.
 | `test_bench.py` | the pytest-shal test: sets 3.3 V, `check()`s the DMM reading within 2% |
 | `run_bench.py` | the one command: runs the test, prints one line of JSON, exits 0/1/3/4 |
 
-## The record, and a gap in reading it
+## The record
 
 Each run leaves `records.db` and `records/<id>.yaml` beside this README
 (`.gitignore`d — they're this run's output, not part of the repo). Read them
@@ -72,16 +66,14 @@ the normal way:
 shal records examples/demos/virtual-bench --json
 ```
 
-That record's own `cause` field reads `null` even for the unplugged run —
-this is a real gap in pytest-shal as merged
-([determlab/pytest-shal@e240b07](https://github.com/determlab/pytest-shal/blob/e240b07/src/pytest_shal/plugin.py)):
-its `_note()` builds the error `Step` directly instead of through
-`shal.record.Step.from_error(name, exc)`, so it never carries the `HopError`
-that caused it into the stored record (shal#301 landed in pyshal after that
-plugin code was written). `run_bench.py` derives `cause` itself for the JSON
-it prints — this bench has exactly one way to error — but the stored record
-doesn't carry it yet. A one-line fix (`pytest_shal/plugin.py::_note`, the
-`call`-phase `else` branch) belongs upstream in pytest-shal, not here.
+That record's own `cause` field reads `"transport"` for the unplugged run,
+same as the printed JSON: pytest-shal main (pinned above) builds the error
+`Step` through `shal.record.Step.from_error(name, exc)`, which carries the
+`HopError` that caused it into the stored record. The commit this demo used
+to pin ([determlab/pytest-shal@e240b07](https://github.com/determlab/pytest-shal/blob/e240b07/src/pytest_shal/plugin.py))
+predated that fix and left the stored `cause` `null`; `run_bench.py` still
+derives `cause` itself for the JSON it prints, but that now agrees with what
+the record store holds.
 
 ## Agent path
 

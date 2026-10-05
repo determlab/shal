@@ -41,11 +41,8 @@ jobs:
           python -m venv "${{ runner.temp }}/virtual-bench-venv"
           VENV_PY="${{ runner.temp }}/virtual-bench-venv/${{ runner.os == 'Windows' && 'Scripts' || 'bin' }}/python"
           "$VENV_PY" -m pip install "$(ls dist/*.whl)" pytest
-          # --no-deps: pytest-shal's own pin (pyshal<0.4) predates pyshal#217,
-          # which it actually needs and which this wheel has (see the demo's
-          # README) — the resolver warning this prints is expected.
-          "$VENV_PY" -m pip install --no-deps \
-            "pytest-shal @ git+https://github.com/determlab/pytest-shal@e240b07"
+          "$VENV_PY" -m pip install \
+            "pytest-shal @ git+https://github.com/determlab/pytest-shal@f45937de74737473e3b2b896b25bef087468da40"
       - name: README commands — pass run (exit 0), then --unplug dmm (exit 4)
         shell: bash
         run: |
