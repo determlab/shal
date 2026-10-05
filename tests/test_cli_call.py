@@ -7,6 +7,7 @@ kept apart from 2 so an agent can tell a refusal from an error. Most tests run t
 real command in a fresh process and check the real exit code.
 """
 import json
+import logging
 import subprocess
 import sys
 import textwrap
@@ -532,3 +533,28 @@ def test_limit_before_approval_in_range_still_needs_approval(tmp_path):
     assert out["sent"] is False
     assert out["rejected"] == "approval"
     assert out["error"]["type"] == "ApprovalRequired"
+
+
+# ---- a limit refusal is written to the audit log (shal#369) ------------------
+# `_cmd_call`'s `LimitsRejected` branch now writes the same `shal.audit` record
+# `driver.py` writes for an op-layer limit rejection: a reviewer of a safety run
+# must see that an out-of-range request was blocked, not just that it failed.
+# These run in-process (`cli.main`, not `_shal`'s subprocess) so `caplog` can see
+# the record.
+
+def test_limit_audit_over_limit_leaves_one_rejected_record(caplog):
+    with caplog.at_level(logging.INFO, logger="shal.audit"):
+        rc = cli.main(["call", str(_DEMO_BENCH), "psu", "set_voltage", "30", "--json"])
+    assert rc != 0
+    rejected = [r for r in caplog.records if getattr(r, "outcome", None) == "rejected"]
+    (rec,) = rejected
+    assert rec.id == "psu"
+    assert rec.op == "set_voltage"
+
+
+def test_limit_audit_in_range_leaves_no_rejected_record(caplog):
+    with caplog.at_level(logging.INFO, logger="shal.audit"):
+        rc = cli.main(["call", str(_DEMO_BENCH), "psu", "set_voltage", "3.3", "--json"])
+    assert rc != 0
+    rejected = [r for r in caplog.records if getattr(r, "outcome", None) == "rejected"]
+    assert rejected == []

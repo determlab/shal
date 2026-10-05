@@ -28,9 +28,12 @@ import argparse
 import asyncio
 import importlib.metadata
 import json
+import logging
 import os
 import re
 import sys
+
+_audit = logging.getLogger("shal.audit")
 
 
 def _use_selector_loop_on_win32() -> None:
@@ -563,12 +566,14 @@ def _cmd_call(args) -> int:
     ``ApprovalRequired`` refusal, so nobody is asked to approve a call the limits
     would refuse anyway. Both checks run pre-I/O; nothing reaches the device
     either way."""
+    from . import log as _log
     from .approval import DenyAll, approver
     from .driver import inferred_side_effect
     from .errors import HOW_TO_APPROVE_LINE, LimitError
     from .hal import _node_gated
     from .limits import Guard, effective_schema
     from .mcp.server import _import_drivers, _resolve_hal
+    from .transport import Transport
 
     def emit(payload: dict) -> None:
         if args.json:
@@ -619,6 +624,18 @@ def _cmd_call(args) -> int:
                     try:
                         guard.check(node.driver, **gated_arguments)
                     except LimitError as e:
+                        if not isinstance(node.driver, Transport):  # a device
+                            # driver's refusal is on the record the same way
+                            # driver.py audits one (shal#369): same logger,
+                            # same `extra` keys as the op-layer rejection.
+                            _audit.info("%s %s rejected by limits", device,
+                                        args.op,
+                                        extra={"event": "audit",
+                                               "id": node.id or "",
+                                               "path": node.path,
+                                               "op": args.op,
+                                               "outcome": "rejected",
+                                               "txn": _log.current_txn.get()})
                         msg = str(e)
                         print(f"shal call: {msg}", file=sys.stderr)
                         emit({"ok": False, "rejected": "limits", "tool": name,
