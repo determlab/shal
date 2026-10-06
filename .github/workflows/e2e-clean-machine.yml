@@ -179,7 +179,14 @@ jobs:
         run: |
           set -eu
           python -m venv story-venv
-          VENV_PY="story-venv/${{ runner.os == 'Windows' && 'Scripts' || 'bin' }}/python"
+          rel="story-venv/${{ runner.os == 'Windows' && 'Scripts/python.exe' || 'bin/python' }}"
+          # ABSOLUTE path: story.py hands this to subprocess.run(..., cwd=<other dir>)
+          # for the virtual-bench checks, and on POSIX a relative executable path
+          # is resolved against the CHILD's cwd (after chdir), not this shell's --
+          # a relative "story-venv/bin/python" breaks the moment cwd is anything
+          # but the repo root (observed on #340's first clean-machine run: green
+          # on windows, FileNotFoundError on ubuntu/macos).
+          VENV_PY=$(python -c "import pathlib, sys; print(pathlib.Path(sys.argv[1]).resolve().as_posix())" "$rel")
           echo "VENV_PY=$VENV_PY" >> "$GITHUB_ENV"
           "$VENV_PY" -m pip install pyyaml jsonschema pytest pydantic typer tzdata ruamel.yaml
 
