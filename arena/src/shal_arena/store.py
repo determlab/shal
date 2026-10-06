@@ -232,6 +232,22 @@ class RunStore:
         public run json, not under a separate private path."""
         return self.dir / f"{run_id}.simlog.jsonl"
 
+    def cli_log_path(self, run_id: str) -> Path:
+        """Issue #460: one JSON line per `shal-arena` CLI call this run
+        served, next to the public run json, same as every other run file."""
+        return self.dir / f"{run_id}.cli.jsonl"
+
+    def append_cli_log(self, run_id: str, entry: dict) -> None:
+        """Appends one line (issue #460). Under the same per-run lock
+        #436/#442 already added for the state file — agents run commands in
+        parallel, and this is append-only, but a lock avoids relying on
+        O_APPEND's atomicity guarantees differing by platform."""
+        path = self.cli_log_path(run_id)
+        with _locked_state_file(self._public_path(run_id)):
+            path.parent.mkdir(parents=True, exist_ok=True)
+            with path.open("a", encoding="utf-8") as f:
+                f.write(json.dumps(entry) + "\n")
+
     def score_path(self, run_id: str) -> Path:
         return self.dir / f"{run_id}.score.json"
 
