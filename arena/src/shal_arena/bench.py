@@ -41,9 +41,16 @@ from typing import Any, Protocol
 from . import runner as _runner
 from .errors import ArenaError, MeasurementFailed, TooFewRuns
 from .loader import once_per_path
+from .runner import answer, drive_input, raw_scpi, start_run, take_measurement
 from .store import DEFAULT_STATE_DIR, RunStore
 
 MIN_RUNS = 10
+
+# issue #397: the task and driver `bench --runs 10` plays when no `--policy`
+# of your own is given — shipped inside the package (unlike `examples/`,
+# which `pip install` does not ship), so this works right after install.
+DEFAULT_TASK = Path(__file__).resolve().parent / "tasks" / "rail-3v3.yaml"
+_DEFAULT_DMM_DRIVER = Path(__file__).resolve().parent / "_default_dmm_driver.py"
 
 # (task_path, seed, state_dir) -> (run_id, the dict `runner.answer` returned)
 Play = Callable[[str, int, str], tuple[str, dict[str, Any]]]
@@ -77,6 +84,42 @@ def import_policy(path: str | Path) -> _Policy:
                              fix=f"add a top-level function {name}(task_path, seed, "
                                  "state_dir) -> (run_id, answer_record) to the policy file")
     return module
+
+
+def default_play_with_shal(task_path: str, seed: int, state_dir: str) -> tuple[str, dict[str, Any]]:
+    """issue #397: the built-in policy's "with SHAL" side, for `DEFAULT_TASK`
+    only -- drives `psu0` to the card's 5.0 V nominal input, takes one real
+    reading of `dmm0` through `_DEFAULT_DMM_DRIVER`, and always answers
+    `"ok"` (scoring well is not the point; see `shal_arena.bench`'s own
+    docstring). The `open` fault raises `MeasurementFailed` straight through
+    -- `run_side` already turns that into its own per-run result (issue
+    #395), nothing extra needed here."""
+    run_id = start_run(task_path, seed=seed, state_dir=state_dir)["run_id"]
+    drive_input(run_id, "psu0", 5.0, state_dir=state_dir)
+    take_measurement(run_id, "dmm0", _DEFAULT_DMM_DRIVER, state_dir=state_dir)
+    return run_id, answer(run_id, "ok", state_dir=state_dir)
+
+
+def default_play_without_shal(task_path: str, seed: int, state_dir: str
+                               ) -> tuple[str, dict[str, Any]]:
+    """The built-in policy's "without SHAL" side: the same two acts as
+    `default_play_with_shal`, through raw SCPI instead of a driver."""
+    run_id = start_run(task_path, seed=seed, state_dir=state_dir)["run_id"]
+    raw_scpi(run_id, "psu0", "VOLT 5.0", state_dir=state_dir)
+    raw_scpi(run_id, "dmm0", "MEAS:VOLT:DC?", state_dir=state_dir)
+    return run_id, answer(run_id, "ok", state_dir=state_dir)
+
+
+class DefaultPolicy:
+    """What `bench --runs 10` plays when `--policy` is absent (issue #397)
+    -- the same shape `import_policy` returns, so `_cmd_bench` need not
+    care which one it has."""
+
+    play_with_shal = staticmethod(default_play_with_shal)
+    play_without_shal = staticmethod(default_play_without_shal)
+
+
+DEFAULT_POLICY = DefaultPolicy()
 
 
 @contextmanager
