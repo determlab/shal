@@ -520,7 +520,9 @@ def start_cleaning(self) -> None:
   (`@idempotent`, `side_effect="actuator"`) is retried on a lost delivery AND lands
   in the audit log. A gated op is approved once; the retry after a
   `delivered="no"` drop does not ask again, and its one outcome record carries
-  `attempt: 2` and the dropped `hop`. The tool description says the same: only
+  `attempt: 2` and the dropped `hop` — also `retries: 1` and `dropped` (#348),
+  the same fields on `Hal.call_tool`'s own result (what `--json` serializes).
+  The tool description says the same: only
   a `"none"` op is described as a read. An op with no label is `"actuator"` even when it is
   `@idempotent` — declare `side_effect="none"` for a read.
 - **Device-said-no ≠ transport failure.** If the transport succeeded but the

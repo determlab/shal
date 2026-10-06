@@ -68,7 +68,7 @@ def test_free_writes_mode_offers_no_approve_tool(hal):
 
 def test_read_runs_without_approval(hal):
     out = Bridge(hal).call("rig__read", {})
-    assert out == {"ok": True, "result": 7}
+    assert out == {"ok": True, "result": 7, "retries": 0}   # issue #348
     assert RECEIVED == [("read", {})]
 
 

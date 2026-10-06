@@ -65,7 +65,7 @@ def test_over_limit_mcp_call_is_refused_with_no_ticket(bridge, volts):
     assert "approval_id" not in out
     assert bridge._pending == {}                      # the pending-ticket list is empty
     # end-to-end: the simulated PSU never moved off its initial 0.0 V
-    assert bridge.call(_READ_TOOL, {}) == {"ok": True, "result": 0.0}
+    assert bridge.call(_READ_TOOL, {}) == {"ok": True, "result": 0.0, "retries": 0}
 
 
 # ---- in-range MCP call: still gated, exactly one ticket, nothing sent yet --------
@@ -76,7 +76,7 @@ def test_in_range_mcp_call_still_opens_one_ticket_and_sends_nothing(bridge):
     assert out["status"] == "approval_required"
     assert out["approval_id"]
     assert len(bridge._pending) == 1
-    assert bridge.call(_READ_TOOL, {}) == {"ok": True, "result": 0.0}  # not yet sent
+    assert bridge.call(_READ_TOOL, {}) == {"ok": True, "result": 0.0, "retries": 0}  # not yet sent
 
 
 # ---- parity: shal call and the MCP bridge agree on the refusal decision ---------
@@ -109,7 +109,7 @@ def test_mcp_and_cli_agree_on_the_refusal_for_the_same_value(tmp_path, bridge, v
         assert bridge._pending == {}
 
     # neither path ever moved the simulated PSU off its initial 0.0 V
-    assert bridge.call(_READ_TOOL, {}) == {"ok": True, "result": 0.0}
+    assert bridge.call(_READ_TOOL, {}) == {"ok": True, "result": 0.0, "retries": 0}
 
 
 def test_mcp_limits_refusal_envelope_gap_vs_cli(tmp_path, bridge):

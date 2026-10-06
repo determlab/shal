@@ -39,6 +39,19 @@ if TYPE_CHECKING:
 
 _audit = logging.getLogger("shal.audit")
 
+#: issue #348: the TOP-LEVEL call's retry count and the hop that dropped,
+#: if any — read by `Hal.call_tool` (`hal.py`) right after the call, which
+#: owns the reset-with-token around it (same pattern it already uses for
+#: `last_via`, `routes.py`). `call` itself only WRITES these, and only for
+#: the outermost op: a nested op call (`_op_policy` already set) must
+#: never reset or overwrite the vars the top-level call's own result and
+#: audit line will read — CTO review round 2: with nested ops, resetting
+#: unconditionally let an inner retry go uncredited (the outer result said
+#: `retries: 0` while its audit line said `attempt: 2`) or get wrongly
+#: credited to an unrelated outer call.
+last_retries: ContextVar[int] = ContextVar("shal_last_retries", default=0)
+last_dropped: ContextVar[str | None] = ContextVar("shal_last_dropped", default=None)
+
 
 def idempotent(fn: Callable) -> Callable:
     """Mark a capability op as safe to auto-retry across transient drops."""
@@ -583,6 +596,17 @@ class Driver:
                 # the policy is the operator's (ADR-001 addendum 5): an ENCLOSING op
                 # that changed it before calling this one is caught here, pre-I/O
                 outer = op_var.get()
+                # issue #348 (CTO review round 2): only the TOP-LEVEL call writes
+                # last_retries/last_dropped. A nested op call (outer is not None,
+                # e.g. one @idempotent op calling another through its own `bus`)
+                # must never touch them -- call_tool already reset both, with a
+                # token, around the OUTER call it actually invoked; the outer
+                # call's own result and audit line are what must read them, not
+                # whatever an inner call happened to do last.
+                top_level = outer is None
+                if top_level:
+                    last_retries.set(0)
+                    last_dropped.set(None)
                 if outer is not None:
                     snap, outer_drv, outer_op, outer_txn = outer
                     _refuse_policy_change(outer_drv, outer_op, snap, txn=outer_txn,
@@ -635,7 +659,10 @@ class Driver:
                         # carrying the dropped hop in the stable `hop` field — the
                         # same key and meaning as this WARNING line (#194)
                         attempt = 2
-                        dropped = {"hop": e.hop}
+                        dropped = {"hop": e.hop, "dropped": e.hop}   # #348: additive key
+                        if top_level:   # #348 round 2: never credit a nested retry to the caller
+                            last_retries.set(attempt - 1)
+                            last_dropped.set(e.hop)
                         self.log.warning("reconnect-and-retry after drop (1/1)",
                                          event="retry", op=op, attempt=2, hop=e.hop)
                         self.bus.close()
@@ -654,7 +681,8 @@ class Driver:
                                 extra={"event": "audit", "id": self.node.id or "",
                                        "path": self.node.path, "op": op,
                                        "outcome": "ok", "duration_ms": duration,
-                                       "attempt": attempt, **dropped, **route,
+                                       "attempt": attempt, "retries": attempt - 1,
+                                       **dropped, **route,
                                        "txn": _log.current_txn.get()})
                 return result
             except HopError as e:
@@ -674,6 +702,7 @@ class Driver:
                                        "path": self.node.path, "op": op,
                                        "outcome": "error", "delivered": e.delivered,
                                        "duration_ms": duration, "attempt": attempt,
+                                       "retries": attempt - 1,
                                        **dropped, **route,
                                        "txn": _log.current_txn.get()})
                 raise
@@ -694,6 +723,7 @@ class Driver:
                                        "path": self.node.path, "op": op,
                                        "outcome": "device-error",
                                        "duration_ms": duration, "attempt": attempt,
+                                       "retries": attempt - 1,
                                        **dropped, **route,
                                        "txn": _log.current_txn.get()})
                 raise
