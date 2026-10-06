@@ -120,6 +120,71 @@ shal-arena measure <run-id> psu0 examples/reference_driver/driver.py --json
 }
 ```
 
+### Write your driver
+
+Every instrument a task names — `scpi-psu` or `dmm` today — needs one small
+`driver.py` so SHAL can talk to it, exactly like the reference one above.
+This is the whole deliverable per instrument; nothing else in this package
+is yours to change.
+
+1. **Start from the matching minimal example.**
+   [`examples/minimal_psu_driver.py`](examples/minimal_psu_driver.py) for an
+   instrument that `drives` a card input (a setpoint write plus a readback);
+   [`examples/minimal_dmm_driver.py`](examples/minimal_dmm_driver.py) for one
+   that `probe`s a test point (one read). The `run`'s own JSON above names
+   each instrument's `case` and gives you its datasheet — that is the one
+   source of truth for the SCPI text, never this package's internals.
+2. **Declare it.** A driver class sets `compatible` to the exact string your
+   instrument's case uses (`arena,bench-psu1` for `scpi-psu`,
+   `arena,bench-dmm1` for `dmm` — both examples already have the right one),
+   `kind = MessageTransport`, and `llm_ready = True`. Each op is a plain
+   method decorated with `@op("one-line description", unit=..., side_effect=...)`
+   — `side_effect="none"` for a read, `"actuator"` for anything that drives
+   the instrument now (SHAL gates those; see the main `AGENTS.md`).
+   `@idempotent` marks a read, or a write that is safe to resend (an
+   absolute setpoint, like `set_voltage` below).
+3. **Check one, then measure a different one.** No `override=True` needed
+   (arena#394 fixed that for a `bench` run) — but checking and then
+   measuring the *same* instrument's driver outside `bench`, in one sitting,
+   still re-imports the same file twice and needs it. Sidestep that
+   entirely by checking one instrument and measuring another, same as the
+   walkthrough above:
+
+   ```bash
+   shal-arena check-driver <run-id> psu0 examples/minimal_psu_driver.py --json
+   shal-arena measure <run-id> dmm0 examples/minimal_dmm_driver.py --json
+   ```
+
+   or run a whole batch with `shal-arena bench` once you have a `--policy`
+   file (see "Scope" below, issue #314).
+
+`arena/tests/test_readme_examples.py` runs both minimal examples this same
+way, in CI, so copying them keeps working.
+
+**What `open` looks like.** One of the faults a card can hide is `open`: the
+instrument simply does not answer — every hop to it raises, the same as a
+cut cable. Your driver does not need to detect this itself; just let the
+exchange raise, same as `minimal_dmm_driver.py` above already does. `measure`
+reports it as a normal failure, never a crash:
+
+```
+$ shal-arena measure <run-id> dmm0 examples/minimal_dmm_driver.py --json
+shal-arena: measure_voltage raised HopError: no answer from the instrument
+at 'dmm0' (hop: sim-scpi, delivered=no)
+{
+  "ok": false,
+  "error": {
+    "type": "MeasurementFailed",
+    "message": "measure_voltage raised HopError: no answer from the instrument at 'dmm0' (hop: sim-scpi, delivered=no)",
+    "fix": "the instrument did not answer this call — if that's unexpected, check your driver.py's handling of the case's SCPI dialect"
+  }
+}
+```
+
+Exit code 1 — the op failed, same family as `shal call`'s own "op failed"
+outcome, not a crash in the check machinery. A failure shaped exactly like
+this, on an otherwise-correct driver, is itself the signal: answer `open`.
+
 Answer and close the run. `ok` below is a placeholder answer to show the
 command's shape — the real method for picking a value is reading the
 instruments, not the one this walkthrough happens to pass:
