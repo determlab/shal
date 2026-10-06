@@ -136,6 +136,91 @@ def test_mark_reading_rejects_a_non_numeric_value(tmp_path: Path) -> None:
         log.mark_reading("dmm0", "<img src=x onerror=alert(1)>", "volt")  # type: ignore[arg-type]
 
 
+def test_mark_reading_rejects_nan_and_infinity(tmp_path: Path) -> None:
+    """CTO review round 2: `float("nan")` would log as the bare JSON token
+    `NaN`, which is not valid JSON -- `JSON.parse` on the page throws and
+    the whole page renders empty. Reject it at the source, same as any
+    other non-finite value."""
+    log = SimLog(tmp_path / "run.simlog.jsonl")
+    for bad in (float("nan"), float("inf"), float("-inf")):
+        with pytest.raises(ValueError):
+            log.mark_reading("dmm0", bad, "volt")
+    assert not (tmp_path / "run.simlog.jsonl").exists()
+
+
+def test_answer_label_never_says_faulty(tmp_path: Path) -> None:
+    """CTO review round 2: drop the "faulty," prefix -- the fault's own
+    name already says that."""
+    from shal_arena import fault as fault_mod
+    from shal_arena.loader import load_task
+
+    card = load_task(str(SAMPLE_TASK)).card
+    seed = next(s for s in range(200)
+               if fault_mod.realized_fault(card, s).fault_id == "low_voltage")
+    run_id = start_run(str(SAMPLE_TASK), seed=seed, state_dir=tmp_path)["run_id"]
+    drive_input(run_id, "psu0", 5.0, state_dir=tmp_path)
+    take_measurement(run_id, "dmm0", PASSING_DMM_DRIVER, state_dir=tmp_path)
+    answer(run_id, "low_voltage", state_dir=tmp_path)
+
+    payload = run_payload(run_id, state_dir=tmp_path)
+    sentence = payload["answer_sentence"]
+    assert "The agent's answer: low voltage." in sentence
+    assert "faulty" not in sentence
+
+
+def test_answer_sentence_covers_the_noise_fault(tmp_path: Path) -> None:
+    from shal_arena import fault as fault_mod
+    from shal_arena.loader import load_task
+
+    card = load_task(str(SAMPLE_TASK)).card
+    seed = next((s for s in range(200)
+                if fault_mod.realized_fault(card, s).fault_id == "noise"), None)
+    if seed is None:
+        pytest.skip("rail-3v3 has no 'noise' fault in its own faults list")
+    run_id = start_run(str(SAMPLE_TASK), seed=seed, state_dir=tmp_path)["run_id"]
+    drive_input(run_id, "psu0", 5.0, state_dir=tmp_path)
+    take_measurement(run_id, "dmm0", PASSING_DMM_DRIVER, state_dir=tmp_path)
+    answer(run_id, "noise", state_dir=tmp_path)
+
+    payload = run_payload(run_id, state_dir=tmp_path)
+    sentence = payload["answer_sentence"]
+    assert sentence is not None
+    assert "the 3V3 rail reads" in sentence
+    assert "The agent's answer: noise." in sentence
+
+
+def test_answer_sentence_on_a_destroyed_card_after_a_real_reading(tmp_path: Path) -> None:
+    """CTO review round 2: "destroyed" must not say "before any reading"
+    when a reading was in fact taken first."""
+    from shal_arena.runner import raw_scpi
+
+    run_id = start_run(str(SAMPLE_TASK), seed=1, state_dir=tmp_path)["run_id"]
+    drive_input(run_id, "psu0", 5.0, state_dir=tmp_path)
+    take_measurement(run_id, "dmm0", PASSING_DMM_DRIVER, state_dir=tmp_path)  # a real reading
+    raw_scpi(run_id, "psu0", "VOLT 30.0", state_dir=tmp_path)  # then destroys the card
+    answer(run_id, "ok", state_dir=tmp_path)
+
+    payload = run_payload(run_id, state_dir=tmp_path)
+    sentence = payload["answer_sentence"]
+    assert "before any reading" not in sentence
+    assert "rail reads" in sentence
+
+
+def test_no_answer_only_when_a_read_really_failed_not_just_absent(tmp_path: Path) -> None:
+    """CTO review round 2: an old capture with no `reading` line at all
+    (never measured) must leave that instrument out of the sentence
+    entirely -- "No answer from the DMM" is reserved for a real failed
+    attempt (the `open` fault)."""
+    run_id = start_run(str(SAMPLE_TASK), seed=1, state_dir=tmp_path)["run_id"]
+    answer(run_id, "ok", state_dir=tmp_path)  # closed with no measurement at all
+
+    payload = run_payload(run_id, state_dir=tmp_path)
+    sentence = payload["answer_sentence"]
+    assert sentence is not None
+    assert "No answer" not in sentence
+    assert sentence == "The agent's answer: ok. Wrong: the card has a fault."
+
+
 def test_a_hostile_driver_reading_fails_the_measurement_instead_of_being_logged(
         tmp_path: Path) -> None:
     """End to end: a driver whose read op returns a non-numeric value never

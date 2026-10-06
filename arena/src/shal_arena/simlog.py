@@ -30,6 +30,7 @@ from __future__ import annotations
 
 import json
 import logging
+import math
 import time
 from collections.abc import Iterator
 from contextlib import contextmanager
@@ -120,12 +121,17 @@ class SimLog:
         CTO review on #427: `value` is coerced to `float` here, not trusted
         from the caller -- a driver an agent wrote returns whatever its own
         code computes, and this is the one place that decides what counts
-        as "a reading" at all. Anything that is not a bare number (e.g. an
-        HTML string smuggled in to run in the page later) raises instead of
-        being logged."""
+        as "a reading" at all. Anything that is not a bare, finite number
+        (e.g. an HTML string smuggled in to run in the page later, or a
+        `nan`/`inf` that would write invalid JSON `NaN`/`Infinity` and
+        break `JSON.parse` on every later read of this file) raises
+        instead of being logged."""
+        v = float(value)
+        if not math.isfinite(v):
+            raise ValueError(f"reading {v!r} for {address!r} is not finite")
         self.path.parent.mkdir(parents=True, exist_ok=True)
         entry = {"ts": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
-                 "address": address, "kind": "reading", "value": float(value), "unit": unit}
+                 "address": address, "kind": "reading", "value": v, "unit": unit}
         with self.path.open("a", encoding="utf-8") as f:
             f.write(json.dumps(entry) + "\n")
 

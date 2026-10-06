@@ -37,7 +37,11 @@ def _load_task_for_run(task_path: str) -> Any:
     try:
         return load_task(task_path)
     except TaskFormatError:
-        return load_task(resolve_task(Path(task_path).stem))
+        # a capture made on Windows, read back on Linux (or vice versa),
+        # leaves the OTHER platform's separator as a literal character --
+        # normalize both before taking the stem.
+        stem = Path(task_path.replace("\\", "/")).stem
+        return load_task(resolve_task(stem))
 
 
 def _name_for_address(address: str) -> str:
@@ -47,32 +51,36 @@ def _name_for_address(address: str) -> str:
 
 
 def _answer_label(fault_id: str) -> str:
-    return "ok" if fault_id == "ok" else f"faulty, {fault_id.replace('_', ' ')}"
-
-
-def _round2(value: float) -> float:
-    return round(value, 2)
+    # issue #427 CTO review round 2: no "faulty," prefix -- the fault's own
+    # name (spaces, not underscores) already says that, e.g. "overheat",
+    # "low voltage".
+    return "ok" if fault_id == "ok" else fault_id.replace("_", " ")
 
 
 def _measured_clause(name: str, rail: dict[str, Any] | None, temp: dict[str, Any] | None,
-                     reading: float | None) -> str:
+                     reading: float | None, attempted: bool) -> str | None:
+    """`None` means "say nothing about this instrument" -- no attempt was
+    ever logged for it (an old capture made before this ticket, or an
+    instrument the agent never touched), as opposed to a real failed read
+    (issue #427 CTO review round 2: "No answer" only when a read really
+    failed, never just because the log has no `reading` line)."""
     if reading is None:
-        return f"No answer from the {name}"
-    v = _round2(reading)
+        return f"No answer from the {name}" if attempted else None
+    v = reading
     if rail is not None:
-        lo, hi = _round2(rail["lo"]), _round2(rail["hi"])
+        lo, hi = rail["lo"], rail["hi"]
         if lo <= v <= hi:
-            return f"the {rail['name']} rail reads {v} V, inside its {lo:.2f}-{hi:.2f} V window"
+            return f"the {rail['name']} rail reads {v:.2f} V, inside its {lo:.2f}-{hi:.2f} V window"
         side = "below" if v < lo else "above"
         limit = lo if v < lo else hi
-        return f"the {rail['name']} rail reads {v} V, {side} its {limit:.2f} V limit"
+        return f"the {rail['name']} rail reads {v:.2f} V, {side} its {limit:.2f} V limit"
     if temp is not None:
-        high = _round2(temp["high_c"])
+        high = temp["high_c"]
         if v <= high:
-            return f"{temp['name']} {v} °C, within its {high:.2f} °C limit"
-        return f"{temp['name']} {v} °C, {_round2(v - high):.2f} °C above its " \
-               f"{high:.2f} °C limit"
-    return f"the {name} reads {v}"
+            return f"{temp['name']} {v:.2f} °C, within its {high:.2f} °C limit"
+        return (f"{temp['name']} {v:.2f} °C, {v - high:.2f} °C above its "
+                f"{high:.2f} °C limit")
+    return f"the {name} reads {v:.2f}"
 
 
 def _answer_sentence(payload: dict[str, Any], rails: list[dict[str, Any]],
@@ -89,29 +97,38 @@ def _answer_sentence(payload: dict[str, Any], rails: list[dict[str, Any]],
     temps_by_tp = {t["test_point"]: t for t in temp_points}
     timeline = payload["timeline"]
 
-    if payload["card"]["destroyed"]:
+    clauses = []
+    for instrument in payload["instruments"]:
+        probe = instrument["probe"]
+        if probe is None:
+            continue
+        test_point = probe.removeprefix("card.")
+        rail = rails_by_tp.get(test_point)
+        temp = temps_by_tp.get(test_point)
+        if rail is None and temp is None:
+            continue
+        reading, attempted = None, False
+        for e in reversed(timeline):
+            if e.get("address") != instrument["address"]:
+                continue
+            if e.get("kind") == "reading" and reading is None:
+                reading = e["detail"]["value"]
+            if e.get("kind") in ("measure", "query"):
+                attempted = True
+        clause = _measured_clause(
+            _name_for_address(instrument["address"]), rail, temp, reading, attempted)
+        if clause is not None:
+            clauses.append(clause)
+
+    # issue #427 CTO review round 2: "destroyed" must not claim "before any
+    # reading" when readings were in fact taken (e.g. a fault was measured,
+    # then a later scripted 30 V ask destroyed the card).
+    if payload["card"]["destroyed"] and not clauses:
         measured = "nothing -- the card was destroyed before any reading"
-    else:
-        clauses = []
-        for instrument in payload["instruments"]:
-            probe = instrument["probe"]
-            if probe is None:
-                continue
-            test_point = probe.removeprefix("card.")
-            rail = rails_by_tp.get(test_point)
-            temp = temps_by_tp.get(test_point)
-            if rail is None and temp is None:
-                continue
-            reading = None
-            for e in reversed(timeline):
-                if e.get("address") == instrument["address"] and e.get("kind") == "reading":
-                    reading = e["detail"]["value"]
-                    break
-            clauses.append(_measured_clause(
-                _name_for_address(instrument["address"]), rail, temp, reading))
-        if not clauses:
-            return None
+    elif clauses:
         measured = ", ".join(clauses)
+    else:
+        measured = None
 
     given_label = _answer_label(record["given"])
     if record["correct"]:
@@ -125,7 +142,8 @@ def _answer_sentence(payload: dict[str, Any], rails: list[dict[str, Any]],
     else:
         verdict = f"Wrong: the real fault was {_answer_label(record['fault_id'])}."
 
-    return f"Measured: {measured}. The agent's answer: {given_label}. {verdict}"
+    prefix = f"Measured: {measured}. " if measured is not None else ""
+    return f"{prefix}The agent's answer: {given_label}. {verdict}"
 
 
 def run_payload(run_id: str, *, state_dir: str | Path = DEFAULT_STATE_DIR) -> dict[str, Any]:

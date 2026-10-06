@@ -167,12 +167,14 @@ _BENCH_SVG = """
     <rect class="box" x="6" y="128" width="64" height="36" rx="8"/>
     <text x="38" y="122" text-anchor="middle">RELAY</text>
     <text x="38" y="151" text-anchor="middle" class="mono-label" id="relay-value">&#8212;</text>
-    <path class="wire" d="M70 146 H118"/>
+    <!-- #427 CTO review round 2: the wire must reach the card box itself
+         (its bottom-left corner, 118,124), not end in empty space below it. -->
+    <path class="wire" d="M70 146 H118 V124"/>
 
     <rect class="box" x="300" y="128" width="74" height="36" rx="8"/>
     <text x="337" y="122" text-anchor="middle">TEMP</text>
     <text x="337" y="151" text-anchor="middle" class="mono-label" id="temp-value">&#8212;</text>
-    <path class="wire" d="M262 146 H300"/>
+    <path class="wire" d="M262 124 V146 H300"/>
   </g>
 </svg>
 """
@@ -189,32 +191,47 @@ const KIND_LABEL = {
   refused: "Tried to set", protection: "Set", damage: "Set", reading: "Measured",
 };
 
+// issue #427 CTO review round 2: 2 decimal places, with the unit symbol,
+// everywhere a number is shown -- bench boxes, timeline rows and the
+// closing sentence alike (fixes "90.00114442664224°C" running off its
+// box, and "3.3 volt" touching the box edge).
+function fmtNum(value, unit) {
+  const n = Number(value);
+  if (!Number.isFinite(n)) return String(value);
+  if (unit === "celsius") return `${n.toFixed(2)} °C`;
+  return `${n.toFixed(2)} V`;
+}
+
 function stepTitle(e) {
   const addr = e.address || "";
   if (e.kind === "check") return `Checked driver on ${addr}`;
   if (e.kind === "reading" || e.kind === "measure") return `Measured ${addr}`;
   if (e.kind === "query") return `Read ${addr}`;
   if (e.kind === "write") return `Wrote ${addr}`;
+  if (e.kind === "call") {
+    const op = e.detail && e.detail.op, args = (e.detail && e.detail.args) || [];
+    if (op === "set_relay") return `Switched ${addr} ${args[1] === "true" ? "on" : "off"}`;
+    if (op === "read_relay") return `Read ${addr}`;
+    return `Called ${op} on ${addr}`;
+  }
   if (e.kind === "refused") {
     const v = e.detail && e.detail.volts;
-    return `Tried to set ${addr} to ${v} V`;   // never "Drove" -- nothing was sent
+    return `Tried to set ${addr} to ${fmtNum(v)}`;   // never "Drove" -- nothing was sent
   }
   if (e.kind === "protection" || e.kind === "damage") {
     const v = e.detail && e.detail.volts;
-    return v === undefined ? `Protection tripped on ${addr}` : `Set ${addr} to ${v} V`;
+    return v === undefined ? `Protection tripped on ${addr}` : `Set ${addr} to ${fmtNum(v)}`;
   }
   return KIND_LABEL[e.kind] || e.kind;
 }
 
 function stepDetail(e) {
   if (e.kind === "check") return e.detail.passed ? "passed" : "failed";
+  if (e.kind === "call") return e.detail.ok ? "ok" : "failed";
   if (e.kind === "refused") return "nothing was sent — this would damage the card";
   if (e.kind === "protection") return "protection tripped";
   if (e.kind === "damage") return "card destroyed";
-  if (e.kind === "reading") {
-    const unit = e.detail.unit ? ` ${e.detail.unit}` : "";
-    return `${e.detail.value}${unit}`;
-  }
+  if (e.kind === "reading") return fmtNum(e.detail.value, e.detail.unit);
   if (e.kind === "measure") return "attempted";
   return "";
 }
@@ -264,16 +281,18 @@ function renderVerdict(payload) {
   const destroyed = payload.card.destroyed;
   const disqualified = !!rec.disqualified;
   const correct = !!rec.correct && !destroyed && !disqualified;
-  let icon = "✓", word = "Correct", cls = "", reason;
+  // issue #427 CTO review round 2: this bar and the Result box at the
+  // bottom were saying the same thing twice -- keep this one small (the
+  // verdict word and, only when there is no answer sentence to say why,
+  // one short reason); the full detail lives in Result alone.
+  let icon = "✓", word = "Correct", cls = "", reason = "";
   if (destroyed) { icon = "✕"; word = "Wrong"; cls = "bad"; reason = "card destroyed"; }
   else if (disqualified) { icon = "✕"; word = "Disqualified"; cls = "bad";
     reason = "no measurement was logged"; }
-  else if (!correct) { icon = "✕"; word = "Wrong"; cls = "bad";
-    reason = `answered <b>${escapeHtml(rec.given || "")}</b>`; }
-  else { reason = `answered <b>${escapeHtml(rec.given || "")}</b>`; }
+  else if (!correct) { icon = "✕"; word = "Wrong"; cls = "bad"; }
   el.className = "verdict-bar" + (cls ? " " + cls : "");
   el.innerHTML = `<div class="icon">${icon}</div><div class="text">${word}`
-    + `<span class="reason">${reason}</span></div>`;
+    + (reason ? `<span class="reason">${reason}</span>` : "") + "</div>";
 }
 
 // issue #406 body: "<level> level, N instruments, datasheet written by us"
@@ -293,6 +312,14 @@ function renderPlainLine(payload) {
   } else {
     label.textContent = "A four-instrument run is on its way.";
   }
+  // issue #427 CTO review round 2: caption 4 ("It powers the card and
+  // measures the 3.3 V rail.") is the 2-instrument run's own text -- a
+  // 4-instrument run says what IT checks instead.
+  const caption4 = document.getElementById("bench-caption");
+  caption4.textContent = n === 4
+    ? "It powers the card through the relay, measures the 3V3 rail and the "
+      + "regulator temperature."
+    : "It powers the card and measures the 3.3 V rail.";
 }
 
 function renderBench(payload) {
@@ -300,16 +327,21 @@ function renderBench(payload) {
   const probe = payload.instruments.find(i => i.probe);
   const psuVal = drives ? payload.card.applied[drives.drives.replace("card.", "")] : null;
   document.getElementById("psu-value").textContent =
-    psuVal === undefined || psuVal === null ? "—" : `${psuVal} V`;
+    psuVal === undefined || psuVal === null ? "—" : fmtNum(psuVal);
 
   const reading = probe ? latestReading(payload.timeline, probe.address) : null;
   const attempted = payload.timeline.some(e =>
     probe && e.address === probe.address && (e.kind === "measure" || e.kind === "query"));
-  const valueText = reading ? `${reading.detail.value}${reading.detail.unit ?
-    " " + reading.detail.unit : ""}` : (attempted ? "measured" : "—");
+  const valueText = reading ? fmtNum(reading.detail.value, reading.detail.unit)
+    : (attempted ? "measured" : "—");
   document.getElementById("dmm-value").textContent = valueText;
-  document.getElementById("rail-label").textContent =
-    probe ? probe.probe.replace("card.", "") : "rail";
+  // issue #427 CTO review round 2: the rail's own human label ("3V3
+  // rail"), not the bare test-point name ("tp_3v3") a driver addresses it
+  // by.
+  const probeTestPoint = probe ? probe.probe.replace("card.", "") : null;
+  const rail = probeTestPoint
+    ? (payload.rails || []).find(r => r.test_point === probeTestPoint) : null;
+  document.getElementById("rail-label").textContent = rail ? `${rail.name} rail` : "rail";
   document.getElementById("rail-value").textContent = valueText;
 
   const cardBox = document.getElementById("card-box");
@@ -343,7 +375,7 @@ function renderBench(payload) {
     const temp = payload.instruments.find(i => i.address.startsWith("temp"));
     const tReading = temp ? latestReading(payload.timeline, temp.address) : null;
     document.getElementById("temp-value").textContent = tReading
-      ? `${Math.round(tReading.detail.value * 10) / 10}°C` : "—";
+      ? fmtNum(tReading.detail.value, "celsius") : "—";
   }
 }
 
@@ -366,15 +398,17 @@ function stepRowHtml(e, i) {
     + `<div class="detail">${detail}</div></div>${pill}</div>`;
 }
 
-// issue #406 body layout: a scripted 30 V ask (always refused by the gate)
-// never belongs to the agent's own replay -- it goes in the separate "Two
-// more checks, scripted" section at the end, caption 5. Everything else
-// the agent actually did stays in the timeline, in order.
+// issue #427 CTO review round 2: "Two more checks, scripted" is SHAL's own
+// fixed, always-present text about what the gate and the error/fail split
+// do in general -- it is never built from this run's own timeline, and an
+// agent's own refused call (e.g. a real 30 V attempt it made) is never
+// moved out of its own timeline into this section or relabeled as one of
+// these two. Everything the agent actually did stays in the timeline, in
+// its own order, in full.
 function renderTimeline(payload) {
   const list = document.getElementById("timeline-list");
   const entries = payload.timeline;
-  const agentSteps = entries.filter((e, i) =>
-    e.kind !== "refused" && !hasPairedReading(entries, i));
+  const agentSteps = entries.filter((e, i) => !hasPairedReading(entries, i));
   list.innerHTML = agentSteps.map((e, i) => stepRowHtml(e, i)).join("");
 
   if (entries.length > lastRenderedCount) {
@@ -384,22 +418,12 @@ function renderTimeline(payload) {
   lastRenderedCount = entries.length;
 }
 
-// issue #406 body: captions 5 and 6 -- two checks, both scripted (not the
-// agent's own replay), fixed CMO text. Caption 5 is the 30 V ask, which is
-// always a real refused step from this run's own timeline -- its own row,
-// never relabeled. Caption 6 (a cable fault) is illustrative text: SHAL has
-// no simulated cable-unplugged event yet, so it is shown as the second
-// check's own description, not a timeline row.
 function renderScriptedSection(payload) {
   const section = document.getElementById("scripted-section");
-  const refused = payload.timeline.filter(e => e.kind === "refused");
-  if (refused.length === 0) { section.innerHTML = ""; return; }
   section.innerHTML = '<div class="end-section"><div class="section-label">'
     + "Two more checks, scripted</div>"
     + '<p class="plain-line" style="margin-left:0">'
     + "A scripted step asks for 30 V on purpose. The gate stops it. Nothing was sent.</p>"
-    + '<div class="timeline">'
-    + refused.map((e, i) => stepRowHtml(e, i)).join("") + "</div>"
     + '<p class="plain-line" style="margin-left:0">'
     + "A cable is unplugged. The result is error, not fail: the card is not blamed.</p>"
     + "</div>";
@@ -436,25 +460,24 @@ function renderResult(payload) {
 // Built with textContent, never innerHTML, so the code itself (arbitrary
 // text) can never be interpreted as markup. Captions 1 and 2 (fixed CMO
 // text) sit above the fold: the agent reads the datasheet, then writes and
-// checks the driver -- this section is that step.
+// checks the driver -- this step always happened, so the two captions show
+// with or without --driver (issue #427 CTO review round 2); only the
+// folded code blocks below them are conditional on `drivers` being given.
 function renderDriverCode(payload) {
   const section = document.getElementById("driver-code-section");
   const drivers = payload.drivers || {};
   const names = Object.keys(drivers);
   section.innerHTML = "";
-  if (names.length === 0) return;
   const label = document.createElement("div");
   label.className = "section-label";
   label.textContent = "Drivers written by the agent";
   section.appendChild(label);
   const caption1 = document.createElement("p");
   caption1.className = "plain-line";
-  caption1.style.marginLeft = "0";
   caption1.textContent = "The agent reads each instrument's datasheet.";
   section.appendChild(caption1);
   const caption2 = document.createElement("p");
   caption2.className = "plain-line";
-  caption2.style.marginLeft = "0";
   caption2.textContent = "It writes a driver for each one and checks it.";
   section.appendChild(caption2);
   for (const name of names) {
@@ -568,7 +591,7 @@ def _shell(run_id: str, *, banner: str = "") -> str:
   <div class="verdict-bar" id="verdict-bar"></div>
   <div id="plain-line" class="plain-line"></div>
   <div class="section-label" id="bench-label">Bench</div>
-  <p class="plain-line">It powers the card and measures the 3.3 V rail.</p>
+  <p class="plain-line" id="bench-caption"></p>
   <div class="bench">{_BENCH_SVG}</div>
   <div class="section-label">Timeline</div>
   <div class="timeline" id="timeline-list"></div>
