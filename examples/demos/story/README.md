@@ -7,15 +7,17 @@ rail benchmark run ten times with the gate on and with the gate off.
 
 ## Install
 
-Two wheels, nothing else — this script never touches `pytest-shal`:
+Neither `pyshal` 0.4.0 nor `shal-arena` is on PyPI yet (PyPI's `pyshal` is
+still 0.3.0, and `shal-arena` has never been published) — install both from
+source, pinned to the same commit of this repo. This script never touches
+`pytest-shal`, so that's the only other dependency:
 
 ```bash
-pip install pyshal shal-arena
+pip install "pyshal @ git+https://github.com/determlab/shal@9b3873dd09ecfdef456b731d046b23f692347621"
+pip install "shal-arena @ git+https://github.com/determlab/shal@9b3873dd09ecfdef456b731d046b23f692347621#subdirectory=arena"
 ```
 
-(Until both are on PyPI, use the release-candidate build instead:
-`pip install git+https://github.com/determlab/shal` and the matching
-`shal-arena` checkout — see the repo root `AGENTS.md`.)
+Once both are on PyPI, this becomes `pip install pyshal shal-arena`.
 
 ## Run it
 

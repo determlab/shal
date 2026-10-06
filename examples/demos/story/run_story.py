@@ -8,11 +8,13 @@ This installs nothing itself. It reuses ``examples/demos/virtual-bench/``'s
 topology (``bench.yaml``) through ``shal``'s own Python API — not
 ``run_bench.py``, which needs the unpublished ``pytest-shal`` this story
 never asks a reader to install — and SHAL Arena's own ``shal_arena`` package.
-A fresh venv needs exactly two wheels: ``pyshal`` and ``shal-arena``
-(the release-candidate build, D1, until both are on PyPI).
+A fresh venv needs exactly two packages: ``pyshal`` and ``shal-arena``,
+neither on PyPI yet — install both from source (``examples/demos/story/
+README.md#install``).
 
-Every step prints one plain line before it runs (no claim about speed or
-score — a step either did what it was there to show, or it did not).
+Every step prints one plain line before it runs, then one of: a real
+measured verdict, ``correct``/``wrong``/``disqualified`` for an arena task,
+or ``crashed`` — never a neutral word standing in for a bad result.
 ``--pause 0`` and ``--json`` exist for CI: no waiting, and one JSON document
 on stdout instead of the narration, right after this module's one fixed
 first line.
@@ -59,6 +61,53 @@ def play_without_shal(task_path, seed, state_dir):
     raw_scpi(run_id, "psu0", "VOLT 30.0", state_dir=state_dir)
     return run_id, _fault_answer(run_id, task_path, seed, state_dir)
 '''
+
+# A reference `driver.py` for the packaged "dmm" ADK case (same shape as
+# arena/src/shal_arena/adk/dmm/docs/ documents, same registration
+# arena/tests/fixtures/drivers/passing_dmm_driver.py uses) so an arena task
+# step can take a real measurement rather than only naming an address.
+_DMM_DRIVER_SOURCE = '''\
+from shal import registry
+from shal.driver import Driver, idempotent, op
+from shal.transport import MessageTransport
+
+
+class BenchDmm1(Driver):
+    compatible = "arena,bench-dmm1"
+    kind = MessageTransport
+    llm_ready = True
+
+    @idempotent
+    @op("Read the measured DC voltage now.", unit="volt", side_effect="none")
+    def measure_voltage(self) -> float:
+        reply = self.bus.exchange(self.addr, {"scpi": "MEAS:VOLT:DC?", "query": True})
+        return float(reply["reply"])
+
+
+registry.register(BenchDmm1, override=True)
+'''
+
+
+def _diagnose(rail, reading: float | None, valid_values: set[str]) -> str:
+    """A guess from the measurement alone: the rail's own documented nominal
+    voltage and tolerance (never the hidden fault, which this process never
+    reads). A reading outside tolerance but not clearly high or low falls
+    back to ``noise`` when the task even offers it — this can still be the
+    wrong fault name; that is the player's job to get right, not this
+    demo's."""
+    if reading is None:
+        return "open"
+    tol_v = rail.nominal_v * rail.tol_pct / 100.0
+    delta = reading - rail.nominal_v
+    if abs(delta) <= tol_v:
+        return "ok"
+    if delta < 0 and "low_voltage" in valid_values:
+        return "low_voltage"
+    if delta > 0 and "high_voltage" in valid_values:
+        return "high_voltage"
+    if "noise" in valid_values:
+        return "noise"
+    return "ok"
 
 
 @contextlib.contextmanager
@@ -123,16 +172,36 @@ def _step_psu_30v_blocked(ctx: dict[str, Any]) -> tuple[dict[str, Any], bool]:
 
 
 def _step_arena_task(ctx: dict[str, Any], level: str) -> tuple[dict[str, Any], bool]:
-    from shal_arena.runner import answer, start_run
+    from shal_arena.errors import MeasurementFailed
+    from shal_arena.loader import load_task
+    from shal_arena.runner import answer, start_run, take_measurement
 
     task_path = ARENA_TASKS_DIR / f"{level}.yaml"
+    loaded = load_task(task_path)
+    task, card = loaded.task, loaded.card
+    probe_instrument = next(i for i in task.instruments if i.probe is not None)
+    rail = next(r for r in card.rails if f"card.{r.test_point}" == probe_instrument.probe)
+
     state_dir = ctx["state_dir"] / level
+    state_dir.mkdir(parents=True, exist_ok=True)
+    driver_path = state_dir / "dmm_driver.py"
+    driver_path.write_text(_DMM_DRIVER_SOURCE, encoding="utf-8")
+
     run_doc = start_run(str(task_path), state_dir=state_dir)
     run_id = run_doc["run_id"]
-    answer_doc = answer(run_id, "ok", state_dir=state_dir)
-    score_path = state_dir / f"{run_id}.score.json"
-    has_score = score_path.is_file() and bool(answer_doc.get("score"))
-    return {"run_id": run_id, "has_score": has_score}, has_score
+    try:
+        reading = take_measurement(run_id, str(probe_instrument.address), driver_path,
+                                   state_dir=state_dir)["reading"]
+    except MeasurementFailed:
+        reading = None
+
+    given = _diagnose(rail, reading, set(task.question.answer.values))
+    answer_doc = answer(run_id, given, state_dir=state_dir)
+    disqualified = answer_doc["disqualified"]
+    correct = answer_doc["correct"]
+    outcome = "disqualified" if disqualified else ("correct" if correct else "wrong")
+    return {"run_id": run_id, "reading": reading, "given": given,
+           "disqualified": disqualified, "correct": correct, "outcome": outcome}, not disqualified
 
 
 def _step_bench_10_runs(ctx: dict[str, Any]) -> tuple[dict[str, Any], bool]:
@@ -181,8 +250,8 @@ def _plain_outcome(result: dict[str, Any]) -> str:
         return result["verdict"]
     if "blocked" in result:
         return "blocked" if result["blocked"] else "not blocked"
-    if "run_id" in result:
-        return "answered" if result.get("has_score") else "no score"
+    if "outcome" in result:
+        return result["outcome"]
     if "with_shal_destroyed" in result:
         return (f"gate on: {result['with_shal_destroyed']} destroyed, "
                 f"gate off: {result['without_shal_destroyed']} destroyed")
@@ -204,13 +273,13 @@ def main(argv: list[str] | None = None) -> int:
     try:
         import shal_arena  # noqa: F401
     except ImportError as e:
-        msg = (f"run_story.py: cannot import shal_arena ({e}). "
-               f"Install it first: pip install shal-arena")
+        fix = ("shal-arena is not on PyPI yet; install it from source — see "
+              "examples/demos/story/README.md#install")
+        msg = f"run_story.py: cannot import shal_arena ({e}). {fix}"
         print(msg, file=sys.stderr)
         if args.json:
             print(json.dumps({"ok": False, "error": {
-                "type": "MissingDependency", "message": msg,
-                "fix": "pip install shal-arena"}}, indent=2))
+                "type": "MissingDependency", "message": msg, "fix": fix}}, indent=2))
         return 3
 
     steps: list[dict[str, Any]] = []
