@@ -80,7 +80,7 @@ def pick_fault(card: Card, seed: int) -> str:
 
 
 def _topology_for_instrument(task: Task, card: Card, instrument: Instrument,
-                             seed: int, case: CaseSpec) -> str | dict:
+                             seed: int, case: CaseSpec, *, nonce: int = 0) -> str | dict:
     """issue #312: the harness this instrument's `check` runs against for
     THIS run. An instrument with no `probe:` (it `drives:` a card input
     instead) never carries a fault — always the case's static harness.  A
@@ -88,7 +88,11 @@ def _topology_for_instrument(task: Task, card: Card, instrument: Instrument,
     realized fault targets the exact rail its wiring names; only then does
     it get the in-memory, fault-wired topology from `fault.harness_for_run`
     (never written to disk — Scope: "never written to a file the player or
-    agent can read")."""
+    agent can read").
+
+    ``nonce`` (issue #431): forwarded to `fault.harness_for_run` unchanged —
+    see its own docstring for why a fresh value per call matters for the
+    `noise` fault."""
     static = str(case.harness_topology)
     if instrument.probe is None:
         return static
@@ -96,7 +100,7 @@ def _topology_for_instrument(task: Task, card: Card, instrument: Instrument,
     rail = _fault.rail_for_fault(card, realized)
     if rail is None or instrument.probe != f"card.{rail.test_point}":
         return static
-    return _fault.harness_for_run(case, rail=rail, realized=realized, seed=seed)
+    return _fault.harness_for_run(case, rail=rail, realized=realized, seed=seed, nonce=nonce)
 
 
 def _fault_is_unplugged(topology: dict) -> bool:
@@ -475,7 +479,8 @@ def raw_scpi(run_id: str, address: str, cmd: str, *,
         store.set_card_state(run_id, applied=card_sim.applied, destroyed=card_sim.destroyed)
         return {"run_id": run_id, "address": instrument.address, "cmd": cmd, **result.as_dict()}
 
-    topology = _topology_for_instrument(loaded.task, loaded.card, instrument, state.seed, case)
+    topology = _topology_for_instrument(loaded.task, loaded.card, instrument, state.seed, case,
+                                        nonce=state.turns)
     card_sim = _load_card_sim(loaded, state, store, run_id)
     topology = _dead_rail_override(topology, loaded, instrument, case, card_sim, state.seed)
     sim_log = SimLog(store.sim_log_path(run_id))
@@ -588,7 +593,8 @@ def check_instrument_driver(run_id: str, address: str, driver_path: str | Path, 
                                fix=f"use one of this run's addresses: {known}")
     case = resolve_case(instrument.case)
     _import_driver_file(driver_path)
-    topology = _topology_for_instrument(loaded.task, loaded.card, instrument, state.seed, case)
+    topology = _topology_for_instrument(loaded.task, loaded.card, instrument, state.seed, case,
+                                        nonce=state.turns)
     try:
         report = _conformance_check_driver(case.compatible, topology=topology)
     except Exception as e:  # noqa: BLE001 - the check itself could not run
@@ -686,7 +692,8 @@ def take_measurement(run_id: str, address: str, driver_path: str | Path, *,
             fix="this case has no op with side_effect='none' and no required "
                 "params — measuring it needs a different driver shape")
 
-    topology = _topology_for_instrument(loaded.task, loaded.card, instrument, state.seed, case)
+    topology = _topology_for_instrument(loaded.task, loaded.card, instrument, state.seed, case,
+                                        nonce=state.turns)
     card_sim = _load_card_sim(loaded, state, store, run_id)
     topology = _dead_rail_override(topology, loaded, instrument, case, card_sim, state.seed)
     sim_log = SimLog(store.sim_log_path(run_id))
@@ -839,7 +846,8 @@ def call_op(run_id: str, address: str, driver_path: str | Path, op_name: str,
             "instrument",
             fix=f"use `shal-arena drive <run> {address} <volts>` instead of call")
 
-    topology = _topology_for_instrument(loaded.task, loaded.card, instrument, state.seed, case)
+    topology = _topology_for_instrument(loaded.task, loaded.card, instrument, state.seed, case,
+                                        nonce=state.turns)
     card_sim = _load_card_sim(loaded, state, store, run_id)
     topology = _dead_rail_override(topology, loaded, instrument, case, card_sim, state.seed)
     sim_log = SimLog(store.sim_log_path(run_id))
