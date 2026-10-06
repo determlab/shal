@@ -70,7 +70,12 @@ class RunStore:
         return self.dir / f"{run_id}.json"
 
     def _record_path(self, run_id: str) -> Path:
-        return self.dir / f"{run_id}.record.json"
+        # issue #435: the old bare name read as a SHAL core record (the
+        # core package's own record format) to anyone who hasn't read this
+        # file's own code -- this is the arena's own run record, a
+        # different shape entirely. Old run folders written before this
+        # rename are not migrated (Scope: "no migration").
+        return self.dir / f"{run_id}.arena-record.json"
 
     def record_path(self, run_id: str) -> Path:
         return self._record_path(run_id)

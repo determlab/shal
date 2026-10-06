@@ -1,7 +1,7 @@
 """Score file (issue #312 Scope): one JSON document, exactly 13 fields,
 written by `runner.answer` right after the run record, and validated against
 `SCORE_SCHEMA`. ``record_sha256`` ties it to the run record
-(``<run_id>.record.json``) it was computed from — the hash of that file's
+(``<run_id>.arena-record.json``) it was computed from — the hash of that file's
 bytes as written to disk, so the score can be checked against the record
 later without trusting either file's content on its own.
 
