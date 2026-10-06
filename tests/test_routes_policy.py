@@ -277,7 +277,11 @@ def test_call_tool_all_routes_down_is_the_rfc_shape(rig):
         "error": "/r1/board: no route delivered — r1 via /r1: simulated link drop "
                  "before send; r2 via /r2: simulated link drop before send",
         "delivered": "no", "via": None,
-        "fix": 'check the wiring sheet for board, or pin a route: via="r1"'}
+        "fix": 'check the wiring sheet for board, or pin a route: via="r1"',
+        # identity (#347): board's own id/address; RouteProbe is a test-only
+        # fake device, not a SHAL simulator, so `simulated` stays False even
+        # though it runs on `shal,sim-i2c` buses
+        "device": "board", "address": 0x48, "simulated": False}
 
 
 def test_call_tool_on_a_node_without_routes_has_no_via_key(rig):

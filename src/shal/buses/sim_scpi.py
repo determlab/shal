@@ -200,6 +200,7 @@ class SimPsu(Driver):
     compatible = "shal,sim-psu"
     kind = MessageTransport
     llm_ready = True
+    simulated = True  # issue #347: a SHAL simulator, never a real instrument
 
     DEFAULT_LOAD_OHMS = 10.0
 
@@ -329,6 +330,7 @@ class SimDmm(Driver):
     compatible = "shal,sim-dmm"
     kind = MessageTransport
     llm_ready = True
+    simulated = True  # issue #347: a SHAL simulator, never a real instrument
 
     def bind(self, node: Node) -> None:
         # it wraps no part: on a real bus it would talk to whatever instrument

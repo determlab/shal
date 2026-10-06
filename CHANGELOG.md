@@ -35,6 +35,16 @@ All notable changes to this project are documented here. The format follows
   other actuator and ask for approval. Sonos reads stay `none`.
 
 ### Added
+- **Every call result and log/audit line carries the instrument's identity**
+  (#347): `device` (the node id, or its path if it has none), `address` (the
+  node's configured address — a string goes through `shal.log.redact_url`,
+  issue #20) and `simulated` (`True`/`False`, read from the driver's own new
+  `simulated` class attribute, default `False` — never inferred from the id or
+  `compatible`, so a mixed bench of a real PSU and a sim DMM reports each
+  truthfully). `Hal.call_tool()` adds all three to every outcome, success or
+  refusal; the op wrapper (`driver.py`) adds them to its own DEBUG `call` line
+  and to every `shal.audit` line. `shal,sim-sensor`, `shal,sim-psu` and
+  `shal,sim-dmm` are the first drivers to set `simulated = True`.
 - **`record_version` 3 reserves `Step.ops`, `Measurement.instrument_id`/
   `instrument_simulated`/`limit_source` and `Record.repeatability`** (#409,
   `record.md` §2.1). All new keys are always present in a v3 record, `null`

@@ -184,6 +184,7 @@ class SimSensor(Driver, TemperatureSensor):
     compatible = "shal,sim-sensor"
     kind = ByteTransport
     llm_ready = True
+    simulated = True  # issue #347: a SHAL simulator, never a real chip
 
     def bind(self, node: Node) -> None:
         # it wraps no part: on a real bus it would talk to whatever chip answers
