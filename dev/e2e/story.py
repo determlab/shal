@@ -121,6 +121,19 @@ def check_wheel_installed(package: str, version: str | None, ok: bool, output: s
                    rerun)
 
 
+def check_arena_demo(doc: dict[str, Any], exit_code: int, record_exists: bool,
+                     card_exists: bool, rerun: str) -> dict[str, Any]:
+    # issue #410 Done-when: "the same test runs in the clean-machine story" --
+    # `shal-arena demo` works with no clone and no config, and its JSON
+    # names real files, from this machine's own (freshly installed, no
+    # checkout) wheels, not just from a pytest venv.
+    ok = (exit_code == EXIT_PASS and bool(doc.get("ok")) and record_exists and card_exists)
+    return _result("arena_demo", ok, json.dumps(
+        {"ok": doc.get("ok"), "record_path": doc.get("record_path"),
+         "record_exists": record_exists, "card_path": doc.get("card_path"),
+         "card_exists": card_exists}), rerun)
+
+
 # -- the real world: runs through the clean venv's own python -------------- #
 
 
@@ -203,6 +216,15 @@ def run_arena_bench_destroyed(venv_python: str, state_dir: Path) -> dict[str, An
     return check_arena_bench_destroyed(doc, f"{venv_python} {_argv_str(bench_argv)}")
 
 
+def run_arena_demo(venv_python: str) -> dict[str, Any]:
+    demo_argv = ["-m", "shal_arena.cli", "demo", "--pause", "0", "--json"]
+    doc, ec = _run_json(venv_python, demo_argv)
+    record_exists = bool(doc.get("record_path")) and Path(doc["record_path"]).is_file()
+    card_exists = bool(doc.get("card_path")) and Path(doc["card_path"]).is_file()
+    return check_arena_demo(doc, ec, record_exists, card_exists,
+                            f"{venv_python} {_argv_str(demo_argv)}")
+
+
 def run_bricks_wheel_check(venv_python: str) -> dict[str, Any]:
     bricks_argv = [venv_python, "-c", "import bricks; print(bricks.__version__)"]
     proc = subprocess.run(bricks_argv, capture_output=True, text=True, timeout=60)
@@ -272,6 +294,8 @@ def main(argv: list[str] | None = None) -> int:
              f"{venv_py} -m shal_arena.cli bench {ARENA_TASKS_DIR / 'rail-3v3.yaml'} "
              f"--runs 10 --policy <state-dir>/story_bench_policy.py --json",
              run_arena_bench_destroyed, venv_py, state_dir / "bench-story")
+    run_step("arena_demo", f"{venv_py} -m shal_arena.cli demo --pause 0 --json",
+             run_arena_demo, venv_py)
     run_step("wheel_installed_bricks-engine",
              f'{venv_py} -c "import bricks; print(bricks.__version__)"',
              run_bricks_wheel_check, venv_py)

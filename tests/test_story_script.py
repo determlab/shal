@@ -12,18 +12,17 @@ installed alongside ``pyshal``.
 """
 from __future__ import annotations
 
-import importlib.util
 import json
 import subprocess
 import sys
 from pathlib import Path
-from types import ModuleType
 
 import pytest
 
 pytest.importorskip("shal_arena")
 
 import yaml  # noqa: E402 - after the importorskip, same as test_mcp_server.py's own import
+from shal_arena import demo as story  # noqa: E402 - issue #410: the story now lives there
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 SCRIPT = REPO_ROOT / "examples" / "demos" / "story" / "run_story.py"
@@ -39,18 +38,6 @@ EXPECTED_STEPS = [
     "arena_result_card",
     "bench_10_runs",
 ]
-
-
-def _load_story() -> ModuleType:
-    spec = importlib.util.spec_from_file_location("run_story", SCRIPT)
-    assert spec is not None and spec.loader is not None
-    mod = importlib.util.module_from_spec(spec)
-    sys.modules["run_story"] = mod
-    spec.loader.exec_module(mod)
-    return mod
-
-
-story = _load_story()
 
 
 def _run_story() -> tuple[dict, int]:
@@ -172,10 +159,14 @@ def test_check_virtual_bench_pass_catches_a_disagreeing_verdict():
 
 
 def test_check_virtual_bench_unplug_dmm_catches_a_disagreeing_verdict():
-    assert story.check_virtual_bench_unplug_dmm({"verdict": "error"}) is True
+    assert story.check_virtual_bench_unplug_dmm(
+        {"verdict": "error", "cause": "transport"}) is True
     # if the fault injection ever silently stopped faulting, this must fail,
     # not quietly report the old "pass"
-    assert story.check_virtual_bench_unplug_dmm({"verdict": "pass"}) is False
+    assert story.check_virtual_bench_unplug_dmm({"verdict": "pass", "cause": None}) is False
+    # CTO review on #410: cause must actually be "transport", matching the
+    # shape shal core and the virtual-bench sample already write
+    assert story.check_virtual_bench_unplug_dmm({"verdict": "error", "cause": None}) is False
 
 
 def test_check_psu_30v_blocked_catches_a_request_that_was_not_blocked():

@@ -2,6 +2,7 @@
 ``check-driver`` command is issue #311's Agent path; ``measure`` is #312's;
 ``drive`` is #313's; ``bench`` is #314's).
 
+    shal-arena demo --json
     shal-arena run tasks/rail-3v3.yaml --json
     shal-arena check-driver <run-id> psu0 ./driver.py --json
     shal-arena measure <run-id> dmm0 ./driver.py --json
@@ -36,6 +37,13 @@ from .replay.card import build_result_card
 from .replay.rack import build_setup_yaml, render_rack_page
 from .runner import answer as _answer
 from .runner import check_instrument_driver, drive_input, start_run, take_measurement
+
+
+def _cmd_demo(args: argparse.Namespace) -> int:
+    from .demo import run_story
+
+    pause = args.pause if args.pause is not None else (0.0 if args.json else 2.0)
+    return run_story(pause=pause, json_mode=args.json)
 
 
 def _json_out(payload: dict) -> None:
@@ -209,6 +217,16 @@ def _build_parser() -> argparse.ArgumentParser:
         p.add_argument("--json", action="store_true", help="print one JSON document")
         p.add_argument("--state-dir", default=".shal-arena", metavar="DIR",
                        help="where run state lives (default: ./.shal-arena)")
+
+    p_demo = sub.add_parser(
+        "demo",
+        help="run the whole demo story from the installed package, no clone needed "
+             "(issue #343/#410 Agent path)")
+    p_demo.add_argument("--pause", type=float, default=None,
+                        help="seconds between steps (default: 2.0, or 0 under --json)")
+    p_demo.add_argument("--json", action="store_true",
+                        help="print one JSON document on stdout instead of narrating")
+    p_demo.set_defaults(func=_cmd_demo)
 
     p_run = sub.add_parser("run", help="start a run from a task.yaml")
     p_run.add_argument("task", help="path to the task.yaml")
