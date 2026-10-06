@@ -150,9 +150,13 @@ def _shal_damage_gate(card_sim: CardSim, input_name: str,
     expressed this way (no such limit on the card), the caller's own
     `NotSupported` tells the operator to flag it rather than invent a second,
     arena-local gate (issue #338 Constraints)."""
-    limit = next((lim for lim in card_sim.limits
-                 if lim.input == input_name and lim.effect == DAMAGE and lim.documented),
-                 None)
+    candidates = [lim for lim in card_sim.limits
+                 if lim.input == input_name and lim.effect == DAMAGE and lim.documented]
+    # CTO review on #338: a community card could declare more than one
+    # DAMAGE-effect line for the same input; the gate must be the LOWEST one
+    # (the first one actually destroyed), not whichever happens to come first
+    # in file order.
+    limit = min(candidates, key=lambda lim: lim.above_v) if candidates else None
     if limit is None:
         raise NotSupported(
             f"{input_name}: this card declares no documented damage limit for this "

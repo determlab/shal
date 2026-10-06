@@ -22,7 +22,7 @@ from shal_arena.runner import (
 )
 from shal_arena.store import RunStore
 
-from .conftest import FAILING_DRIVER, PASSING_DRIVER, SAMPLE_TASK
+from .conftest import FAILING_DRIVER, MEDIUM_TASK, PASSING_DRIVER, SAMPLE_TASK
 
 
 def _expected_fault(run_id: str, state_dir: Path) -> str:
@@ -188,6 +188,22 @@ def test_real_gate_in_range_drive_still_applies(tmp_path: Path) -> None:
     drive = drive_input(run_id, "psu0", 5.0, state_dir=tmp_path)
     assert drive["sent"] is True
     assert RunStore(tmp_path).load(run_id).card_destroyed is False
+
+
+def test_real_gate_number_comes_from_the_card_not_a_hardcoded_value(tmp_path: Path) -> None:
+    """issue #338 CTO review: buck-12v-5v's own abs max is 15.0 V (not
+    buck-5v-3v3's 6.0 V) — proves the gate reads the number from the card at
+    runtime, not from a value that happened to match the first test."""
+    run_id = start_run(MEDIUM_TASK, state_dir=tmp_path)["run_id"]
+
+    passes = drive_input(run_id, "psu0", 14.9, state_dir=tmp_path)
+    assert passes["sent"] is True
+
+    run_id2 = start_run(MEDIUM_TASK, state_dir=tmp_path)["run_id"]
+    refused = drive_input(run_id2, "psu0", 15.01, state_dir=tmp_path)
+    assert refused["sent"] is False
+    assert refused["rejected"] == "limits"
+    assert RunStore(tmp_path).load(run_id2).card_destroyed is False
 
 
 def test_real_gate_raw_side_still_destroys_the_card_at_30v(tmp_path: Path) -> None:
