@@ -3,7 +3,10 @@
 does not ship) so `shal-arena bench --runs 10` needs no driver.py of your
 own. Same shape as `examples/minimal_dmm_driver.py` -- not meant to be
 copied; a real player writes their own, see README.md's "Write your driver"
-section.
+section. `bench.py`'s own `_default_dmm_driver_registered()` scopes this
+class's registration to the default-policy call only (CTO review on #397,
+round 2) -- `override=True` here is a second, redundant safety net for that,
+not the mechanism itself.
 """
 from __future__ import annotations
 

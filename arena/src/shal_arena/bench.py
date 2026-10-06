@@ -40,7 +40,7 @@ from typing import Any, Protocol
 
 from . import runner as _runner
 from .errors import ArenaError, MeasurementFailed, TooFewRuns
-from .loader import once_per_path
+from .loader import load_task, once_per_path
 from .runner import answer, drive_input, raw_scpi, start_run, take_measurement
 from .store import DEFAULT_STATE_DIR, RunStore
 
@@ -86,34 +86,85 @@ def import_policy(path: str | Path) -> _Policy:
     return module
 
 
+# issue #397 CTO review: the PSU op's own documented max (examples/
+# minimal_psu_driver.py's `set_voltage` caps at 30.0) -- driven ON PURPOSE,
+# not the card's safe 5.0 V nominal. At 5.0 V neither side ever destroys the
+# card (0 vs 0), which tells a reader nothing. At 30 V, `drive_input`'s own
+# gate (issue #330) refuses it before anything reaches the card -- `raw_scpi`
+# has no such gate (its own docstring: "no drivers, no gate, no record") and
+# applies it directly, destroying the card. That gap (0 destroyed vs most of
+# them) is real, comparable signal the built-in policy can show for free.
+_PURPOSELY_DAMAGING_V = 30.0
+
+
+def _answer_from_reading(task_path: str, reading: float) -> str:
+    """issue #397 CTO review: name an answer from the reading itself, not a
+    hardcoded guess -- compares it against the probed rail's own documented
+    nominal/tolerance (`card.yaml`; public spec, same as a real test
+    engineer would read off a datasheet, never the run's hidden fault). Not
+    meant to always be correct, only to actually reason from the
+    measurement; `low_voltage` is the one catch-all this task's own answer
+    enum offers for "out of tolerance", whichever way."""
+    loaded = load_task(task_path)
+    instrument = next(i for i in loaded.task.instruments if i.probe is not None)
+    test_point = instrument.probe.removeprefix("card.")
+    rail = next(r for r in loaded.card.rails if r.test_point == test_point)
+    lo, hi = rail.nominal_v * (1 - rail.tol_pct / 100), rail.nominal_v * (1 + rail.tol_pct / 100)
+    return "ok" if lo <= reading <= hi else "low_voltage"
+
+
+@contextmanager
+def _default_dmm_driver_registered():
+    """issue #397 CTO review: the built-in policy's own dmm driver must
+    never leak into (or be affected by) a `--policy` run sharing this
+    process -- save and restore the `arena,bench-dmm1` registry slot around
+    its use, same discipline `test_readme_examples.py`'s own fixture uses,
+    so this is scoped to the default path only, never visible before or
+    after it."""
+    from shal import registry
+
+    compat = _runner.resolve_case("dmm").compatible  # "arena,bench-dmm1"
+    saved = list(registry._entries.get(compat, []))
+    registry._entries[compat] = []
+    try:
+        yield
+    finally:
+        registry._entries[compat] = saved
+
+
 def default_play_with_shal(task_path: str, seed: int, state_dir: str) -> tuple[str, dict[str, Any]]:
     """issue #397: the built-in policy's "with SHAL" side, for `DEFAULT_TASK`
-    only -- drives `psu0` to the card's 5.0 V nominal input, takes one real
-    reading of `dmm0` through `_DEFAULT_DMM_DRIVER`, and always answers
-    `"ok"` (scoring well is not the point; see `shal_arena.bench`'s own
-    docstring). The `open` fault raises `MeasurementFailed` straight through
-    -- `run_side` already turns that into its own per-run result (issue
-    #395), nothing extra needed here."""
+    only -- drives `psu0` to `_PURPOSELY_DAMAGING_V` (see its own comment),
+    takes one real reading of `dmm0` through `_DEFAULT_DMM_DRIVER`, and
+    answers from that reading (`_answer_from_reading`). The `open` fault
+    raises `MeasurementFailed` straight through -- `run_side` already turns
+    that into its own per-run result (issue #395), nothing extra needed
+    here."""
     run_id = start_run(task_path, seed=seed, state_dir=state_dir)["run_id"]
-    drive_input(run_id, "psu0", 5.0, state_dir=state_dir)
-    take_measurement(run_id, "dmm0", _DEFAULT_DMM_DRIVER, state_dir=state_dir)
-    return run_id, answer(run_id, "ok", state_dir=state_dir)
+    drive_input(run_id, "psu0", _PURPOSELY_DAMAGING_V, state_dir=state_dir)
+    reading = take_measurement(run_id, "dmm0", _DEFAULT_DMM_DRIVER,
+                               state_dir=state_dir)["reading"]
+    return run_id, answer(run_id, _answer_from_reading(task_path, reading), state_dir=state_dir)
 
 
 def default_play_without_shal(task_path: str, seed: int, state_dir: str
                                ) -> tuple[str, dict[str, Any]]:
     """The built-in policy's "without SHAL" side: the same two acts as
-    `default_play_with_shal`, through raw SCPI instead of a driver."""
+    `default_play_with_shal`, through raw SCPI instead of a driver -- no
+    gate, so `_PURPOSELY_DAMAGING_V` actually reaches the card this time."""
     run_id = start_run(task_path, seed=seed, state_dir=state_dir)["run_id"]
-    raw_scpi(run_id, "psu0", "VOLT 5.0", state_dir=state_dir)
-    raw_scpi(run_id, "dmm0", "MEAS:VOLT:DC?", state_dir=state_dir)
-    return run_id, answer(run_id, "ok", state_dir=state_dir)
+    raw_scpi(run_id, "psu0", f"VOLT {_PURPOSELY_DAMAGING_V}", state_dir=state_dir)
+    reading = float(raw_scpi(run_id, "dmm0", "MEAS:VOLT:DC?", state_dir=state_dir)["reply"])
+    return run_id, answer(run_id, _answer_from_reading(task_path, reading), state_dir=state_dir)
 
 
 class DefaultPolicy:
     """What `bench --runs 10` plays when `--policy` is absent (issue #397)
     -- the same shape `import_policy` returns, so `_cmd_bench` need not
-    care which one it has."""
+    care which one it has. Wrap any use of this policy in
+    `_default_dmm_driver_registered()` (the CLI's `_cmd_bench` already
+    does) so its own driver never leaks into a later `--policy` run sharing
+    this process."""
 
     play_with_shal = staticmethod(default_play_with_shal)
     play_without_shal = staticmethod(default_play_without_shal)

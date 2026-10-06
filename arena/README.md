@@ -345,9 +345,15 @@ shal-arena bench --runs 10 --json
 
 Issue #397 gives `bench` a built-in default policy, so the command above
 works with no file of your own and no task argument — it plays the
-built-in sample task (`tasks/rail-3v3.yaml`) with a trivial policy of its
-own (drive the input to its nominal voltage, take one reading, always
-answer `"ok"`; not meant to score well, only to prove the plumbing works).
+built-in sample task (`tasks/rail-3v3.yaml`) with a policy of its own that
+drives the PSU's own max setpoint (30 V) on purpose, takes one reading,
+and answers from that reading (not a hardcoded guess). That voltage is
+past the card's documented abs max, so this also shows what the two sides
+being "comparable" actually buys you: `drive`'s own gate (issue #330)
+refuses it, every time, with nothing sent; `raw_scpi` has no gate and
+sends it straight through, destroying the card, every time it gets that
+far. Not meant to score the *task* well — only to prove the plumbing
+works, with a real, non-trivial result.
 
 Pass `--policy` to play your own task, or your own agent, instead:
 

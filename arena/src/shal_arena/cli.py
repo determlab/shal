@@ -24,7 +24,13 @@ import json
 import sys
 from pathlib import Path
 
-from .bench import DEFAULT_POLICY, DEFAULT_TASK, import_policy, run_benchmark
+from .bench import (
+    DEFAULT_POLICY,
+    DEFAULT_TASK,
+    _default_dmm_driver_registered,
+    import_policy,
+    run_benchmark,
+)
 from .errors import ArenaError
 from .replay.card import build_result_card
 from .replay.rack import build_setup_yaml, render_rack_page
@@ -127,10 +133,20 @@ def _cmd_answer(args: argparse.Namespace) -> int:
 def _cmd_bench(args: argparse.Namespace) -> int:
     try:
         task = args.task or str(DEFAULT_TASK)
-        policy = import_policy(args.policy) if args.policy else DEFAULT_POLICY
-        result = run_benchmark(task, play_with_shal=policy.play_with_shal,
-                               play_without_shal=policy.play_without_shal,
-                               runs=args.runs, seed_base=args.seed, state_dir=args.state_dir)
+        if args.policy:
+            policy = import_policy(args.policy)
+            result = run_benchmark(task, play_with_shal=policy.play_with_shal,
+                                   play_without_shal=policy.play_without_shal,
+                                   runs=args.runs, seed_base=args.seed, state_dir=args.state_dir)
+        else:
+            # issue #397 CTO review: the built-in policy's own dmm driver is
+            # registered only for the duration of this call, never when a
+            # --policy was given, so it can never collide with one.
+            with _default_dmm_driver_registered():
+                result = run_benchmark(task, play_with_shal=DEFAULT_POLICY.play_with_shal,
+                                       play_without_shal=DEFAULT_POLICY.play_without_shal,
+                                       runs=args.runs, seed_base=args.seed,
+                                       state_dir=args.state_dir)
     except ArenaError as e:
         return _report_error(e, args.json)
     if args.json:
