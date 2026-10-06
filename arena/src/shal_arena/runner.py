@@ -547,9 +547,22 @@ def start_run(task_path: str, *, seed: int | None = None,
         # "2.9 V is outside 3.3 V +/-5-10%" against a limit it invented).
         "rails": [
             {"name": r.name, "test_point": r.test_point, "nominal_v": r.nominal_v,
-             "tol_pct": r.tol_pct, "min_v": r.nominal_v * (1 - r.tol_pct / 100),
-             "max_v": r.nominal_v * (1 + r.tol_pct / 100)}
+             "tol_pct": r.tol_pct,
+             # issue #451: unrounded gives 3.2009999999999996 (float
+             # arithmetic on a percentage) -- 4 decimals is plenty of
+             # precision for a volt-scale limit and reads like a number a
+             # person wrote, not a float artifact.
+             "min_v": round(r.nominal_v * (1 - r.tol_pct / 100), 4),
+             "max_v": round(r.nominal_v * (1 + r.tol_pct / 100), 4)}
             for r in card.rails
+        ],
+        # issue #451: the same machine-readable gap as `rails`, for a card's
+        # temperature limit (e.g. relay-rail's regulator, high_c: 85) --
+        # today only text in the card description.
+        "temp_points": [
+            {"name": t.name, "test_point": t.test_point, "nominal_c": t.nominal_c,
+             "high_c": t.high_c}
+            for t in card.temp_points
         ],
         "limits": {"max_turns": task.limits.max_turns, "max_minutes": task.limits.max_minutes},
     }

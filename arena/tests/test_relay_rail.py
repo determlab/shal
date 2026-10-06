@@ -36,7 +36,12 @@ _TASK, _CARD = _LOADED.task, _LOADED.card
 _RAIL = next(r for r in _CARD.rails if r.test_point == "tp_3v3")
 _TEMP = next(t for t in _CARD.temp_points if t.test_point == "tp_reg_temp")
 
-_FAULT_WORDS = ("low_voltage", "overheat", "shift_v", "shift_c", "high_c")
+# issue #451: `high_c` is now a PUBLIC field in every `start_run`'s own
+# `temp_points` (the card's documented limit, same category as `rails`'
+# already-public `nominal_v`/`tol_pct`) -- dropped from this list, since it
+# never named the fault itself. `shift_c` (the fault's own internal
+# amount) stays banned.
+_FAULT_WORDS = ("low_voltage", "overheat", "shift_v", "shift_c")
 
 
 def _seed_for(fault_id: str, limit: int = 500) -> int:
