@@ -7,17 +7,17 @@ below.
 
 ## Install
 
-Neither `pyshal` 0.4.0 nor `pytest-shal` is on PyPI yet (PyPI's `pyshal` is
-still 0.3.0, and `pytest-shal` is pinned to a commit of its own repo), so this
-needs three pinned installs instead of one:
+You already have `pyshal` — it's what wrote this file (`shal docs --sample
+virtual-bench --to DIR`), or what a checkout of this repo installs with `pip
+install -e ".[dev]"`. `pytest-shal` isn't on PyPI yet, so it needs a pinned
+commit of its own repo:
 
 ```bash
 pip install pytest==9.1.1
-pip install "pyshal @ git+https://github.com/determlab/shal@18482bd65daff0f1d69b30a17c7ed155dd308662"
 pip install "pytest-shal @ git+https://github.com/determlab/pytest-shal@f45937de74737473e3b2b896b25bef087468da40"
 ```
 
-Once pyshal 0.4.0 is released to PyPI, this becomes `pip install pyshal pytest-shal`.
+Once `pytest-shal` is released to PyPI, this becomes `pip install pytest-shal`.
 
 ## Run it
 
@@ -77,8 +77,8 @@ the record store holds.
 
 ## Agent path
 
-Read only this file, run `python run_bench.py` from a clean venv (the three
-installs above), read the printed JSON's `verdict` and `cause`. On
+Read only this file, run `python run_bench.py` with `pyshal` plus the two
+installs above, read the printed JSON's `verdict` and `cause`. On
 `verdict: error`, `cause: transport` means the instrument at the address
 named in stderr never answered — check the simulated wiring (`bench.yaml`'s
 `address:`/`config.probe:`), or drop `--unplug`/`$SHAL_SIM_UNPLUG` if this

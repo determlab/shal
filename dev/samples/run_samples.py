@@ -124,18 +124,24 @@ def _tail(text: str, lines: int = 15) -> list[str]:
     return text.rstrip().splitlines()[-lines:]
 
 
-def _missing_imports(modules: list[str], env: dict[str, str]) -> list[str]:
-    """Which of `modules` this environment's own ``python`` (found the same way
-    ``shal`` itself is, via `env["PATH"]`) cannot import — never installs anything,
-    only looks. On a raw install (no `--venv`) the interpreter and the console
-    script needn't share a folder — on Windows, `python.exe` sits at the
-    installation root while `shal.exe` is one level down in `Scripts\\` — so this
-    is resolved on `PATH`, not as a sibling of `shal`'s own path."""
-    if not modules:
-        return []
-    python = shutil.which("python", path=env.get("PATH"))
-    if python is None:
-        return list(modules)
+def target_python(venv: Path | None) -> str:
+    """The python a written sample's command line actually runs under: the given
+    venv's own (``venv/Scripts/python.exe`` on Windows, ``venv/bin/python`` else —
+    a `venv`-made environment keeps the interpreter there, unlike a raw install,
+    where a console script and the interpreter needn't share a folder: on Windows,
+    `python.exe` sits at the installation root while `shal.exe` lands one level
+    down in `Scripts\\`), or, with no venv, this running process's own
+    `sys.executable` — which is exactly what a bare ``shal`` on PATH resolves
+    against, since that `shal` came from `pip install -e` into this same
+    interpreter."""
+    if venv is None:
+        return sys.executable
+    return str(venv_bin(venv) / ("python.exe" if os.name == "nt" else "python"))
+
+
+def _missing_imports(python: str, modules: list[str], env: dict[str, str]) -> list[str]:
+    """Which of `modules` `python` cannot import — never installs anything, only
+    looks."""
     missing = []
     for mod in modules:
         r = subprocess.run([python, "-c", f"import {mod}"], env=env,
@@ -145,14 +151,15 @@ def _missing_imports(modules: list[str], env: dict[str, str]) -> list[str]:
     return missing
 
 
-def run_one(sample: dict, shal: str, scratch: Path, env: dict[str, str]) -> list[str]:
+def run_one(sample: dict, shal: str, python: str, scratch: Path,
+           env: dict[str, str]) -> list[str]:
     """Write one sample with ``--to``, run the printed command; return what is wrong.
     Raises `SampleUnavailable` first when the sample's `needs_import` isn't installed
-    in this venv — never attempted, so that can't show up as a `FAIL`."""
+    under `python` — never attempted, so that can't show up as a `FAIL`."""
     name = sample["name"]
     dest = scratch / "samples" / name
     expect = load_expect(Path(sample["folder"]))
-    missing = _missing_imports(expect["needs_import"], env)
+    missing = _missing_imports(python, expect["needs_import"], env)
     if missing:
         raise SampleUnavailable(f"needs {', '.join(missing)}, not installed in this venv")
     w = subprocess.run([shal, "docs", "--sample", name, "--to", str(dest)], env=env,
@@ -195,10 +202,12 @@ def main(argv: list[str] | None = None) -> int:
     env.pop("PYTHONHOME", None)
     env["PYTHONUTF8"] = "1"
     env["PYTHONDONTWRITEBYTECODE"] = "1"
-    bindir = venv_bin(args.venv.resolve()) if args.venv else Path(sys.executable).parent
-    if args.venv:
-        env["VIRTUAL_ENV"] = str(args.venv.resolve())
+    venv = args.venv.resolve() if args.venv else None
+    bindir = venv_bin(venv) if venv else Path(sys.executable).parent
+    if venv:
+        env["VIRTUAL_ENV"] = str(venv)
     env["PATH"] = str(bindir) + os.pathsep + env.get("PATH", "")
+    python = target_python(venv)
     shal = shutil.which("shal", path=str(bindir)) or shutil.which("shal", path=env["PATH"])
     if shal is None:
         print(f"FAIL: no `shal` in {bindir} or on PATH")
@@ -223,7 +232,7 @@ def main(argv: list[str] | None = None) -> int:
     for sample in samples:
         print(f"-- {sample['name']}")
         try:
-            wrong = run_one(sample, shal, scratch, env)
+            wrong = run_one(sample, shal, python, scratch, env)
         except SampleUnavailable as e:
             print(f"skip  {sample['name']}: {e}")
             skipped.append(sample["name"])

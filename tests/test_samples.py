@@ -380,6 +380,26 @@ def test_verdict_names_each_miss():
                    "stderr lacks 'limit'", "stderr has 'Traceback'"]
 
 
+def test_target_python_with_no_venv_is_sys_executable():
+    assert run_samples.target_python(None) == sys.executable
+
+
+def test_target_python_with_a_venv_is_under_its_own_bin_or_scripts(tmp_path, monkeypatch):
+    # #384 CI: a raw install's console script and interpreter needn't share a
+    # folder (Windows: `python.exe` at the install root, `shal.exe` in `Scripts\`),
+    # which is exactly why this is never derived from `shal`'s own path.
+    monkeypatch.setattr(run_samples.os, "name", "nt")
+    assert run_samples.target_python(tmp_path) == str(tmp_path / "Scripts" / "python.exe")
+    monkeypatch.setattr(run_samples.os, "name", "posix")
+    assert run_samples.target_python(tmp_path) == str(tmp_path / "bin" / "python")
+
+
+def test_needs_import_skips_on_a_python_that_lacks_it(tmp_path):
+    assert run_samples._missing_imports(sys.executable, ["no_such_module_xyz"], os.environ) == \
+        ["no_such_module_xyz"]
+    assert run_samples._missing_imports(sys.executable, ["json"], os.environ) == []
+
+
 def test_run_one_gives_the_sample_no_terminal(tmp_path, monkeypatch, capsys):
     # On Windows a DEVNULL stdin is the NUL device, and NUL is a character device:
     # isatty() is True, so ConsoleApprover.has_person() is True and a gated op
@@ -405,7 +425,7 @@ def test_run_one_gives_the_sample_no_terminal(tmp_path, monkeypatch, capsys):
     env = {**os.environ, "PATH": str(Path(sys.executable).parent) + os.pathsep
            + os.environ.get("PATH", "")}
     sample = {"name": "tty", "folder": str(src), "files": ["run.py"]}
-    assert run_samples.run_one(sample, "shal", tmp_path / "scratch", env) == []
+    assert run_samples.run_one(sample, "shal", sys.executable, tmp_path / "scratch", env) == []
 
 
 def test_runner_runs_every_installed_sample(tmp_path, capsys):

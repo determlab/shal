@@ -84,7 +84,8 @@ def main(argv: list[str] | None = None) -> int:
     new = [r for r in records if r.record not in before]
     if not new:
         print(json.dumps({"ok": False,
-                           "error": "no record written — see stderr for the pytest run"}))
+                           "error": "no record written — see stderr for the pytest run",
+                           "fix": "pip install pytest pytest-shal"}))
         return EXIT_CANNOT_RUN
     if len(new) > 1:
         ids = ", ".join(sorted(r.record for r in new))
