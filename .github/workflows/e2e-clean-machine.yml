@@ -37,6 +37,13 @@ on:
 
 jobs:
   story:
+    permissions:
+      contents: read
+      actions: read   # `gh run download` reads another run's artifacts
+    # CTO ruling on #340: macOS must not block the merge gate. The cell
+    # still runs, still gates nothing, and its evidence.json is still
+    # uploaded either way (see the upload step's `if: always()` below).
+    continue-on-error: ${{ matrix.os == 'macos-latest' }}
     strategy:
       fail-fast: false
       matrix:
@@ -198,6 +205,11 @@ jobs:
 
       - name: Run the story, write evidence.json
         shell: bash
+        env:
+          # Belt-and-suspenders on top of the --no-index installs already
+          # done: anything under this step's process tree that tries pip
+          # cannot reach an index either (CTO review on #340).
+          PIP_NO_INDEX: "1"
         run: |
           set -eu
           "$VENV_PY" dev/e2e/story.py \

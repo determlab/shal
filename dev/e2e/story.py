@@ -73,42 +73,50 @@ def play_without_shal(task_path, seed, state_dir):
 '''
 
 
-def _result(check_id: str, ok: bool, log: str) -> dict[str, Any]:
+def _result(check_id: str, ok: bool, log: str, rerun: str) -> dict[str, Any]:
+    # CTO review on #340: a failed check's log must START with the exact
+    # command to rerun it (the D2 spec's own Agent path) -- an agent reading
+    # evidence.json acts on this without having to reconstruct it.
+    if not ok:
+        log = f"rerun: {rerun}\n{log}"
     return {"id": check_id, "result": "pass" if ok else "fail", "log": log}
 
 
 # -- pure checks (Done-when: "every check reads JSON output, never text") --
 
 
-def check_virtual_bench_pass(doc: dict[str, Any], exit_code: int) -> dict[str, Any]:
+def check_virtual_bench_pass(doc: dict[str, Any], exit_code: int, rerun: str) -> dict[str, Any]:
     ok = doc.get("verdict") == "pass" and exit_code == EXIT_PASS
-    return _result("virtual_bench_pass", ok, json.dumps(doc))
+    return _result("virtual_bench_pass", ok, json.dumps(doc), rerun)
 
 
-def check_virtual_bench_unplug_dmm(doc: dict[str, Any], exit_code: int) -> dict[str, Any]:
+def check_virtual_bench_unplug_dmm(doc: dict[str, Any], exit_code: int,
+                                   rerun: str) -> dict[str, Any]:
     ok = (doc.get("verdict") == "error" and doc.get("cause") == "transport"
          and exit_code != EXIT_PASS and exit_code == EXIT_UNREACHABLE)
-    return _result("virtual_bench_unplug_dmm", ok, json.dumps(doc))
+    return _result("virtual_bench_unplug_dmm", ok, json.dumps(doc), rerun)
 
 
-def check_arena_score_file(level: str, score_exists: bool,
-                           answer_doc: dict[str, Any]) -> dict[str, Any]:
+def check_arena_score_file(level: str, score_exists: bool, answer_doc: dict[str, Any],
+                           rerun: str) -> dict[str, Any]:
     ok = score_exists and bool(answer_doc.get("score"))
     return _result(f"arena_{level}_score_file", ok, json.dumps(
-        {"score_file_exists": score_exists, "score": answer_doc.get("score")}))
+        {"score_file_exists": score_exists, "score": answer_doc.get("score")}), rerun)
 
 
-def check_arena_bench_destroyed(doc: dict[str, Any]) -> dict[str, Any]:
+def check_arena_bench_destroyed(doc: dict[str, Any], rerun: str) -> dict[str, Any]:
     with_destroyed = doc.get("with_shal", {}).get("destroyed")
     without_destroyed = doc.get("without_shal", {}).get("destroyed")
     ok = with_destroyed == 0 and isinstance(without_destroyed, int) and without_destroyed > 0
     return _result("arena_bench_destroyed", ok, json.dumps(
-        {"with_shal_destroyed": with_destroyed, "without_shal_destroyed": without_destroyed}))
+        {"with_shal_destroyed": with_destroyed, "without_shal_destroyed": without_destroyed}),
+        rerun)
 
 
-def check_wheel_installed(package: str, version: str | None, ok: bool,
-                          output: str) -> dict[str, Any]:
-    return _result(f"wheel_installed_{package}", ok, f"version={version} output={output!r}")
+def check_wheel_installed(package: str, version: str | None, ok: bool, output: str,
+                          rerun: str) -> dict[str, Any]:
+    return _result(f"wheel_installed_{package}", ok, f"version={version} output={output!r}",
+                   rerun)
 
 
 # -- the real world: runs through the clean venv's own python -------------- #
@@ -124,32 +132,42 @@ def _run_json(venv_python: str, argv: list[str], cwd: Path | None = None) -> tup
     return doc, proc.returncode
 
 
+def _argv_str(argv: list[str]) -> str:
+    return " ".join(argv)
+
+
 def run_virtual_bench_checks(venv_python: str) -> list[dict[str, Any]]:
+    pass_argv = [venv_python, "run_bench.py"]
     doc, ec = _run_json(venv_python, ["run_bench.py"], cwd=VIRTUAL_BENCH_DIR)
-    checks = [check_virtual_bench_pass(doc, ec)]
+    checks = [check_virtual_bench_pass(
+        doc, ec, f"cd {VIRTUAL_BENCH_DIR} && {_argv_str(pass_argv)}")]
+
+    unplug_argv = [venv_python, "run_bench.py", "--unplug", "dmm"]
     env = dict(os.environ, SHAL_SIM_UNPLUG="dmm")
-    proc = subprocess.run([venv_python, "run_bench.py", "--unplug", "dmm"],
-                          cwd=VIRTUAL_BENCH_DIR, env=env, capture_output=True, text=True,
-                          timeout=120)
+    proc = subprocess.run(unplug_argv, cwd=VIRTUAL_BENCH_DIR, env=env,
+                          capture_output=True, text=True, timeout=120)
     try:
         doc2 = json.loads(proc.stdout)
     except json.JSONDecodeError:
         doc2 = {"ok": False, "error": f"not JSON: stdout={proc.stdout!r} stderr={proc.stderr!r}"}
-    checks.append(check_virtual_bench_unplug_dmm(doc2, proc.returncode))
+    checks.append(check_virtual_bench_unplug_dmm(
+        doc2, proc.returncode, f"cd {VIRTUAL_BENCH_DIR} && {_argv_str(unplug_argv)}"))
     return checks
 
 
 def run_arena_task_score_file(venv_python: str, level: str, state_dir: Path) -> dict[str, Any]:
     task_path = ARENA_TASKS_DIR / f"{level}.yaml"
-    run_doc, _ = _run_json(venv_python,
-                           ["-m", "shal_arena.cli", "run", str(task_path),
-                            "--state-dir", str(state_dir), "--json"])
+    run_argv = ["-m", "shal_arena.cli", "run", str(task_path),
+               "--state-dir", str(state_dir), "--json"]
+    run_doc, _ = _run_json(venv_python, run_argv)
     run_id = run_doc["run_id"]
-    answer_doc, _ = _run_json(venv_python,
-                              ["-m", "shal_arena.cli", "answer", run_id, "ok",
-                               "--state-dir", str(state_dir), "--json"])
+    answer_argv = ["-m", "shal_arena.cli", "answer", run_id, "ok",
+                  "--state-dir", str(state_dir), "--json"]
+    answer_doc, _ = _run_json(venv_python, answer_argv)
     score_path = state_dir / f"{run_id}.score.json"
-    return check_arena_score_file(level, score_path.is_file(), answer_doc)
+    rerun = (f"{venv_python} {_argv_str(run_argv)} && "
+            f"{venv_python} {_argv_str(answer_argv)}")
+    return check_arena_score_file(level, score_path.is_file(), answer_doc, rerun)
 
 
 def run_arena_bench_destroyed(venv_python: str, state_dir: Path) -> dict[str, Any]:
@@ -157,20 +175,19 @@ def run_arena_bench_destroyed(venv_python: str, state_dir: Path) -> dict[str, An
     policy_path = state_dir / "story_bench_policy.py"
     state_dir.mkdir(parents=True, exist_ok=True)
     policy_path.write_text(_BENCH_POLICY, encoding="utf-8")
-    doc, _ = _run_json(venv_python,
-                       ["-m", "shal_arena.cli", "bench", str(task_path), "--runs", "10",
-                        "--policy", str(policy_path), "--state-dir", str(state_dir / "bench"),
-                        "--json"])
-    return check_arena_bench_destroyed(doc)
+    bench_argv = ["-m", "shal_arena.cli", "bench", str(task_path), "--runs", "10",
+                 "--policy", str(policy_path), "--state-dir", str(state_dir / "bench"), "--json"]
+    doc, _ = _run_json(venv_python, bench_argv)
+    return check_arena_bench_destroyed(doc, f"{venv_python} {_argv_str(bench_argv)}")
 
 
 def run_bricks_wheel_check(venv_python: str) -> dict[str, Any]:
-    proc = subprocess.run(
-        [venv_python, "-c", "import bricks; print(bricks.__version__)"],
-        capture_output=True, text=True, timeout=60)
+    bricks_argv = [venv_python, "-c", "import bricks; print(bricks.__version__)"]
+    proc = subprocess.run(bricks_argv, capture_output=True, text=True, timeout=60)
     ok = proc.returncode == 0
     version = proc.stdout.strip() if ok else None
-    return check_wheel_installed("bricks-engine", version, ok, proc.stdout + proc.stderr)
+    return check_wheel_installed("bricks-engine", version, ok, proc.stdout + proc.stderr,
+                                 _argv_str(bricks_argv))
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -195,30 +212,40 @@ def main(argv: list[str] | None = None) -> int:
 
     checks: list[dict[str, Any]] = []
 
-    def run_step(step_label: str, fn, *fargs: Any) -> None:
+    def run_step(step_label: str, rerun: str, fn, *fargs: Any) -> None:
         # CTO review on #340: one crash must not lose every OTHER check's
         # evidence. A step that raises is recorded as its own failed check
         # (never silently dropped), and evidence.json is rewritten after
         # EVERY step -- so even a hard crash partway through this function
         # leaves the file holding everything decided up to that point, for
-        # the workflow's `if: always()` upload to pick up.
+        # the workflow's `if: always()` upload to pick up. `rerun` here is
+        # the best rerun hint available BEFORE fn runs -- a check_* function
+        # that gets to run normally supplies its own, more precise one.
         try:
             result = fn(*fargs)
         except Exception as e:  # noqa: BLE001 - must not lose the other steps' evidence
-            checks.append(_result(step_label, False, f"{type(e).__name__}: {e}"))
+            checks.append(_result(step_label, False, f"{type(e).__name__}: {e}", rerun))
         else:
             checks.extend(result) if isinstance(result, list) else checks.append(result)
         evidence = {"os": args.os_label, "python": args.python_label, "versions": versions,
                    "checks": checks}
         out_path.write_text(json.dumps(evidence, indent=2), encoding="utf-8")
 
-    run_step("virtual_bench", run_virtual_bench_checks, args.venv_python)
+    venv_py = args.venv_python
+    run_step("virtual_bench", f"cd {VIRTUAL_BENCH_DIR} && {venv_py} run_bench.py",
+             run_virtual_bench_checks, venv_py)
     for level in ARENA_TASK_LEVELS:
-        run_step(f"arena_{level}_score_file", run_arena_task_score_file,
-                 args.venv_python, level, state_dir / level)
-    run_step("arena_bench_destroyed", run_arena_bench_destroyed,
-             args.venv_python, state_dir / "bench-story")
-    run_step("wheel_installed_bricks-engine", run_bricks_wheel_check, args.venv_python)
+        run_step(f"arena_{level}_score_file",
+                 f"{venv_py} -m shal_arena.cli run {ARENA_TASKS_DIR / (level + '.yaml')} "
+                 f"--state-dir {state_dir / level} --json",
+                 run_arena_task_score_file, venv_py, level, state_dir / level)
+    run_step("arena_bench_destroyed",
+             f"{venv_py} -m shal_arena.cli bench {ARENA_TASKS_DIR / 'rail-3v3.yaml'} "
+             f"--runs 10 --policy <state-dir>/story_bench_policy.py --json",
+             run_arena_bench_destroyed, venv_py, state_dir / "bench-story")
+    run_step("wheel_installed_bricks-engine",
+             f'{venv_py} -c "import bricks; print(bricks.__version__)"',
+             run_bricks_wheel_check, venv_py)
 
     failed = [c["id"] for c in checks if c["result"] != "pass"]
     if failed:

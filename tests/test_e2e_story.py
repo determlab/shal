@@ -51,16 +51,19 @@ def test_sample_evidence_has_the_required_shape():
         assert check["result"] in ("pass", "fail")
 
 
+_RERUN = "rerun-command-irrelevant-for-a-passing-check"
+
+
 def test_virtual_bench_pass_check_agrees_with_the_recorded_evidence():
     recorded = _by_id(_evidence(), "virtual_bench_pass")
     doc = json.loads(recorded["log"])
-    assert story.check_virtual_bench_pass(doc, story.EXIT_PASS) == recorded
+    assert story.check_virtual_bench_pass(doc, story.EXIT_PASS, _RERUN) == recorded
 
 
 def test_virtual_bench_unplug_dmm_check_agrees_with_the_recorded_evidence():
     recorded = _by_id(_evidence(), "virtual_bench_unplug_dmm")
     doc = json.loads(recorded["log"])
-    assert story.check_virtual_bench_unplug_dmm(doc, story.EXIT_UNREACHABLE) == recorded
+    assert story.check_virtual_bench_unplug_dmm(doc, story.EXIT_UNREACHABLE, _RERUN) == recorded
 
 
 def test_arena_score_file_checks_agree_with_the_recorded_evidence():
@@ -70,7 +73,7 @@ def test_arena_score_file_checks_agree_with_the_recorded_evidence():
         logged = json.loads(recorded["log"])
         answer_doc = {"score": logged["score"]}
         assert story.check_arena_score_file(
-            level, logged["score_file_exists"], answer_doc) == recorded
+            level, logged["score_file_exists"], answer_doc, _RERUN) == recorded
 
 
 def test_arena_bench_destroyed_check_agrees_with_the_recorded_evidence():
@@ -78,29 +81,40 @@ def test_arena_bench_destroyed_check_agrees_with_the_recorded_evidence():
     logged = json.loads(recorded["log"])
     doc = {"with_shal": {"destroyed": logged["with_shal_destroyed"]},
           "without_shal": {"destroyed": logged["without_shal_destroyed"]}}
-    assert story.check_arena_bench_destroyed(doc) == recorded
+    assert story.check_arena_bench_destroyed(doc, _RERUN) == recorded
 
 
 def test_arena_bench_destroyed_check_catches_a_regression():
     # if the SHAL side's gate ever broke, the story's own check must fail,
     # not quietly report the old "pass".
     doc = {"with_shal": {"destroyed": 3}, "without_shal": {"destroyed": 10}}
-    assert story.check_arena_bench_destroyed(doc)["result"] == "fail"
+    assert story.check_arena_bench_destroyed(doc, _RERUN)["result"] == "fail"
     doc = {"with_shal": {"destroyed": 0}, "without_shal": {"destroyed": 0}}
-    assert story.check_arena_bench_destroyed(doc)["result"] == "fail"
+    assert story.check_arena_bench_destroyed(doc, _RERUN)["result"] == "fail"
 
 
 def test_virtual_bench_pass_check_catches_a_wrong_exit_code():
     doc = {"verdict": "pass", "cause": None}
-    assert story.check_virtual_bench_pass(doc, 1)["result"] == "fail"
+    assert story.check_virtual_bench_pass(doc, 1, _RERUN)["result"] == "fail"
 
 
 def test_virtual_bench_unplug_check_catches_a_verdict_that_is_not_an_error():
     doc = {"verdict": "pass", "cause": None}
-    assert story.check_virtual_bench_unplug_dmm(doc, story.EXIT_UNREACHABLE)["result"] == "fail"
+    result = story.check_virtual_bench_unplug_dmm(doc, story.EXIT_UNREACHABLE, _RERUN)
+    assert result["result"] == "fail"
 
 
 def test_wheel_installed_check_agrees_with_the_recorded_evidence():
     recorded = _by_id(_evidence(), "wheel_installed_bricks-engine")
     assert recorded["result"] == "pass"
-    assert story.check_wheel_installed("bricks-engine", "0.5.0", True, "0.5.0\n") == recorded
+    assert story.check_wheel_installed(
+        "bricks-engine", "0.5.0", True, "0.5.0\n", _RERUN) == recorded
+
+
+def test_a_failed_checks_log_starts_with_the_rerun_command():
+    # CTO review on #340 (D2 spec): an agent reading evidence.json must find
+    # the exact command to rerun right at the start of a failed check's log.
+    doc = {"verdict": "fail"}
+    result = story.check_virtual_bench_pass(doc, 1, "the exact rerun command")
+    assert result["result"] == "fail"
+    assert result["log"].startswith("rerun: the exact rerun command\n")
