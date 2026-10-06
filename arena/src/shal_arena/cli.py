@@ -264,7 +264,8 @@ def _build_parser() -> argparse.ArgumentParser:
 
     p_run = sub.add_parser("run", help="start a run from a packaged task name or a task.yaml")
     p_run.add_argument("task", help="a packaged task name (see `shal-arena tasks --json`: "
-                                    "easy, medium, hard, rail-3v3) or a path to a task.yaml")
+                                    "easy, medium, hard, rail-3v3, relay-rail) or a path to "
+                                    "a task.yaml")
     p_run.add_argument("--seed", type=int, default=None,
                        help="override the task's seed (a weekly challenge passes this)")
     add_common(p_run)

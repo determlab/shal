@@ -48,6 +48,8 @@ from .score import build_score
 from .simlog import SimLog
 from .store import DEFAULT_STATE_DIR, RunState, RunStore
 
+_AMBIENT_C = 25.0  # a card with no power dissipates none, so it cools to room temperature
+
 
 class NotSupported(ArenaError):
     """A task shape this ticket's runner cannot score yet (issue #310 is the
@@ -142,13 +144,18 @@ def _make_card_state(card: Card, card_sim: CardSim,
     knowledge of what kind of sensor is reading it. A rail's test point
     reads `CardSim.rail_voltage` (already relay/protection/damage aware); a
     temperature point reads the card's own nominal plus this run's realized
-    fault shift, if the realized fault targets it."""
+    fault shift, if the realized fault targets it -- unless the card's
+    power is off (CTO review on PR #426), in which case nothing on it is
+    dissipating any power any more and it reads room temperature instead,
+    whatever fault is realized."""
     def card_state(point: str) -> float:
         rail = next((r for r in card.rails if r.test_point == point), None)
         if rail is not None:
             return card_sim.rail_voltage(rail.name)
         temp = next((t for t in card.temp_points if t.test_point == point), None)
         if temp is not None:
+            if not card_sim.power_on:
+                return _AMBIENT_C
             value = temp.nominal_c
             target = _fault.temp_point_for_fault(card, realized)
             if target is not None and target.test_point == point:
@@ -359,6 +366,16 @@ def drive_input(run_id: str, address: str, volts: float, *,
         raise CheckCouldNotRun(
             f"{address}: this instrument probes the card, it does not drive an input",
             fix="drive the address whose task.instruments entry has 'drives', not 'probe'")
+    case = resolve_case(instrument.case)
+    if case.power_switch:
+        # CTO review (PR #426): a relay is not a voltage source -- `drive`
+        # is CardSim.apply_input's own gate (_shal_damage_gate below), which
+        # a power switch has no business reaching; its one real action
+        # (energize/de-energize) goes only through `call`'s own gate.
+        raise CheckCouldNotRun(
+            f"{address}: this is a power switch, not a voltage source",
+            fix=f"use `shal-arena call <run> {address} <driver.py> set_relay "
+                "<channel> <true|false>` instead of drive")
     input_name = instrument.drives.removeprefix("card.")
 
     card_sim = _load_card_sim(loaded, state, store, run_id)
@@ -800,6 +817,19 @@ def call_op(run_id: str, address: str, driver_path: str | Path, op_name: str,
                                fix=f"call one of this driver's ops: {known}")
     kwargs = _coerce_args(ops[op_name], args)
     side_effect = inferred_side_effect(ops[op_name])
+    if instrument.drives is not None and not case.power_switch and side_effect != "none":
+        # CTO review (PR #426): a `drives` instrument's own output change is
+        # `CardSim.apply_input`'s gate to make (`drive_input`'s
+        # `_shal_damage_gate`, the card's documented abs-max) -- `call`
+        # reaching the bare sim model directly would let a player set an
+        # output `drive` would have refused, with no damage check at all.
+        # A power switch has no such gate to bypass (it never touches
+        # `apply_input`), so it is exempt -- `call` is its only path.
+        raise CheckCouldNotRun(
+            f"{address}: {op_name} changes this instrument's own output; only "
+            "`shal-arena drive` carries the card's damage gate for a 'drives' "
+            "instrument",
+            fix=f"use `shal-arena drive <run> {address} <volts>` instead of call")
 
     topology = _topology_for_instrument(loaded.task, loaded.card, instrument, state.seed, case)
     card_sim = _load_card_sim(loaded, state, store, run_id)

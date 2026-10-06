@@ -2,11 +2,10 @@
 
 Fictional instrument, no real part — the same "Arena Bench" style as
 `scpi-psu` and `dmm`, but reached over I2C instead of SCPI. The measurement
-command, frame layout and conversion formulas below are adapted from a real
-digital humidity/temperature sensor's single-shot I2C protocol (see
-determlab/adk-lab `cases/sht31` for the real-world reference this is based
-on); write `driver.py` for it: `compatible = "arena,bench-temp1"`, bound
-under a `shal,sim-i2c` bus, I2C address `0x44`.
+command, frame layout and conversion formulas below follow a standard
+single-shot digital humidity/temperature sensor's I2C protocol; write
+`driver.py` for it: `compatible = "arena,bench-temp1"`, bound under a
+`shal,sim-i2c` bus, I2C address `0x44`.
 
 ## Measurement command
 

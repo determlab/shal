@@ -2,12 +2,10 @@
 
 Fictional instrument, no real part — same "Arena Bench" style as `scpi-psu`
 and `dmm`, but framed like Modbus (function code + coil address) instead of
-SCPI. The framing below is based on the real coil read/write command set a
-Modbus relay module uses (see determlab/adk-lab `cases/relay-modbus` for the
-real-world reference this is adapted from), simplified to one request/reply
-per call: write `driver.py` for it over `shal,sim-msg`, which exchanges
-plain **dicts**, not raw Modbus bytes — no `pymodbus`, no TCP socket, no
-byte-level framing to build.
+SCPI. The framing below is the standard Modbus coil read/write command set,
+simplified to one request/reply per call: write `driver.py` for it over
+`shal,sim-msg`, which exchanges plain **dicts**, not raw Modbus bytes — no
+`pymodbus`, no TCP socket, no byte-level framing to build.
 
 `compatible = "arena,bench-relay1"`, bound under a `shal,sim-msg` bus.
 

@@ -18,13 +18,14 @@ import pytest
 from shal_arena import fault as fault_mod
 from shal_arena.errors import CheckCouldNotRun, MeasurementFailed
 from shal_arena.loader import load_task
-from shal_arena.runner import answer, call_op, start_run, take_measurement
+from shal_arena.runner import answer, call_op, drive_input, start_run, take_measurement
 from shal_arena.simlog import SimLog
 from shal_arena.store import RunStore
 
 from .conftest import (
     GATED_RELAY_DRIVER,
     PASSING_DMM_DRIVER,
+    PASSING_DRIVER,
     PASSING_RELAY_DRIVER,
     PASSING_TEMP_DRIVER,
     RELAY_RAIL_TASK,
@@ -238,3 +239,74 @@ def test_relay_power_state_persists_across_separate_calls(tmp_path: Path) -> Non
 
     off = take_measurement(run_id, "dmm0", PASSING_DMM_DRIVER, state_dir=state_dir)
     assert off["reading"] == pytest.approx(0.0, abs=1e-9)
+
+
+def test_regulator_temperature_cools_to_ambient_with_power_off(tmp_path: Path) -> None:
+    """CTO review (PR #426): a de-energized regulator is not dissipating
+    power any more, hidden fault or not -- `temp0` must read room
+    temperature, not whatever the realized fault would otherwise give it."""
+    state_dir = tmp_path / "state"
+    run_id = start_run(str(RELAY_RAIL_TASK), seed=_seed_for("overheat"),
+                       state_dir=state_dir)["run_id"]
+    call_op(run_id, "relay0", PASSING_RELAY_DRIVER, "set_relay", ["0", "false"],
+           state_dir=state_dir)
+
+    off = take_measurement(run_id, "temp0", PASSING_TEMP_DRIVER, state_dir=state_dir)
+    assert off["reading"] < _TEMP.high_c
+    assert off["reading"] == pytest.approx(25.0, abs=1.0)
+
+
+# --------------------------------------------------------------------------- #
+# CTO review (PR #426): a relay is not a voltage source, and `call` must not
+# let a `drives` instrument bypass drive_input's own damage gate.
+# --------------------------------------------------------------------------- #
+
+def test_drive_refuses_the_relay_power_switch(tmp_path: Path) -> None:
+    state_dir = tmp_path / "state"
+    run_id = start_run(str(RELAY_RAIL_TASK), state_dir=state_dir)["run_id"]
+
+    with pytest.raises(CheckCouldNotRun):
+        drive_input(run_id, "relay0", 13.5, state_dir=state_dir)
+
+    # nothing was applied: the card's own input is untouched
+    state = RunStore(state_dir).load(run_id)
+    assert state.card_applied == {}
+
+
+def test_call_refuses_a_voltage_write_on_the_psu_drives_instrument(tmp_path: Path) -> None:
+    """Only `drive` carries the card's damage gate for a `drives`
+    instrument (`_shal_damage_gate`) -- `call` reaching `set_voltage`
+    directly would let a player set 20 V on `vin` with no check against
+    the card's documented abs max at all."""
+    state_dir = tmp_path / "state"
+    run_id = start_run(str(RELAY_RAIL_TASK), state_dir=state_dir)["run_id"]
+
+    with pytest.raises(CheckCouldNotRun) as excinfo:
+        call_op(run_id, "psu0", PASSING_DRIVER, "set_voltage", ["20"], state_dir=state_dir)
+    assert "drive" in excinfo.value.fix
+
+    # nothing was applied: the card's own input is untouched
+    state = RunStore(state_dir).load(run_id)
+    assert state.card_applied == {}
+
+
+def test_call_still_allows_a_read_on_a_drives_instrument(tmp_path: Path) -> None:
+    """The new guard is scoped to output changes -- reading `psu0`'s own
+    measured voltage through `call` is harmless and still works."""
+    state_dir = tmp_path / "state"
+    run_id = start_run(str(RELAY_RAIL_TASK), state_dir=state_dir)["run_id"]
+
+    result = call_op(run_id, "psu0", PASSING_DRIVER, "measure_voltage", [],
+                     state_dir=state_dir)
+    assert result["ok"] is True
+
+
+def test_card_description_states_the_regulator_limit_and_rail_tolerance() -> None:
+    """CTO review (PR #426): the player must be able to tell `overheat`
+    from `ok` without guessing -- the thermal limit and the rail
+    tolerance belong in the card description (or the question), not left
+    implicit."""
+    description = _CARD.description
+    assert "85" in description  # the regulator's thermal limit
+    assert "45" in description  # its nominal temperature
+    assert "3%" in description or "3.3" in description  # the rail's own spec

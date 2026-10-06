@@ -1,6 +1,6 @@
 arena_card: 1
 id: buck-12v-relay
-description: "Fictional card, no real part. 12 V input through a relay, buck to 3.3 V, one test point tp_3v3, plus a regulator temperature test point."
+description: "Fictional card, no real part. 12 V input through a relay, buck to 3.3 V +/-3% (nominal 3.300 V) at test point tp_3v3. The regulator's own test point, tp_reg_temp, runs at a nominal 45 C; its datasheet rates continuous operation up to 85 C -- above that it is running too hot."
 inputs:
   vin: {nominal_v: 12.0}
 rails:
