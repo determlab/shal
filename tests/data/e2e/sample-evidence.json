@@ -1,0 +1,71 @@
+{
+  "os": "windows-latest",
+  "python": "3.13",
+  "versions": {
+    "pyshal": {
+      "version": "0.4.0+rc.5c7eba6",
+      "sha": "5c7eba61b68373382ac00382fcc615c4cdf8f287",
+      "repo": "determlab/shal",
+      "filename": "pyshal-0.4.0+rc.5c7eba6-py3-none-any.whl",
+      "sha256": "00ab6d012d431f345de7ff4ecc7e863042ad5a6822cf17a8cb922574e7f5796e"
+    },
+    "shal-arena": {
+      "version": "0.4.0+rc.5c7eba6",
+      "sha": "5c7eba61b68373382ac00382fcc615c4cdf8f287",
+      "repo": "determlab/shal",
+      "filename": "shal_arena-0.4.0+rc.5c7eba6-py3-none-any.whl",
+      "sha256": "50e3fcd4d206151758086f915172dfab987fc8fc76499fcdc897ff1edcd179f3"
+    },
+    "pytest-shal": {
+      "version": "0.0.1+rc.a44c9dd",
+      "sha": "a44c9dd01126f1566ec9a9c199f63867957593ab",
+      "repo": "determlab/pytest-shal",
+      "filename": "pytest_shal-0.0.1+rc.a44c9dd-py3-none-any.whl",
+      "sha256": "f3051407a1a9be49d819a0e9452b7061a839f7c5de2c50543abe2dd1451c2c88"
+    },
+    "bricks-engine": {
+      "version": "0.5.0+rc.22035d0",
+      "sha": "22035d029e9782ee4e1f3944871f51aab4a666ba",
+      "repo": "determlab/bricks",
+      "filename": "bricks_engine-0.5.0+rc.22035d0-py3-none-any.whl",
+      "sha256": "3565228f5e2d14c6eb97f923335adece895567aa41ef38d4fb9c4ebafb5e4c49"
+    }
+  },
+  "checks": [
+    {
+      "id": "virtual_bench_pass",
+      "result": "pass",
+      "log": "{\"verdict\": \"pass\", \"cause\": null, \"record\": \"rec-20261006T003701-f516da\", \"unit\": \"bench\", \"sequence\": \"examples/demos/virtual-bench/test_bench.py::test_bench_output_is_3v3\"}"
+    },
+    {
+      "id": "virtual_bench_unplug_dmm",
+      "result": "pass",
+      "log": "{\"verdict\": \"error\", \"cause\": \"transport\", \"record\": \"rec-20261006T003702-1011db\", \"unit\": \"bench\", \"sequence\": \"examples/demos/virtual-bench/test_bench.py::test_bench_output_is_3v3\"}"
+    },
+    {
+      "id": "arena_easy_score_file",
+      "result": "pass",
+      "log": "{\"score_file_exists\": true, \"score\": {\"task_id\": \"easy\", \"seed\": 2, \"fault_type\": \"ok\", \"faults_total\": 1, \"faults_caught\": 0, \"false_fails\": 0, \"error_fail_correct\": 0, \"duration_s\": 0.0, \"turns\": 0, \"gate_stops\": 0, \"schema_version\": 1, \"game_version\": \"0.4.0\", \"record_sha256\": \"f42cb14a55a38a11dbd8660f7c59db719160dd697056b2d4e33fba1b8ca4ffa0\"}}"
+    },
+    {
+      "id": "arena_medium_score_file",
+      "result": "pass",
+      "log": "{\"score_file_exists\": true, \"score\": {\"task_id\": \"medium\", \"seed\": 101, \"fault_type\": \"low_voltage\", \"faults_total\": 1, \"faults_caught\": 0, \"false_fails\": 0, \"error_fail_correct\": 0, \"duration_s\": 0.0, \"turns\": 0, \"gate_stops\": 0, \"schema_version\": 1, \"game_version\": \"0.4.0\", \"record_sha256\": \"a384d6308073ad2a06abdb1ff8c77341daf1c8df82f2c9d26fe07fd4f8899b0a\"}}"
+    },
+    {
+      "id": "arena_hard_score_file",
+      "result": "pass",
+      "log": "{\"score_file_exists\": true, \"score\": {\"task_id\": \"hard\", \"seed\": 7, \"fault_type\": \"high_voltage\", \"faults_total\": 1, \"faults_caught\": 0, \"false_fails\": 0, \"error_fail_correct\": 0, \"duration_s\": 0.0, \"turns\": 0, \"gate_stops\": 0, \"schema_version\": 1, \"game_version\": \"0.4.0\", \"record_sha256\": \"04a5f1dc7beaad96989d6f7d3a82c55825199c585f76365bf7d2d14ed6f5d68f\"}}"
+    },
+    {
+      "id": "arena_bench_destroyed",
+      "result": "pass",
+      "log": "{\"with_shal_destroyed\": 0, \"without_shal_destroyed\": 10}"
+    },
+    {
+      "id": "wheel_installed_bricks-engine",
+      "result": "pass",
+      "log": "version=0.5.0 output='0.5.0\\n'"
+    }
+  ]
+}

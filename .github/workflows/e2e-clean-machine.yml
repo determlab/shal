@@ -1,0 +1,159 @@
+name: E2E clean machine
+
+# D2 (shal#340): the whole buyer story, proven on a machine that has nothing
+# of ours — 3 OSes x 2 Pythons, each a fresh venv that installs ONLY the
+# release-candidate wheels this org would ship (pyshal + shal-arena from THIS
+# commit, pytest-shal and bricks-engine from their own repos' current main).
+#
+# "No index during the story" holds by construction, not by watching a log:
+# every install of the four RC packages below passes `--no-index
+# --find-links rc`, so that call can only ever be satisfied from what is
+# already in `rc/` — it has no path to PyPI at all. Ordinary third-party
+# deps (pyyaml, jsonschema, pytest, pydantic, …) are a separate, earlier
+# install from the normal index: that's venv SETUP, not the story.
+#
+# CTO ruling on #340: cross-repo artifact download with the default
+# GITHUB_TOKEN is attempted first; when it can't read another repo's
+# artifacts (expected — no secret is added to make it able to), this job
+# builds that repo's wheel itself from its current main HEAD instead. Either
+# way the evidence records the exact commit sha that was actually built.
+
+on:
+  schedule:
+    - cron: "23 13 * * *"   # 13:23 UTC daily — off the hour, off midnight
+  workflow_dispatch:
+
+jobs:
+  story:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+        python-version: ["3.10", "3.13"]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+
+      - name: Build this repo's own RC wheels (pyshal, shal-arena)
+        shell: bash
+        run: |
+          set -eu
+          mkdir -p rc
+          pip install build
+          sha7="${GITHUB_SHA:0:7}"
+
+          stamp() {  # $1 = pyproject.toml path
+            sed -i.bak "0,/^version = \"/s/^version = \"\\([^\"]*\\)\"/version = \"\\1+rc.${sha7}\"/" "$1"
+          }
+          stamp pyproject.toml
+          python -m build --wheel --outdir rc .
+          mv pyproject.toml.bak pyproject.toml
+
+          stamp arena/pyproject.toml
+          python -m build --wheel --outdir rc arena
+          mv arena/pyproject.toml.bak arena/pyproject.toml
+
+      - name: Gather pytest-shal and bricks-engine's own RC wheels
+        shell: bash
+        run: |
+          set -eu
+          mkdir -p rc dev/e2e/scratch
+
+          gather() {  # $1 = package name (pyshal naming), $2 = artifact name, $3 = repo, $4 = clone subdir ("" for repo root)
+            if gh run download --repo "determlab/$3" -n "$2" -D "rc-dl-$1" 2>/dev/null \
+                && [ -n "$(ls -A "rc-dl-$1" 2>/dev/null)" ]; then
+              cp "rc-dl-$1"/*.whl rc/
+              # the downloaded rc-manifest.json's own sha, NOT this job's $GITHUB_SHA
+              # (that's shal's commit, not determlab/$3's) — versions.json below reads
+              # every package's sha from one of these files, so this one must exist too.
+              python -c "import json; print(json.load(open('rc-dl-$1/rc-manifest.json'))['sha'])" \
+                > "dev/e2e/scratch/$1.sha"
+              echo "$1: downloaded from determlab/$3's own rc-wheels run"
+              return
+            fi
+            echo "$1: cross-repo artifact download unavailable (expected under the default"
+            echo "  GITHUB_TOKEN, which is scoped to this repo only) — building from"
+            echo "  determlab/$3's current main HEAD instead (CTO ruling on #340)."
+            sha=$(git ls-remote "https://github.com/determlab/$3.git" main | cut -f1)
+            clone_dir="dev/e2e/scratch/$1"
+            git init -q "$clone_dir"
+            git -C "$clone_dir" remote add origin "https://github.com/determlab/$3.git"
+            git -C "$clone_dir" fetch --depth 1 origin "$sha"
+            git -C "$clone_dir" checkout -q FETCH_HEAD
+            sha7="${sha:0:7}"
+            target="$clone_dir${4:+/$4}"
+            sed -i.bak "0,/^version = \"/s/^version = \"\\([^\"]*\\)\"/version = \"\\1+rc.${sha7}\"/" "$target/pyproject.toml"
+            python -m build --wheel --outdir rc "$target"
+            echo "$sha" > "dev/e2e/scratch/$1.sha"
+          }
+          gather pytest-shal rc-pytest-shal pytest-shal ""
+          gather bricks-engine rc-bricks-engine bricks ""
+        env:
+          GH_TOKEN: ${{ github.token }}
+
+      - name: Write versions.json (package, version, sha, repo, filename, sha256 per wheel)
+        shell: bash
+        run: |
+          python - <<'PY'
+          import glob, hashlib, json, os
+
+          def sha_for(pkg, fallback_sha):
+              p = f"dev/e2e/scratch/{pkg}.sha"
+              return open(p).read().strip() if os.path.exists(p) else fallback_sha
+
+          repos = {
+              "pyshal": "determlab/shal", "shal-arena": "determlab/shal",
+              "pytest-shal": "determlab/pytest-shal", "bricks-engine": "determlab/bricks",
+          }
+          dist_prefix = {
+              "pyshal": "pyshal-", "shal-arena": "shal_arena-",
+              "pytest-shal": "pytest_shal-", "bricks-engine": "bricks_engine-",
+          }
+          out = {}
+          for pkg, prefix in dist_prefix.items():
+              wheels = glob.glob(f"rc/{prefix}*.whl")
+              assert len(wheels) == 1, f"expected exactly one {pkg} wheel, found {wheels}"
+              wheel = wheels[0]
+              version = os.path.basename(wheel).split("-")[1]
+              sha256 = hashlib.sha256(open(wheel, "rb").read()).hexdigest()
+              out[pkg] = {"version": version, "sha": sha_for(pkg, "${{ github.sha }}"),
+                         "repo": repos[pkg], "filename": os.path.basename(wheel), "sha256": sha256}
+          with open("versions.json", "w") as f:
+              json.dump(out, f, indent=2)
+          print(json.dumps(out, indent=2))
+          PY
+
+      - name: Clean venv, ordinary deps only (not the story yet)
+        shell: bash
+        run: |
+          set -eu
+          python -m venv story-venv
+          VENV_PY="story-venv/${{ runner.os == 'Windows' && 'Scripts' || 'bin' }}/python"
+          echo "VENV_PY=$VENV_PY" >> "$GITHUB_ENV"
+          "$VENV_PY" -m pip install pyyaml jsonschema pytest pydantic typer tzdata ruamel.yaml
+
+      - name: Install ONLY the release-candidate wheels (--no-index — this is the story)
+        shell: bash
+        run: |
+          set -eu
+          "$VENV_PY" -m pip install --no-index --find-links rc pyshal shal-arena pytest-shal bricks-engine
+
+      - name: Run the story, write evidence.json
+        shell: bash
+        run: |
+          set -eu
+          "$VENV_PY" dev/e2e/story.py \
+            --venv-python "$VENV_PY" \
+            --versions versions.json \
+            --os "${{ matrix.os }}" --python "${{ matrix.python-version }}" \
+            --out "evidence.json"
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: evidence-${{ matrix.os }}-${{ matrix.python-version }}
+          path: evidence.json
+          retention-days: 30
