@@ -411,7 +411,7 @@ function stepRowHtml(e, i) {
     + `<div class="detail">${detail}</div></div>${pill}</div>`;
 }
 
-// issue #427 CTO review round 2: "Two more checks, scripted" is SHAL's own
+// issue #427 CTO review round 2: the scripted-checks section is SHAL's own
 // fixed, always-present text about what the gate and the error/fail split
 // do in general -- it is never built from this run's own timeline, and an
 // agent's own refused call (e.g. a real 30 V attempt it made) is never
@@ -431,14 +431,20 @@ function renderTimeline(payload) {
   lastRenderedCount = entries.length;
 }
 
+// issue #444: the scripted checks did not happen in THIS replayed run
+// (gate_stops: 0) -- the heading and both lines say so explicitly, exact
+// CMO text, so a reader never mistakes them for part of the agent's own
+// replay above.
 function renderScriptedSection(payload) {
   const section = document.getElementById("scripted-section");
   section.innerHTML = '<div class="end-section"><div class="section-label">'
-    + "Two more checks, scripted</div>"
+    + "Not in this run: two checks from the scripted demo</div>"
     + '<p class="plain-line" style="margin-left:0">'
-    + "A scripted step asks for 30 V on purpose. The gate stops it. Nothing was sent.</p>"
+    + "In the scripted demo (<code>shal-arena demo</code>), a step asks for 30 V "
+    + "on purpose. The gate stops it before anything is sent.</p>"
     + '<p class="plain-line" style="margin-left:0">'
-    + "A cable is unplugged. The result is error, not fail: the card is not blamed.</p>"
+    + "In the scripted demo, a cable is unplugged. The result is error, not fail: "
+    + "the card is not blamed.</p>"
     + "</div>";
 }
 
