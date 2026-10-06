@@ -124,10 +124,18 @@ def _tail(text: str, lines: int = 15) -> list[str]:
     return text.rstrip().splitlines()[-lines:]
 
 
-def _missing_imports(shal: str, modules: list[str], env: dict[str, str]) -> list[str]:
-    """Which of `modules` the python next to `shal` (the target venv's own) cannot
-    import — never installs anything, only looks."""
-    python = str(Path(shal).resolve().parent / ("python.exe" if os.name == "nt" else "python"))
+def _missing_imports(modules: list[str], env: dict[str, str]) -> list[str]:
+    """Which of `modules` this environment's own ``python`` (found the same way
+    ``shal`` itself is, via `env["PATH"]`) cannot import — never installs anything,
+    only looks. On a raw install (no `--venv`) the interpreter and the console
+    script needn't share a folder — on Windows, `python.exe` sits at the
+    installation root while `shal.exe` is one level down in `Scripts\\` — so this
+    is resolved on `PATH`, not as a sibling of `shal`'s own path."""
+    if not modules:
+        return []
+    python = shutil.which("python", path=env.get("PATH"))
+    if python is None:
+        return list(modules)
     missing = []
     for mod in modules:
         r = subprocess.run([python, "-c", f"import {mod}"], env=env,
@@ -144,7 +152,7 @@ def run_one(sample: dict, shal: str, scratch: Path, env: dict[str, str]) -> list
     name = sample["name"]
     dest = scratch / "samples" / name
     expect = load_expect(Path(sample["folder"]))
-    missing = _missing_imports(shal, expect["needs_import"], env)
+    missing = _missing_imports(expect["needs_import"], env)
     if missing:
         raise SampleUnavailable(f"needs {', '.join(missing)}, not installed in this venv")
     w = subprocess.run([shal, "docs", "--sample", name, "--to", str(dest)], env=env,
