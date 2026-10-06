@@ -13,6 +13,11 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+### Added
+- **`shal docs --sample virtual-bench --to DIR`** (#384) writes the virtual bench
+  (`bench.yaml`, `test_bench.py`, `run_bench.py`, `README.md`) from inside the
+  wheel. A sample's entry file is now `run.py`, else the one `run_*.py`.
+
 ### Fixed
 - **`fault: unplugged` / `SHAL_SIM_UNPLUG` now work on every sim bus** (#349),
   not only `shal,sim-scpi`: the README's own `sim.yaml` first-success example

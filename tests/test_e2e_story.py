@@ -31,6 +31,14 @@ def _load_story() -> ModuleType:
 story = _load_story()
 
 
+def test_story_gets_the_bench_from_the_installed_package():
+    text = (REPO_ROOT / "dev" / "e2e" / "story.py").read_text(encoding="utf-8")
+    assert "examples/demos/virtual-bench" not in text
+    assert '"examples" / "demos"' not in text
+    assert '"docs", "--sample", "virtual-bench"' in text
+    assert "shal docs --sample virtual-bench" in text
+
+
 def _evidence() -> dict:
     return json.loads(SAMPLE_EVIDENCE.read_text(encoding="utf-8"))
 

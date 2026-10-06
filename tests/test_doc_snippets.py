@@ -174,10 +174,13 @@ def test_released_commands_other_than_whitelisted_are_marked_in_docs() -> None:
 # shal#362/#368: without `RC_WHEELS`, the default mode carries exactly 2 skips —
 # README's "git clone ... && cd shal" dev-install step and its `docs
 # --samples`/`--sample` block (both `MAIN_ONLY_MARK`-tagged, not yet on PyPI).
-# The cap is set to that count on purpose, not padded, so a third skip anywhere
-# fails this test immediately instead of waiting for a later audit to notice.
+# shal#384: a third, README's `docs --sample virtual-bench ... && python ...` block
+# (a `&&` chain, and it needs pytest-shal, which this venv lacks); AGENTS.md carries
+# the same block as its one skip. The cap is set to that count on purpose, not padded,
+# so a fourth skip anywhere fails this test immediately instead of waiting for a later
+# audit to notice.
 
-MAX_DOC_TEST_SKIPS = 2
+MAX_DOC_TEST_SKIPS = 3
 
 
 def _rc_wheels() -> Path | None:

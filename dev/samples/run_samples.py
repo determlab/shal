@@ -6,7 +6,7 @@ longer runs from a fresh install tells them no. So this script runs them all.
 
 **The set is listed, never named.** It asks the installed ``shal`` for the list:
 ``shal docs --samples --json``. That command lists every subfolder of the
-installed ``shal/samples`` holding a ``run.py``, so a new sample is run without
+installed ``shal/samples`` holding a ``run.py`` (or the one ``run_*.py``), so a new sample is run without
 editing this script or CI.
 
 **Run the way a person runs it.** For each sample: ``shal docs --sample <name>
@@ -54,6 +54,9 @@ import tempfile
 from pathlib import Path
 
 EXPECT_FILE = "expect.json"
+# A sample that needs a package the wheel does not carry is skipped where it is absent
+# (its own workflow, virtual-bench.yml, installs it and runs it).
+NEEDS_MODULE = {"virtual-bench": "pytest_shal"}
 _LISTS = ("stdout_has", "stdout_lacks", "stderr_has", "stderr_lacks")
 
 
@@ -181,6 +184,12 @@ def main(argv: list[str] | None = None) -> int:
     failed = []
     for sample in samples:
         print(f"-- {sample['name']}")
+        needs = NEEDS_MODULE.get(sample["name"])
+        if needs and subprocess.run(
+                [str(bindir / "python"), "-c", f"import {needs}"], env=env,
+                capture_output=True).returncode != 0:
+            print(f"skip  {sample['name']}  (needs {needs}, not installed here)")
+            continue
         try:
             wrong = run_one(sample, shal, scratch, env)
         except (BadSample, OSError, subprocess.TimeoutExpired) as e:

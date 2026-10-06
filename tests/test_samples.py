@@ -37,6 +37,11 @@ def _on_disk() -> set[str]:
     return {p.name for p in SAMPLES_DIR.iterdir() if p.is_dir() and (p / "run.py").is_file()}
 
 
+def _listed() -> set[str]:
+    """Every sample on disk: an entry file is run.py, else the one run_*.py (#384)."""
+    return {p.name for p in SAMPLES_DIR.iterdir() if p.is_dir() and cli._sample_entry(p)}
+
+
 def _json(capsys) -> dict:
     return json.loads(capsys.readouterr().out)
 
@@ -47,7 +52,7 @@ def test_samples_lists_hello_one_line_each_and_no_reference(capsys):
     assert cli.main(["docs", "--samples"]) == 0
     out = capsys.readouterr().out
     lines = [ln for ln in out.splitlines() if ln.startswith("  ")]
-    assert {ln.split()[0] for ln in lines} == _on_disk() and "hello" in _on_disk()
+    assert {ln.split()[0] for ln in lines} == _listed() and "hello" in _listed()
     assert not any(f" {ref} " in out for ref in REFERENCES)
     assert "shal docs --sample <name> --to <DIR>" in out
 
@@ -64,7 +69,7 @@ def test_samples_json_is_the_same_list(capsys):
     assert cli.main(["docs", "--samples", "--json"]) == 0
     doc = _json(capsys)
     assert set(doc) == {"ok", "samples"} and doc["ok"] is True
-    assert {s["name"] for s in doc["samples"]} == _on_disk()   # listed from the folder
+    assert {s["name"] for s in doc["samples"]} == _listed()   # listed from the folder
     assert not {s["name"] for s in doc["samples"]} & REFERENCES
     hello = next(s for s in doc["samples"] if s["name"] == "hello")
     assert set(hello) == {"name", "summary", "folder", "files", "print_with", "write_with"}
@@ -467,3 +472,92 @@ def test_jig_next_step_reads_one_unit_back(tmp_path, capsys):
     recs = out["records"] if isinstance(out, dict) else out
     assert len(recs) == 1
     assert recs[0]["unit"] == "U002" and recs[0]["verdict"] in ("pass", "fail")
+
+
+# -- the virtual-bench sample (#384) -----------------------------------------------------
+
+BENCH = SAMPLES_DIR / "virtual-bench"
+BENCH_SRC = _ROOT / "examples" / "demos" / "virtual-bench"
+BENCH_FILES = ["bench.yaml", "README.md", "run_bench.py", "test_bench.py"]
+
+
+def _lf(p: Path) -> bytes:
+    # a Windows checkout with autocrlf has CRLF in both folders; git stores LF
+    return p.read_bytes().replace(b"\r\n", b"\n")
+
+
+def test_virtual_bench_is_listed_entry_file_first(capsys):
+    assert cli.main(["docs", "--samples", "--json"]) == 0
+    bench = next(s for s in _json(capsys)["samples"] if s["name"] == "virtual-bench")
+    assert bench["files"] == ["run_bench.py", "README.md", "bench.yaml", "test_bench.py"]
+    assert bench["summary"].startswith("The virtual bench, one command")
+    assert bench["write_with"] == "shal docs --sample virtual-bench --to <DIR>"
+
+
+def test_virtual_bench_to_writes_exactly_the_four_files(tmp_path, capsys):
+    dest = tmp_path / "bench"
+    assert cli.main(["docs", "--sample", "virtual-bench", "--to", str(dest)]) == 0
+    cap = capsys.readouterr()
+    assert sorted(p.name for p in dest.iterdir()) == sorted(BENCH_FILES)
+    assert cap.out.count("\n") == 1
+    assert cap.out.strip() in (f"python {dest / 'run_bench.py'}",
+                               f'python "{dest / "run_bench.py"}"')
+
+
+def test_virtual_bench_sample_is_a_copy_of_the_example():
+    ours = {p.name for p in BENCH.iterdir()}
+    theirs = {p.name for p in BENCH_SRC.iterdir()} - {".gitignore"}
+    assert ours == set(BENCH_FILES)
+    assert set(BENCH_FILES) <= theirs
+    for name in BENCH_FILES:
+        assert _lf(BENCH / name) == _lf(BENCH_SRC / name), name
+
+
+def test_wrong_sample_name_exits_2_and_names_the_list(capsys):
+    assert cli.main(["docs", "--sample", "virtul-bench"]) == 2
+    err = capsys.readouterr().err
+    assert "no sample named 'virtul-bench'" in err and "shal docs --samples" in err
+
+
+def test_the_wheel_carries_the_virtual_bench_files(tmp_path):
+    pytest.importorskip("build", reason="python -m build is not installed")
+    pytest.importorskip("setuptools", reason="setuptools is not installed")
+    import zipfile
+    r = subprocess.run([sys.executable, "-m", "build", "--wheel", "--no-isolation",
+                        "--outdir", str(tmp_path), str(_ROOT)],
+                       capture_output=True, text=True, timeout=600)
+    assert r.returncode == 0, r.stdout[-2000:] + r.stderr[-2000:]
+    [wheel] = tmp_path.glob("pyshal-*.whl")
+    names = set(zipfile.ZipFile(wheel).namelist())
+    for f in BENCH_FILES:
+        assert f"shal/samples/virtual-bench/{f}" in names, f
+
+
+def test_readme_and_agents_point_at_the_bench_in_their_first_60_lines():
+    for doc in ("README.md", "AGENTS.md"):
+        head = "\n".join((_ROOT / doc).read_text(encoding="utf-8").splitlines()[:60])
+        assert "shal docs --sample virtual-bench --to" in head, doc
+        assert "pip install shal-arena" in head, doc
+
+
+def _bench_env() -> dict:
+    return {**os.environ, "PYTHONUTF8": "1"}
+
+
+def test_agent_path_writes_the_bench_and_runs_it(tmp_path, capsys):
+    pytest.importorskip("pytest_shal", reason="the bench needs pytest-shal")
+    dest = tmp_path / "bench"
+    w = subprocess.run([sys.executable, "-c", "import sys; from shal.cli import main; "
+                        "sys.exit(main(sys.argv[1:]))", "docs", "--sample", "virtual-bench",
+                        "--to", str(dest)],
+                       stdin=subprocess.DEVNULL, capture_output=True, text=True, timeout=120)
+    assert w.returncode == 0, w.stderr
+    run = [sys.executable, str(dest / "run_bench.py")]
+    ok = subprocess.run(run, cwd=dest, env=_bench_env(), input="",
+                        capture_output=True, text=True, encoding="utf-8", timeout=300)
+    assert ok.returncode == 0, ok.stdout + ok.stderr
+    assert json.loads(ok.stdout)["verdict"] == "pass"
+    off = subprocess.run([*run, "--unplug", "dmm"], cwd=dest, env=_bench_env(), input="",
+                         capture_output=True, text=True, encoding="utf-8", timeout=300)
+    assert off.returncode == 4, off.stdout + off.stderr
+    assert json.loads(off.stdout)["cause"] == "transport"

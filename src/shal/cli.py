@@ -959,28 +959,41 @@ def _cmd_docs_example(name: str) -> int:
 _SAMPLE_EXPECT = "expect.json"
 
 
+def _sample_entry(folder) -> str | None:
+    """The entry file name of a sample folder: ``run.py``, else the one ``run_*.py``
+    in it; ``None`` when there is no such file (or more than one ``run_*.py``)."""
+    if (folder / "run.py").is_file():
+        return "run.py"
+    runs = [f.name for f in folder.iterdir()
+            if f.is_file() and f.name.startswith("run_") and f.name.endswith(".py")]
+    return runs[0] if len(runs) == 1 else None
+
+
 def _samples() -> dict[str, object]:
     """The samples: name -> its folder in the installed package. Every subfolder of
-    ``shal/samples`` holding a ``run.py`` is one; found on disk, never imported."""
+    ``shal/samples`` holding an entry file (see ``_sample_entry``) is one; found on
+    disk, never imported."""
     from importlib.resources import files
     root = files("shal") / "samples"
     if not root.is_dir():
         return {}
     return {d.name: d for d in sorted(root.iterdir(), key=lambda d: d.name)
-            if d.is_dir() and (d / "run.py").is_file()}
+            if d.is_dir() and _sample_entry(d) is not None}
 
 
 def _sample_files(sample) -> list:
-    """The files of one sample, ``run.py`` first, then the rest by name."""
+    """The files of one sample, the entry file first, then the rest by name."""
+    entry = _sample_entry(sample)
     picked = [f for f in sample.iterdir() if f.is_file() and f.name != _SAMPLE_EXPECT
               and not f.name.endswith((".pyc", ".pyo"))]
-    return sorted(picked, key=lambda f: (f.name != "run.py", f.name))
+    return sorted(picked, key=lambda f: (f.name != entry, f.name))
 
 
 def _sample_summary(sample) -> str:
-    """The first line of ``run.py``'s module docstring, read as text (no import)."""
+    """The first line of the entry file's module docstring, read as text (no import)."""
     import ast
-    doc = ast.get_docstring(ast.parse((sample / "run.py").read_text(encoding="utf-8")))
+    entry = sample / _sample_entry(sample)
+    doc = ast.get_docstring(ast.parse(entry.read_text(encoding="utf-8")))
     return (doc or "").strip().splitlines()[0] if doc else ""
 
 
@@ -1009,11 +1022,12 @@ def _cmd_docs_sample(name: str, to: str | None) -> int:
     sample = samples.get(name)
     if sample is None:
         print(f"shal docs: no sample named '{name}' "
-              f"(samples: {', '.join(samples) or 'none'})", file=sys.stderr)
+              f"(samples: {', '.join(samples) or 'none'}; list them: "
+              f"shal docs --samples)", file=sys.stderr)
         return 2
     files = _sample_files(sample)
     if to is not None:
-        return _write_sample(name, files, to)
+        return _write_sample(name, files, to, files[0].name)
     print(f"# Sample '{name}' — {_sample_summary(sample)}")
     print(f"# Write it to a folder and run it:  shal docs --sample {name} --to <DIR>")
     for f in files:
@@ -1023,7 +1037,7 @@ def _cmd_docs_sample(name: str, to: str | None) -> int:
     return 0
 
 
-def _write_sample(name: str, files: list, to: str) -> int:
+def _write_sample(name: str, files: list, to: str, entry: str = "run.py") -> int:
     """``--to DIR``: write the sample's files into DIR (made if missing) and print the
     one command that runs it on stdout — nothing else goes there. DIR must be empty:
     a sample never overwrites a file, and never mixes into someone's folder."""
@@ -1041,7 +1055,7 @@ def _write_sample(name: str, files: list, to: str) -> int:
     dest.mkdir(parents=True, exist_ok=True)
     for f in files:
         (dest / f.name).write_bytes(f.read_bytes())
-    run_py = str(dest / "run.py")
+    run_py = str(dest / entry)
     # pastes into bash, PowerShell and cmd when it can (see _shell_token); a path
     # with any other character is quoted as the best a single line can do
     token = _shell_token("./" + run_py if run_py.startswith("-") else run_py)

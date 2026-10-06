@@ -43,6 +43,15 @@ New here? [Start with the guide](docs/GUIDE.md) — from the simulator to a real
 
 </div>
 
+Run the virtual bench (a simulated PSU and DMM; prints a pass verdict):
+
+<!-- doc-test: skip needs pytest-shal and pyshal 0.4.0, neither on PyPI yet; the virtual-bench workflow runs it -->
+```bash
+shal docs --sample virtual-bench --to bench && python bench/run_bench.py  # main only, not in the PyPI release yet
+```
+
+For the arena: `pip install shal-arena`
+
 **Built for:**
 
 ✓ Validation & test engineers who already write Python &nbsp;·&nbsp; ✓ Production test stations &nbsp;·&nbsp;

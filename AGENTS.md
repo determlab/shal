@@ -14,6 +14,17 @@ operation on them into a typed tool you can call from the `shal` CLI, MCP or Pyt
 Each tool carries its side effect: reads run at once; ops that reconfigure or act
 stop for a person.
 
+Run the virtual bench (a simulated PSU and DMM; prints a pass verdict) **(main
+only, not in the PyPI release yet)**; it also needs `pytest-shal`, see the
+`README.md` the command writes:
+
+<!-- doc-test: skip a `&&` chain the runner does not interpret; it needs pytest-shal, which the doc-test venv lacks -->
+```bash
+shal docs --sample virtual-bench --to bench && python bench/run_bench.py  # main only, not in the PyPI release yet
+```
+
+For the arena: `pip install shal-arena`
+
 ## Install
 
 ```bash
