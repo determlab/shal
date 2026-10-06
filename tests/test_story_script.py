@@ -159,10 +159,14 @@ def test_check_virtual_bench_pass_catches_a_disagreeing_verdict():
 
 
 def test_check_virtual_bench_unplug_dmm_catches_a_disagreeing_verdict():
-    assert story.check_virtual_bench_unplug_dmm({"verdict": "error"}) is True
+    assert story.check_virtual_bench_unplug_dmm(
+        {"verdict": "error", "cause": "transport"}) is True
     # if the fault injection ever silently stopped faulting, this must fail,
     # not quietly report the old "pass"
-    assert story.check_virtual_bench_unplug_dmm({"verdict": "pass"}) is False
+    assert story.check_virtual_bench_unplug_dmm({"verdict": "pass", "cause": None}) is False
+    # CTO review on #410: cause must actually be "transport", matching the
+    # shape shal core and the virtual-bench sample already write
+    assert story.check_virtual_bench_unplug_dmm({"verdict": "error", "cause": None}) is False
 
 
 def test_check_psu_30v_blocked_catches_a_request_that_was_not_blocked():

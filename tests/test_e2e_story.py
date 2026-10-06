@@ -107,6 +107,27 @@ def test_virtual_bench_unplug_check_catches_a_verdict_that_is_not_an_error():
     assert result["result"] == "fail"
 
 
+def test_arena_demo_check_passes_when_both_files_exist():
+    # issue #410 Done-when: "the same test runs in the clean-machine
+    # story" -- no committed evidence yet (this check is new), so this is
+    # synthetic input, same as the `_catches_a_...` tests above.
+    doc = {"ok": True, "record_path": "/tmp/x.record.json", "card_path": "/tmp/x.card.html"}
+    result = story.check_arena_demo(doc, story.EXIT_PASS, True, True, _RERUN)
+    assert result["result"] == "pass"
+
+
+def test_arena_demo_check_catches_a_missing_file():
+    doc = {"ok": True, "record_path": "/tmp/x.record.json", "card_path": "/tmp/x.card.html"}
+    result = story.check_arena_demo(doc, story.EXIT_PASS, True, False, _RERUN)
+    assert result["result"] == "fail"
+
+
+def test_arena_demo_check_catches_a_failed_run():
+    doc = {"ok": False, "record_path": "/tmp/x.record.json", "card_path": "/tmp/x.card.html"}
+    result = story.check_arena_demo(doc, story.EXIT_PASS, True, True, _RERUN)
+    assert result["result"] == "fail"
+
+
 def test_wheel_installed_check_agrees_with_the_recorded_evidence():
     recorded = _by_id(_evidence(), "wheel_installed_bricks-engine")
     assert recorded["result"] == "pass"

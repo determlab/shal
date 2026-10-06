@@ -15,18 +15,7 @@ from __future__ import annotations
 import sys
 
 try:
-    from shal_arena.demo import (
-        FIRST_LINE,
-        _BENCH_TOPOLOGY_YAML,
-        _STEPS,
-        check_arena_result_card,
-        check_arena_task,
-        check_bench_10_runs,
-        check_psu_30v_blocked,
-        check_virtual_bench_pass,
-        check_virtual_bench_unplug_dmm,
-        main,
-    )
+    from shal_arena.demo import main
 except ImportError as e:
     fix = ("shal-arena is not on PyPI yet; install it from source -- see "
           "examples/demos/story/README.md#install")

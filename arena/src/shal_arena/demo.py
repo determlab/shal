@@ -31,6 +31,7 @@ import os
 import sys
 import tempfile
 import time
+import traceback
 from importlib import resources as importlib_resources
 from pathlib import Path
 from typing import Any
@@ -91,36 +92,6 @@ class BenchDmm1(Driver):
 registry.register(BenchDmm1, override=True)
 '''
 
-# The same idea as dev/e2e/story.py's own bench policy (shal#340): both sides
-# attempt the same 30 V setpoint on psu0 (the card's 'vin'). SHAL's gate
-# refuses it; the raw side has no gate and destroys the card.
-_BENCH_POLICY_SOURCE = '''\
-from shal_arena.loader import load_task
-from shal_arena.runner import answer, drive_input, pick_fault, raw_scpi, start_run
-
-
-def _fault_answer(run_id, task_path, seed, state_dir):
-    # Answers with the hidden fault itself (pick_fault), not a diagnosis --
-    # this bench step is never about getting the right answer, only about
-    # whether the card survives. Only each side's `destroyed` count (built
-    # from `card.state`, independent of `given`/`correct`) is read below.
-    card = load_task(task_path).card
-    return answer(run_id, pick_fault(card, seed), state_dir=state_dir)
-
-
-def play_with_shal(task_path, seed, state_dir):
-    run_id = start_run(task_path, seed=seed, state_dir=state_dir)["run_id"]
-    drive_input(run_id, "psu0", 30.0, state_dir=state_dir)
-    return run_id, _fault_answer(run_id, task_path, seed, state_dir)
-
-
-def play_without_shal(task_path, seed, state_dir):
-    run_id = start_run(task_path, seed=seed, state_dir=state_dir)["run_id"]
-    raw_scpi(run_id, "psu0", "VOLT 30.0", state_dir=state_dir)
-    return run_id, _fault_answer(run_id, task_path, seed, state_dir)
-'''
-
-
 def _diagnose(rail, reading: float | None, allowed: set[str]) -> str:
     """A guess from the measurement alone: the rail's own documented nominal
     voltage and tolerance (never the hidden fault, which this process never
@@ -177,7 +148,7 @@ def check_virtual_bench_pass(result: dict[str, Any]) -> bool:
 
 
 def check_virtual_bench_unplug_dmm(result: dict[str, Any]) -> bool:
-    return result.get("verdict") == "error"
+    return result.get("verdict") == "error" and result.get("cause") == "transport"
 
 
 def check_psu_30v_blocked(result: dict[str, Any]) -> bool:
@@ -225,7 +196,11 @@ def _run_virtual_bench_unplug_dmm(ctx: dict[str, Any]) -> dict[str, Any]:
             dmm = hal.get_device("dmm")
             dmm.measure_voltage()
         except shal.HopError as e:
-            return {"verdict": "error", "message": str(e)}
+            # CTO review on #410: the same `cause` shal core itself writes
+            # for a HopError step (`src/shal/record.py`) and the
+            # virtual-bench sample's own `run_bench.py --unplug` already
+            # prints -- this step's JSON matches that established shape.
+            return {"verdict": "error", "cause": "transport", "message": str(e)}
         else:
             return {"verdict": "pass"}
         finally:
@@ -298,15 +273,17 @@ def _run_arena_result_card(ctx: dict[str, Any]) -> dict[str, Any]:
 
 
 def _run_bench_10_runs(ctx: dict[str, Any]) -> dict[str, Any]:
-    from .bench import import_policy, run_benchmark
+    # CTO review on #410: the same built-in policy `bench --runs 10` plays
+    # with no `--policy` of its own (issue #397) -- not a second, separate
+    # copy of "drive 30 V on purpose, answer from the reading" that could
+    # drift from it. `_default_dmm_driver_registered()` scopes its driver
+    # the same way the CLI's own `_cmd_bench` does.
+    from .bench import DEFAULT_POLICY, _default_dmm_driver_registered, run_benchmark
 
-    policy_path = ctx["state_dir"] / "story_bench_policy.py"
-    policy_path.write_text(_BENCH_POLICY_SOURCE, encoding="utf-8")
-    policy = import_policy(str(policy_path))
-    with _arena_task_file("rail-3v3") as task_path:
+    with _arena_task_file("rail-3v3") as task_path, _default_dmm_driver_registered():
         result = run_benchmark(str(task_path),
-                               play_with_shal=policy.play_with_shal,
-                               play_without_shal=policy.play_without_shal,
+                               play_with_shal=DEFAULT_POLICY.play_with_shal,
+                               play_without_shal=DEFAULT_POLICY.play_without_shal,
                                runs=10, state_dir=ctx["state_dir"] / "bench")
     return {"with_shal_destroyed": result["with_shal"]["destroyed"],
            "without_shal_destroyed": result["without_shal"]["destroyed"]}
@@ -344,8 +321,8 @@ _STEPS: list[tuple[str, str, Any, Any]] = [
     ("arena_result_card", "Writing the result card for the hard run.",
      _run_arena_result_card, check_arena_result_card),
     ("bench_10_runs",
-     f"{_SCRIPTED_PLAYER_NOTE} Running the rail task ten times, with the gate on "
-     "and with the gate off.",
+     f"{_SCRIPTED_PLAYER_NOTE} Running the rail task ten times, asking for 30 volts "
+     "on purpose each time, with the gate on and with the gate off.",
      _run_bench_10_runs, check_bench_10_runs),
 ]
 
@@ -405,7 +382,17 @@ def run_story(*, pause: float, json_mode: bool) -> int:
             result = run_fn(ctx)
             step_ok = check_fn(result)
         except Exception as e:  # noqa: BLE001 - one step's crash must not stop the story
-            result, step_ok = {"crashed": f"{type(e).__name__}: {e}"}, False
+            # CTO review on #410: a crashed step names a fix too, the same
+            # as any other error this CLI prints (module docstring:
+            # "fix is never empty") -- the exception's own `.fix`
+            # (ArenaError, shal's own errors) when it has one, else a
+            # pointer at the traceback this also prints to stderr.
+            traceback.print_exc()
+            fix = getattr(e, "fix", None) or (
+                "see the traceback on stderr; this is a bug in the story "
+                "itself, not something a retry fixes")
+            result = {"crashed": f"{type(e).__name__}: {e}", "fix": fix}
+            step_ok = False
         overall_ok = overall_ok and step_ok
         if not json_mode:
             print(f"  -> {_plain_outcome(result)}")
