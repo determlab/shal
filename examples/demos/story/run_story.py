@@ -98,6 +98,10 @@ from shal_arena.runner import answer, drive_input, pick_fault, raw_scpi, start_r
 
 
 def _fault_answer(run_id, task_path, seed, state_dir):
+    # Answers with the hidden fault itself (pick_fault), not a diagnosis --
+    # this bench step is never about getting the right answer, only about
+    # whether the card survives. Only each side's `destroyed` count (built
+    # from `card.state`, independent of `given`/`correct`) is read below.
     card = load_task(task_path).card
     return answer(run_id, pick_fault(card, seed), state_dir=state_dir)
 
@@ -415,8 +419,14 @@ def main(argv: list[str] | None = None) -> int:
                         help="print one JSON document on stdout instead of narrating")
     args = parser.parse_args(argv)
 
-    print(FIRST_LINE)
-    sys.stdout.flush()
+    # CTO review on #383: with --json, stdout must be ONE JSON document and
+    # nothing else -- printing this line ahead of it broke `ConvertFrom-Json`
+    # (and any other strict JSON reader). Plain mode still prints it first,
+    # for a person watching (or the GIF); --json carries the same text as
+    # the JSON's own "note" field instead.
+    if not args.json:
+        print(FIRST_LINE)
+        sys.stdout.flush()
 
     try:
         import shal_arena  # noqa: F401
@@ -426,7 +436,7 @@ def main(argv: list[str] | None = None) -> int:
         msg = f"run_story.py: cannot import shal_arena ({e}). {fix}"
         print(msg, file=sys.stderr)
         if args.json:
-            print(json.dumps({"ok": False, "error": {
+            print(json.dumps({"ok": False, "note": FIRST_LINE, "error": {
                 "type": "MissingDependency", "message": msg, "fix": fix}}, indent=2))
         return 3
 
@@ -462,8 +472,8 @@ def main(argv: list[str] | None = None) -> int:
         print(f"Run state (including the result card) is under {state_dir}")
 
     if args.json:
-        print(json.dumps({"ok": overall_ok, "state_dir": str(state_dir), "steps": steps},
-                         indent=2, default=str))
+        print(json.dumps({"ok": overall_ok, "note": FIRST_LINE, "state_dir": str(state_dir),
+                         "steps": steps}, indent=2, default=str))
     return 0 if overall_ok else 1
 
 

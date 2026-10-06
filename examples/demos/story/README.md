@@ -66,9 +66,10 @@ still there to open afterward.
 python run_story.py --pause 0 --json
 ```
 
-prints one JSON document on stdout, right after that same fixed first line:
-`{"ok": <bool>, "state_dir": <path>, "steps": [{"step", "line", "result"}, ...]}`,
-in order.
+prints exactly one JSON document on stdout, nothing else (so `ConvertFrom-Json`
+or any other strict reader can parse it directly):
+`{"ok": <bool>, "note": <the fixed first line>, "state_dir": <path>, "steps":
+[{"step", "line", "result"}, ...]}`, steps in order.
 
 ## What's here
 
