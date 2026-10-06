@@ -39,7 +39,7 @@ from pathlib import Path
 from typing import Any, Protocol
 
 from . import runner as _runner
-from .errors import ArenaError, TooFewRuns
+from .errors import ArenaError, MeasurementFailed, TooFewRuns
 from .loader import once_per_path
 from .store import DEFAULT_STATE_DIR, RunStore
 
@@ -106,7 +106,27 @@ def run_side(task_path: str, play: Play, *, runs: int, seed_base: int,
     results = []
     with _driver_imported_once():
         for i in range(runs):
-            run_id, record = play(str(task_path), seed_base + i, str(state_dir))
+            seed = seed_base + i
+            try:
+                run_id, record = play(str(task_path), seed, str(state_dir))
+            except MeasurementFailed as e:
+                # issue #395: a naive policy that doesn't wrap its own
+                # take_measurement call crashed the WHOLE benchmark on the
+                # `open` fault (unreachable by construction, so a correctly-
+                # written policy hits this on every seed that realizes it).
+                # `play` is opaque -- if it raises after its own start_run but
+                # before returning, the run_id it saw is not ours to recover,
+                # so this is the one result shape without one. Not counted
+                # as `disqualified`: that label means "no measure attempt was
+                # logged", and one WAS (runner.take_measurement/raw_scpi both
+                # write the neutral `measure` marker before the read that
+                # then failed) -- this run measured and failed, which is its
+                # own, separate count.
+                results.append({"run_id": None, "seed": seed, "turns": 0,
+                                "correct": False, "disqualified": False,
+                                "destroyed": False, "sim_log": None,
+                                "measurement_failed": True, "error": str(e)})
+                continue
             state = store.load(run_id)
             # a destroyed card is a failed run on its own terms (Scope: "30 V on
             # a 5 V card destroys it and the task fails"), whatever `given`
@@ -114,19 +134,20 @@ def run_side(task_path: str, play: Play, *, runs: int, seed_base: int,
             # because the answer also named the right fault hid the damage.
             destroyed = state.card_destroyed
             correct = bool(record.get("correct")) and not destroyed
-            results.append({"run_id": run_id, "seed": seed_base + i, "turns": state.turns,
+            results.append({"run_id": run_id, "seed": seed, "turns": state.turns,
                             "correct": correct, "disqualified": bool(record.get("disqualified")),
-                            "destroyed": destroyed,
-                            "sim_log": str(store.sim_log_path(run_id))})
+                            "destroyed": destroyed, "sim_log": str(store.sim_log_path(run_id)),
+                            "measurement_failed": False})
     return results
 
 
 def summarize(results: list[dict[str, Any]]) -> dict[str, Any]:
     """Median and range of turns across ``results`` — the metric the CTO's
     turn-counting ruling makes comparable between the two sides at all —
-    plus how many runs were disqualified or destroyed the card (CTO review
-    on #328: a side's score is not just its turns and correctness) and the
-    sim log path for every run, so anyone can check what each run sent."""
+    plus how many runs were disqualified, destroyed the card, or raised
+    `MeasurementFailed` straight through the policy (issue #395 -- counted
+    separately from `disqualified`, see `run_side`) and the sim log path
+    for every run, so anyone can check what each run sent."""
     turns = [r["turns"] for r in results]
     return {
         "runs": len(results),
@@ -135,6 +156,7 @@ def summarize(results: list[dict[str, Any]]) -> dict[str, Any]:
         "correct": sum(1 for r in results if r["correct"]),
         "disqualified": sum(1 for r in results if r["disqualified"]),
         "destroyed": sum(1 for r in results if r["destroyed"]),
+        "measurement_failures": sum(1 for r in results if r.get("measurement_failed")),
         "sim_logs": [r["sim_log"] for r in results],
     }
 
