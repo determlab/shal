@@ -32,6 +32,8 @@ on:
       - "tests/test_e2e_story.py"
       - "tests/data/e2e/**"
       - "examples/demos/virtual-bench/**"
+      - "src/shal/samples/virtual-bench/**"
+      - "src/shal/cli.py"
       - "arena/**"
       - "pyproject.toml"
 
