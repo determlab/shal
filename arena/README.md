@@ -49,11 +49,19 @@ error from any command is `{"ok": false, "error": {"type", "message",
 "fix"}}` on stdout, `fix` never empty, matching `shal`'s own `--json` error
 shape (`AGENTS.md`).
 
+**Tasks** — list the packaged tasks (`easy`, `medium`, `hard`, `rail-3v3`);
+each `name` is what `run` takes, with no checkout needed (a path to your own
+task.yaml works too). An unknown name errors with the valid names:
+
+```bash
+shal-arena tasks --json
+```
+
 **Card** — start a run and read its card (the task, the question, and each
 instrument's datasheet):
 
 ```bash
-shal-arena run src/shal_arena/tasks/rail-3v3.yaml --seed 1 --json
+shal-arena run rail-3v3 --seed 1 --json
 ```
 
 ```
@@ -216,8 +224,8 @@ shal-arena answer <run-id> ok --json
   "ok": true,
   "side_effect": "write",
   "run_id": "run-20261005T202840Z-38a82937",
-  "task_path": "src/shal_arena/tasks/rail-3v3.yaml",
-  "card_path": "/path/to/arena/src/shal_arena/cards/buck-5v-3v3.yaml",
+  "task_path": "/path/to/shal_arena/tasks/rail-3v3.yaml",
+  "card_path": "/path/to/shal_arena/cards/buck-5v-3v3.yaml",
   "given": "ok",
   "fault_id": "low_voltage",
   "correct": false,
@@ -393,7 +401,7 @@ shal-arena bench --runs 10 --json
 
 Issue #397 gives `bench` a built-in default policy, so the command above
 works with no file of your own and no task argument — it plays the
-built-in sample task (`tasks/rail-3v3.yaml`) with a policy of its own that
+built-in sample task (`rail-3v3`) with a policy of its own that
 drives the PSU's own max setpoint (30 V) on purpose, takes one reading,
 and answers from that reading (not a hardcoded guess). That voltage is
 past the card's documented abs max, so this also shows what the two sides
@@ -406,7 +414,7 @@ works, with a real, non-trivial result.
 Pass `--policy` to play your own task, or your own agent, instead:
 
 ```
-shal-arena bench src/shal_arena/tasks/rail-3v3.yaml --runs 10 --policy ./policy.py --json
+shal-arena bench rail-3v3 --runs 10 --policy ./policy.py --json
 #  -> {"with_shal": {"median_turns": ..., "turns_range": [...], "sim_logs": [...]}, "without_shal": {...}}
 ```
 
