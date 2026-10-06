@@ -85,9 +85,13 @@ jobs:
           # needs the `build` frontend to do it.
           pip install build
       - name: Lint
-        run: ruff check arena/src arena/tests
+        run: ruff check arena/src arena/tests arena/examples
       - name: Test
         run: python -m pytest arena/tests -q
+      - name: README "Write your driver" psu and dmm examples run (#396)
+        # already part of the run above; named here so a failure reads as the
+        # README's own walkthrough breaking, not a generic arena test
+        run: python -m pytest arena/tests/test_readme_examples.py -q
 
   packaging:
     # Checks the *built wheel's* metadata, not the source that declares it

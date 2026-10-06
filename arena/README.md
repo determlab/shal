@@ -218,6 +218,56 @@ Pass `--out <path>` to also write that YAML to a file. `setup-yaml` and the
 page it backs take any of the packaged case names (`shal-arena setup-yaml
 --help`, or see `src/shal_arena/cases.py`'s `CASES`).
 
+## Write your driver
+
+Read only this section; no source reading needed. Every command is run from
+`arena/` and is exercised in CI by `tests/test_readme_examples.py`.
+
+1. **Start a run** and read each instrument's `case` and `datasheet` from the
+   card (see "Card" above). One `driver.py` per instrument.
+
+   ```bash
+   shal-arena run src/shal_arena/tasks/rail-3v3.yaml --seed 1 --json
+   ```
+
+2. **Create `driver.py`** by copying the example for the instrument's case:
+   [`examples/psu/driver.py`](examples/psu/driver.py) for `scpi-psu`,
+   [`examples/dmm/driver.py`](examples/dmm/driver.py) for `dmm`.
+3. **Declare** in it:
+   - `compatible`: the case's fixed string, `arena,bench-psu1` for `scpi-psu`
+     and `arena,bench-dmm1` for `dmm`. Do not change it.
+   - `kind = MessageTransport` and `llm_ready = True`.
+   - one `@op(...)` method per action, with `side_effect` set: `"none"` for a
+     read, `"actuator"` for something that acts. `measure` and `bench` call the
+     one op with `side_effect="none"` and no params, so give the instrument
+     exactly that read op (the examples name it `measure_voltage`).
+   - each op sends the SCPI string from the datasheet through
+     `self.bus.exchange(self.addr, {"scpi": "...", "query": True})`
+     (`"query": True` only for a command that replies).
+   - `registry.register(YourClass)` on the last line. No `override=True`.
+4. **Check it** against the run (`ok: true` and `passed: true` mean it is good;
+   `problems` says what to fix):
+
+   ```bash
+   shal-arena check-driver <run-id> psu0 examples/psu/driver.py --json
+   shal-arena check-driver <run-id> dmm0 examples/dmm/driver.py --json
+   ```
+
+5. **Take a reading** through the driver (needed before `answer`):
+
+   ```bash
+   shal-arena measure <run-id> dmm0 examples/dmm/driver.py --json
+   ```
+
+6. **Run bench on it.** `bench` needs a `--policy` file that calls your
+   drivers; [`examples/policy.py`](examples/policy.py) does that for the two
+   examples (same task, with and without SHAL, 10 runs per side). Point its
+   `PSU_DRIVER`/`DMM_DRIVER` at your own files to bench them:
+
+   ```bash
+   shal-arena bench src/shal_arena/tasks/rail-3v3.yaml --runs 10 --policy examples/policy.py --json
+   ```
+
 ## Task and card format (v1)
 
 Ruled by the CTO on issue #310: two data-only YAML files, no expressions, no
