@@ -30,6 +30,7 @@ from __future__ import annotations
 
 import json
 import logging
+import math
 import time
 from collections.abc import Iterator
 from contextlib import contextmanager
@@ -105,6 +106,32 @@ class SimLog:
         self.path.parent.mkdir(parents=True, exist_ok=True)
         entry = {"ts": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
                  "address": address, "kind": "measure"}
+        with self.path.open("a", encoding="utf-8") as f:
+            f.write(json.dumps(entry) + "\n")
+
+    def mark_reading(self, address: str, value: float, unit: str | None) -> None:
+        """issue #406 follow-up (the demo page): the actual number a
+        successful read returned, logged AFTER `mark_measured`'s neutral
+        marker and only on success -- never written for a failed read
+        (`take_measurement`'s own docstring: a failure is "never written to
+        the sim log ... beyond that one neutral marker"), so this entry's
+        mere presence already tells a reader the read succeeded, without
+        needing to say anything about why one might be missing.
+
+        CTO review on #427: `value` is coerced to `float` here, not trusted
+        from the caller -- a driver an agent wrote returns whatever its own
+        code computes, and this is the one place that decides what counts
+        as "a reading" at all. Anything that is not a bare, finite number
+        (e.g. an HTML string smuggled in to run in the page later, or a
+        `nan`/`inf` that would write invalid JSON `NaN`/`Infinity` and
+        break `JSON.parse` on every later read of this file) raises
+        instead of being logged."""
+        v = float(value)
+        if not math.isfinite(v):
+            raise ValueError(f"reading {v!r} for {address!r} is not finite")
+        self.path.parent.mkdir(parents=True, exist_ok=True)
+        entry = {"ts": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+                 "address": address, "kind": "reading", "value": v, "unit": unit}
         with self.path.open("a", encoding="utf-8") as f:
             f.write(json.dumps(entry) + "\n")
 

@@ -15,6 +15,7 @@ payload, played back as an animation instead of live-polled.
 """
 from __future__ import annotations
 
+import html
 import json
 from typing import Any
 
@@ -83,7 +84,7 @@ header .sub { font-size: 13px; color: var(--dim); margin-top: 2px; }
 .bench .wire.flash { stroke: var(--stop); }
 .bench .rail-line { stroke: var(--dim); stroke-width: 2; }
 .bench .probe-dot { fill: var(--dim); }
-.bench .refused-label { fill: var(--gate); font-size: 15px; font-weight: 700; }
+.bench .refused-dot { fill: var(--gate); }
 .bench .box { fill: #1F242C; stroke: var(--line); stroke-width: 1.5; }
 .bench .card-box.ok { stroke: var(--ok); }
 .bench .card-box.protection { stroke: var(--gate); }
@@ -134,7 +135,11 @@ _BENCH_SVG = """
   <text x="38" y="83" text-anchor="middle" class="mono-label" id="psu-value">&#8212;</text>
 
   <path class="wire" id="wire-psu-card" d="M70 79 H118"/>
-  <text x="94" y="68" text-anchor="middle" class="refused-label" id="refused-label"></text>
+  <!-- #427: a dot, not text -- "refused" as a word did not clear the 48-unit
+       gap between the PSU and card boxes at any font that still reads as
+       body text. The timeline's own "refused" pill already carries the
+       word; this is just a persistent, silent reminder on the wire. -->
+  <circle cx="94" cy="79" r="4" class="refused-dot" id="refused-dot" style="display:none"/>
 
   <rect class="box card-box ok" id="card-box" x="118" y="32" width="144" height="92" rx="10"/>
   <text x="190" y="24" text-anchor="middle">Card</text>
@@ -153,6 +158,24 @@ _BENCH_SVG = """
   <rect class="box" x="300" y="58" width="74" height="42" rx="8"/>
   <text x="337" y="50" text-anchor="middle">DMM</text>
   <text x="337" y="83" text-anchor="middle" class="mono-label" id="dmm-value">&#8212;</text>
+
+  <!-- issue #427 CTO review: the relay-rail task's own relay0/temp0 -- a
+       second row, hidden (and the viewBox left at its 2-instrument size)
+       unless the run actually has 4 instruments, so a 2-instrument run's
+       layout is unchanged. -->
+  <g id="extra-instruments" style="display:none">
+    <rect class="box" x="6" y="128" width="64" height="36" rx="8"/>
+    <text x="38" y="122" text-anchor="middle">RELAY</text>
+    <text x="38" y="151" text-anchor="middle" class="mono-label" id="relay-value">&#8212;</text>
+    <!-- #427 CTO review round 2: the wire must reach the card box itself
+         (its bottom-left corner, 118,124), not end in empty space below it. -->
+    <path class="wire" d="M70 146 H118 V124"/>
+
+    <rect class="box" x="300" y="128" width="74" height="36" rx="8"/>
+    <text x="337" y="122" text-anchor="middle">TEMP</text>
+    <text x="337" y="151" text-anchor="middle" class="mono-label" id="temp-value">&#8212;</text>
+    <path class="wire" d="M262 124 V146 H300"/>
+  </g>
 </svg>
 """
 
@@ -165,33 +188,70 @@ function escapeHtml(s) {
 
 const KIND_LABEL = {
   check: "Checked driver", measure: "Measured", query: "Read", write: "Wrote",
-  refused: "Tried to set", protection: "Set", damage: "Set",
+  refused: "Tried to set", protection: "Set", damage: "Set", reading: "Measured",
 };
+
+// issue #427 CTO review round 2: 2 decimal places, with the unit symbol,
+// everywhere a number is shown -- bench boxes, timeline rows and the
+// closing sentence alike (fixes "90.00114442664224°C" running off its
+// box, and "3.3 volt" touching the box edge).
+function fmtNum(value, unit) {
+  const n = Number(value);
+  if (!Number.isFinite(n)) return String(value);
+  if (unit === "celsius") return `${n.toFixed(2)} °C`;
+  return `${n.toFixed(2)} V`;
+}
 
 function stepTitle(e) {
   const addr = e.address || "";
   if (e.kind === "check") return `Checked driver on ${addr}`;
-  if (e.kind === "measure") return `Measured ${addr}`;
+  if (e.kind === "reading" || e.kind === "measure") return `Measured ${addr}`;
   if (e.kind === "query") return `Read ${addr}`;
   if (e.kind === "write") return `Wrote ${addr}`;
+  if (e.kind === "call") {
+    const op = e.detail && e.detail.op, args = (e.detail && e.detail.args) || [];
+    if (op === "set_relay") return `Switched ${addr} ${args[1] === "true" ? "on" : "off"}`;
+    if (op === "read_relay") return `Read ${addr}`;
+    return `Called ${op} on ${addr}`;
+  }
   if (e.kind === "refused") {
     const v = e.detail && e.detail.volts;
-    return `Tried to set ${addr} to ${v} V`;   // never "Drove" -- nothing was sent
+    return `Tried to set ${addr} to ${fmtNum(v)}`;   // never "Drove" -- nothing was sent
   }
   if (e.kind === "protection" || e.kind === "damage") {
     const v = e.detail && e.detail.volts;
-    return v === undefined ? `Protection tripped on ${addr}` : `Set ${addr} to ${v} V`;
+    return v === undefined ? `Protection tripped on ${addr}` : `Set ${addr} to ${fmtNum(v)}`;
   }
   return KIND_LABEL[e.kind] || e.kind;
 }
 
 function stepDetail(e) {
   if (e.kind === "check") return e.detail.passed ? "passed" : "failed";
+  if (e.kind === "call") return e.detail.ok ? "ok" : "failed";
   if (e.kind === "refused") return "nothing was sent — this would damage the card";
   if (e.kind === "protection") return "protection tripped";
   if (e.kind === "damage") return "card destroyed";
+  if (e.kind === "reading") return fmtNum(e.detail.value, e.detail.unit);
   if (e.kind === "measure") return "attempted";
   return "";
+}
+
+// a bare "measure" marker paired with a later "reading" at the same
+// address is one real step, told by the reading's own row -- not two.
+function hasPairedReading(entries, i) {
+  // "measure" (the neutral marker) and "query" (the raw bus exchange) are
+  // both the SAME real read a "reading" entry already names with its
+  // actual value -- one row, not three.
+  const e = entries[i];
+  if (e.kind !== "measure" && e.kind !== "query") return false;
+  return entries.some(o => o.kind === "reading" && o.address === e.address);
+}
+
+function latestReading(entries, address) {
+  for (let i = entries.length - 1; i >= 0; i--) {
+    if (entries[i].kind === "reading" && entries[i].address === address) return entries[i];
+  }
+  return null;
 }
 
 function renderBadge(payload) {
@@ -221,16 +281,45 @@ function renderVerdict(payload) {
   const destroyed = payload.card.destroyed;
   const disqualified = !!rec.disqualified;
   const correct = !!rec.correct && !destroyed && !disqualified;
-  let icon = "✓", word = "Correct", cls = "", reason;
+  // issue #427 CTO review round 2: this bar and the Result box at the
+  // bottom were saying the same thing twice -- keep this one small (the
+  // verdict word and, only when there is no answer sentence to say why,
+  // one short reason); the full detail lives in Result alone.
+  let icon = "✓", word = "Correct", cls = "", reason = "";
   if (destroyed) { icon = "✕"; word = "Wrong"; cls = "bad"; reason = "card destroyed"; }
   else if (disqualified) { icon = "✕"; word = "Disqualified"; cls = "bad";
     reason = "no measurement was logged"; }
-  else if (!correct) { icon = "✕"; word = "Wrong"; cls = "bad";
-    reason = `answered <b>${escapeHtml(rec.given || "")}</b>`; }
-  else { reason = `answered <b>${escapeHtml(rec.given || "")}</b>`; }
+  else if (!correct) { icon = "✕"; word = "Wrong"; cls = "bad"; }
   el.className = "verdict-bar" + (cls ? " " + cls : "");
   el.innerHTML = `<div class="icon">${icon}</div><div class="text">${word}`
-    + `<span class="reason">${reason}</span></div>`;
+    + (reason ? `<span class="reason">${reason}</span>` : "") + "</div>";
+}
+
+// issue #406 body: "<level> level, N instruments, datasheet written by us"
+// -- plain text, always visible; the 4-instrument bench caption is the one
+// case with its own wording (CTO 2026-10-07), else the two-instrument one,
+// else a "coming" placeholder for anything else.
+function renderPlainLine(payload) {
+  const n = payload.instruments.length;
+  document.getElementById("plain-line").textContent =
+    `${payload.level} level, ${n} instrument${n === 1 ? "" : "s"}, datasheet written by us`;
+  const label = document.getElementById("bench-label");
+  if (n === 4) {
+    label.textContent = "The bench: power supply, multimeter, relay and temperature "
+      + "sensor, around one card. Four instruments, three protocols.";
+  } else if (n === 2) {
+    label.textContent = "The bench: power supply, multimeter, card.";
+  } else {
+    label.textContent = "A four-instrument run is on its way.";
+  }
+  // issue #427 CTO review round 2: caption 4 ("It powers the card and
+  // measures the 3.3 V rail.") is the 2-instrument run's own text -- a
+  // 4-instrument run says what IT checks instead.
+  const caption4 = document.getElementById("bench-caption");
+  caption4.textContent = n === 4
+    ? "It powers the card through the relay, measures the 3V3 rail and the "
+      + "regulator temperature."
+    : "It powers the card and measures the 3.3 V rail.";
 }
 
 function renderBench(payload) {
@@ -238,14 +327,22 @@ function renderBench(payload) {
   const probe = payload.instruments.find(i => i.probe);
   const psuVal = drives ? payload.card.applied[drives.drives.replace("card.", "")] : null;
   document.getElementById("psu-value").textContent =
-    psuVal === undefined || psuVal === null ? "—" : `${psuVal} V`;
+    psuVal === undefined || psuVal === null ? "—" : fmtNum(psuVal);
 
-  const measured = payload.timeline.some(e =>
+  const reading = probe ? latestReading(payload.timeline, probe.address) : null;
+  const attempted = payload.timeline.some(e =>
     probe && e.address === probe.address && (e.kind === "measure" || e.kind === "query"));
-  document.getElementById("dmm-value").textContent = measured ? "measured" : "—";
-  document.getElementById("rail-label").textContent =
-    probe ? probe.probe.replace("card.", "") : "rail";
-  document.getElementById("rail-value").textContent = measured ? "measured" : "—";
+  const valueText = reading ? fmtNum(reading.detail.value, reading.detail.unit)
+    : (attempted ? "measured" : "—");
+  document.getElementById("dmm-value").textContent = valueText;
+  // issue #427 CTO review round 2: the rail's own human label ("3V3
+  // rail"), not the bare test-point name ("tp_3v3") a driver addresses it
+  // by.
+  const probeTestPoint = probe ? probe.probe.replace("card.", "") : null;
+  const rail = probeTestPoint
+    ? (payload.rails || []).find(r => r.test_point === probeTestPoint) : null;
+  document.getElementById("rail-label").textContent = rail ? `${rail.name} rail` : "rail";
+  document.getElementById("rail-value").textContent = valueText;
 
   const cardBox = document.getElementById("card-box");
   const health = document.getElementById("card-health");
@@ -262,7 +359,24 @@ function renderBench(payload) {
   // #406 CTO review: "refused" stays as a small amber label once the flash
   // has settled -- the wire itself is grey, never permanently red.
   const sawRefused = payload.timeline.some(e => e.kind === "refused");
-  document.getElementById("refused-label").textContent = sawRefused ? "refused" : "";
+  document.getElementById("refused-dot").style.display = sawRefused ? "" : "none";
+
+  // issue #427 CTO review: the relay-rail task's second row (relay0,
+  // temp0) -- shown only for an actual 4-instrument run, so a
+  // 2-instrument run's bench is pixel-identical to before.
+  const extra = document.getElementById("extra-instruments");
+  const svg = document.querySelector(".bench svg");
+  const n = payload.instruments.length;
+  extra.style.display = n === 4 ? "" : "none";
+  if (svg) svg.setAttribute("viewBox", n === 4 ? "0 0 380 210" : "0 0 380 170");
+  if (n === 4) {
+    document.getElementById("relay-value").textContent =
+      payload.card.power_on === false ? "off" : "on";
+    const temp = payload.instruments.find(i => i.address.startsWith("temp"));
+    const tReading = temp ? latestReading(payload.timeline, temp.address) : null;
+    document.getElementById("temp-value").textContent = tReading
+      ? fmtNum(tReading.detail.value, "celsius") : "—";
+  }
 }
 
 function flash(el) {
@@ -272,33 +386,54 @@ function flash(el) {
 
 let lastRenderedCount = 0;
 
+function stepRowHtml(e, i) {
+  const n = i + 1;
+  const title = escapeHtml(stepTitle(e));
+  const detail = escapeHtml(stepDetail(e));
+  const pill = e.kind === "refused" ? '<div class="pill refused">refused</div>'
+    : (e.kind === "protection" || e.kind === "damage")
+      ? '<div class="pill sent">sent</div>' : "";
+  return `<div class="step" data-i="${i}">`
+    + `<div class="n">${n}</div><div class="body"><div class="what">${title}</div>`
+    + `<div class="detail">${detail}</div></div>${pill}</div>`;
+}
+
+// issue #427 CTO review round 2: "Two more checks, scripted" is SHAL's own
+// fixed, always-present text about what the gate and the error/fail split
+// do in general -- it is never built from this run's own timeline, and an
+// agent's own refused call (e.g. a real 30 V attempt it made) is never
+// moved out of its own timeline into this section or relabeled as one of
+// these two. Everything the agent actually did stays in the timeline, in
+// its own order, in full.
 function renderTimeline(payload) {
   const list = document.getElementById("timeline-list");
   const entries = payload.timeline;
-  list.innerHTML = entries.map((e, i) => {
-    const n = i + 1;
-    const title = escapeHtml(stepTitle(e));
-    const detail = escapeHtml(stepDetail(e));
-    const isStop = e.kind === "refused";
-    const pill = e.kind === "refused" ? '<div class="pill refused">refused</div>'
-      : (e.kind === "protection" || e.kind === "damage")
-        ? '<div class="pill sent">sent</div>' : "";
-    return `<div class="step${isStop ? " step-stop" : ""}" data-i="${i}">`
-      + `<div class="n">${n}</div><div class="body"><div class="what">${title}</div>`
-      + `<div class="detail">${detail}</div></div>${pill}</div>`;
-  }).join("");
+  const agentSteps = entries.filter((e, i) => !hasPairedReading(entries, i));
+  list.innerHTML = agentSteps.map((e, i) => stepRowHtml(e, i)).join("");
 
   if (entries.length > lastRenderedCount) {
     const newest = entries[entries.length - 1];
-    if (newest.kind === "refused") {
-      const row = list.querySelector(`[data-i="${entries.length - 1}"]`);
-      if (row) flash(row);
-      flash(document.getElementById("wire-psu-card"));
-    }
+    if (newest.kind === "refused") flash(document.getElementById("wire-psu-card"));
   }
   lastRenderedCount = entries.length;
 }
 
+function renderScriptedSection(payload) {
+  const section = document.getElementById("scripted-section");
+  section.innerHTML = '<div class="end-section"><div class="section-label">'
+    + "Two more checks, scripted</div>"
+    + '<p class="plain-line" style="margin-left:0">'
+    + "A scripted step asks for 30 V on purpose. The gate stops it. Nothing was sent.</p>"
+    + '<p class="plain-line" style="margin-left:0">'
+    + "A cable is unplugged. The result is error, not fail: the card is not blamed.</p>"
+    + "</div>";
+}
+
+// issue #427 CTO review: the sentence itself is built server side (the
+// data module's own `_answer_sentence`), from this run's own reading and
+// the rail/temp spec plus `record.correct` -- never re-derived here. Set with
+// `textContent`, never `innerHTML`, so a reading value can never be
+// interpreted as markup, no matter what a driver's own code returns.
 function renderResult(payload) {
   const section = document.getElementById("result-section");
   if (!payload.closed || !payload.record) { section.innerHTML = ""; return; }
@@ -308,11 +443,55 @@ function renderResult(payload) {
   const bad = destroyed || rec.disqualified || !rec.correct;
   const word = destroyed ? "Wrong" : rec.disqualified ? "Disqualified"
     : rec.correct ? "Correct" : "Wrong";
+  // issue #406 body, caption 7 -- fixed CMO text, always above the result.
   section.innerHTML = '<div class="section-label">Result</div>'
+    + '<p class="plain-line">The answer: which measurement failed, against which limit.</p>'
     + `<div class="result${bad ? " bad" : ""}"><div class="verdict">${word}</div>`
     + `<div class="row">answered <b>${escapeHtml(rec.given || "")}</b> `
     + `&middot; ${score.turns !== undefined ? score.turns : payload.turns} turns `
-    + `&middot; ${rec.disqualified ? "disqualified" : "not disqualified"}</div></div>`;
+    + `&middot; ${rec.disqualified ? "disqualified" : "not disqualified"}</div>`
+    + '<div class="row" id="answer-sentence"></div></div>';
+  const sentenceEl = document.getElementById("answer-sentence");
+  if (sentenceEl) sentenceEl.textContent = payload.answer_sentence || "";
+}
+
+// issue #406 follow-up: "Drivers written by the agent" -- folded, one line
+// above each: "The driver the agent wrote for the <name>, <n> lines".
+// Built with textContent, never innerHTML, so the code itself (arbitrary
+// text) can never be interpreted as markup. Captions 1 and 2 (fixed CMO
+// text) sit above the fold: the agent reads the datasheet, then writes and
+// checks the driver -- this step always happened, so the two captions show
+// with or without --driver (issue #427 CTO review round 2); only the
+// folded code blocks below them are conditional on `drivers` being given.
+function renderDriverCode(payload) {
+  const section = document.getElementById("driver-code-section");
+  const drivers = payload.drivers || {};
+  const names = Object.keys(drivers);
+  section.innerHTML = "";
+  const label = document.createElement("div");
+  label.className = "section-label";
+  label.textContent = "Drivers written by the agent";
+  section.appendChild(label);
+  const caption1 = document.createElement("p");
+  caption1.className = "plain-line";
+  caption1.textContent = "The agent reads each instrument's datasheet.";
+  section.appendChild(caption1);
+  const caption2 = document.createElement("p");
+  caption2.className = "plain-line";
+  caption2.textContent = "It writes a driver for each one and checks it.";
+  section.appendChild(caption2);
+  for (const name of names) {
+    const d = drivers[name];
+    const details = document.createElement("details");
+    details.className = "driver-code";
+    const summary = document.createElement("summary");
+    summary.textContent = `The driver the agent wrote for the ${name}, ${d.lines} lines`;
+    const pre = document.createElement("pre");
+    pre.textContent = d.code;
+    details.appendChild(summary);
+    details.appendChild(pre);
+    section.appendChild(details);
+  }
 }
 
 function render(payload) {
@@ -322,8 +501,11 @@ function render(payload) {
   document.getElementById("run-id").textContent = payload.run_id;
   renderBadge(payload);
   renderVerdict(payload);
+  renderPlainLine(payload);
   renderBench(payload);
   renderTimeline(payload);
+  renderDriverCode(payload);
+  renderScriptedSection(payload);
   renderResult(payload);
 }
 
@@ -348,30 +530,73 @@ function start(runId, initial) {
 """
 
 
-def _shell(run_id: str) -> str:
+#: issue #406 body (CMO text, source ops/projects/shal/game-proposal.md
+#: s15) -- the problem this page solves, verbatim, above the bench, on
+#: both the live page and the export. Never the fault, never a number from
+#: a benchmark run.
+PROBLEM_LINES = (
+    "A good unit fails on the line. The line stops. Two hours later it "
+    "turns out to be a cable.",
+    "An agent driving real instruments can destroy a card with one wrong "
+    "command, like 30 V on a 5 V rail.",
+    "SHAL tells a cable fault (error) from a bad unit (fail), and stops a "
+    "dangerous command before it is sent.",
+)
+
+
+def _banner_html(extra: str) -> str:
+    return f'<div class="export-label">{extra}</div>' if extra else ""
+
+
+def _shell(run_id: str, *, banner: str = "") -> str:
     """The static document both the live page and the export embed their
     data into -- same markup, same ids, so `render`/`renderBench`/etc. work
-    unchanged in both."""
+    unchanged in both. `banner` is the export's own replay label (empty on
+    the live page, which has no equivalent static line -- `renderBadge`
+    covers it)."""
+    problem_html = "".join(f"<p>{html.escape(line)}</p>" for line in PROBLEM_LINES)
     return f"""<!doctype html>
 <html lang="en">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>shal-arena &middot; Watch</title>
-<style>{_STYLE}</style>
+<style>{_STYLE}
+.export-label {{ background: var(--panel); color: var(--text); font-size: 13px;
+  font-weight: 700; text-align: center; padding: 10px 16px; border-bottom: 1px solid var(--line); }}
+.problem {{ margin: 0 16px 14px; padding: 12px 14px; border-radius: 12px;
+  background: var(--panel); border: 1px solid var(--line); }}
+.problem p {{ margin: 0 0 6px; font-size: 14px; }}
+.problem p:last-child {{ margin-bottom: 0; }}
+.end-section {{ margin: 20px 16px 0; padding-top: 14px; border-top: 1px solid var(--line); }}
+.end-section .section-label {{ margin-left: 0; }}
+.driver-code {{ margin: 0 16px 14px; }}
+.driver-code summary {{ font-size: 14px; cursor: pointer; padding: 10px 12px;
+  background: var(--panel); border: 1px solid var(--line); border-radius: 10px; }}
+.driver-code pre {{ font-size: 13px; line-height: 1.4; background: #15181D;
+  border: 1px solid var(--line); border-top: none; border-radius: 0 0 10px 10px;
+  padding: 10px 12px; overflow-x: auto; margin: 0; }}
+.plain-line {{ margin: 0 16px 10px; font-size: 13px; color: var(--dim); }}
+</style>
 </head>
 <body>
+{_banner_html(banner)}
 <div class="wrap">
   <div class="badge-row" id="badge-row"><span class="dot"></span> Replay of a recorded run</div>
   <header>
     <div class="title" id="title"></div>
     <div class="sub" id="sub"></div>
   </header>
+  <div class="problem">{problem_html}</div>
   <div class="verdict-bar" id="verdict-bar"></div>
-  <div class="section-label">Bench</div>
+  <div id="plain-line" class="plain-line"></div>
+  <div class="section-label" id="bench-label">Bench</div>
+  <p class="plain-line" id="bench-caption"></p>
   <div class="bench">{_BENCH_SVG}</div>
   <div class="section-label">Timeline</div>
   <div class="timeline" id="timeline-list"></div>
+  <div id="driver-code-section"></div>
+  <div id="scripted-section"></div>
   <div id="result-section"></div>
   <footer>{SAFETY_LINE}
     &middot; <span class="run-id mono" id="run-id"></span>

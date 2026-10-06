@@ -26,6 +26,7 @@ import argparse
 import json
 import sys
 from pathlib import Path
+from typing import Any
 
 from .bench import (
     DEFAULT_POLICY,
@@ -49,11 +50,35 @@ def _cmd_demo(args: argparse.Namespace) -> int:
     return run_story(pause=pause, json_mode=args.json)
 
 
+def _parse_driver_args(specs: list[str]) -> dict[str, dict[str, Any]]:
+    """`--driver NAME=PATH` (issue #406 follow-up) -> `{name: {lines, code}}`,
+    read once at CLI time -- never a run's own file, so this lives here, not
+    in `ui/data.py` (whose one rule is "only this run's own files")."""
+    drivers: dict[str, dict[str, Any]] = {}
+    for spec in specs:
+        name, sep, path = spec.partition("=")
+        if not sep:
+            raise ArenaError(f"--driver {spec!r} is not NAME=PATH",
+                             fix="pass --driver psu=psu_driver.py (one '=', the name first)")
+        code = Path(path).read_text(encoding="utf-8")
+        drivers[name] = {"lines": len(code.splitlines()), "code": code}
+    return drivers
+
+
 def _cmd_ui(args: argparse.Namespace) -> int:
+    try:
+        drivers = _parse_driver_args(args.driver)
+    except (ArenaError, OSError) as e:
+        if isinstance(e, ArenaError):
+            return _report_error(e, as_json=True)
+        return _report_error(
+            ArenaError(f"--driver: {e}", fix="check the path after '=' exists"), as_json=True)
+
     if args.export:
         from .ui.export import build_export
         try:
-            html = build_export(args.run, state_dir=args.state_dir, agent=args.agent)
+            html = build_export(args.run, state_dir=args.state_dir, agent=args.agent,
+                                drivers=drivers)
         except ArenaError as e:
             return _report_error(e, as_json=True)
         Path(args.export).write_text(html, encoding="utf-8")
@@ -63,7 +88,7 @@ def _cmd_ui(args: argparse.Namespace) -> int:
     from .ui.server import serve
     try:
         httpd = serve(args.run, state_dir=args.state_dir, port=args.port,
-                      open_browser=not args.no_open)
+                      open_browser=not args.no_open, drivers=drivers)
     except ArenaError as e:
         return _report_error(e, as_json=True)
     try:
@@ -296,6 +321,10 @@ def _build_parser() -> argparse.ArgumentParser:
                            "PATH instead of serving a live page")
     p_ui.add_argument("--agent", default=None, metavar="LABEL",
                       help="--export only: the agent/session label the replay badge shows")
+    p_ui.add_argument("--driver", action="append", default=[], metavar="NAME=PATH",
+                      help="a driver.py the agent wrote, shown folded ('The driver the agent "
+                           "wrote for the NAME, N lines'); repeatable, e.g. "
+                           "--driver psu=psu_driver.py --driver dmm=dmm_driver.py")
     p_ui.add_argument("--state-dir", default=".shal-arena", metavar="DIR",
                       help="where run state lives (default: ./.shal-arena)")
     p_ui.set_defaults(func=_cmd_ui)

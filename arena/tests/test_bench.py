@@ -207,7 +207,7 @@ def test_both_sides_produce_a_sim_log_in_the_same_format(tmp_path: Path) -> None
     # no `measure` marker at all, which silently disqualified every
     # without-SHAL answer (see test_raw_scpi_measure_marker_not_disqualified).
     assert {ln["kind"] for ln in with_lines} == {ln["kind"] for ln in without_lines} == {
-        "measure", "query"}
+        "measure", "query", "reading"}
 
     with_query = next(ln for ln in with_lines if ln["kind"] == "query")
     without_query = next(ln for ln in without_lines if ln["kind"] == "query")
