@@ -233,22 +233,52 @@ _MSG_TOPO = {
 }
 
 
-def test_hook_not_enabled_records_nothing_for_any_protocol(tmp_path: Path) -> None:
-    """CTO review round 2: all 3 protocols, not just I2C/SCPI -- a plain
-    `shal.load()` call, wrapped in nothing, with no sink ever opened
-    anywhere in this process at this point. `record_exchange` checks
-    `exchange_sink` FIRST, before any work, so none of these three calls
-    reaches a sink or writes a file."""
+def test_hook_not_enabled_records_nothing_for_any_protocol(tmp_path: Path,
+                                                            monkeypatch) -> None:
+    """CTO review round 2: real asserts, not just an untouched `tmp_path` --
+    that held even with the hook's off-check removed entirely, so it
+    proved nothing. Wraps each bus module's own `record_exchange` (still
+    calling the real function) to prove the hook was actually reached for
+    all 3 protocols, and spies on `_clean_payload` to prove the no-sink
+    early return means it never does any redaction work."""
+    import shal.buses.sim as sim_mod
+    import shal.buses.sim_msg as sim_msg_mod
+    import shal.buses.sim_scpi as sim_scpi_mod
+
+    monkeypatch.chdir(tmp_path)
+    counts = {"sim": 0, "sim_scpi": 0, "sim_msg": 0}
+    clean_calls = []
+
+    def _counted(mod, key, real):
+        def wrapper(*args, **kwargs):
+            counts[key] += 1
+            return real(*args, **kwargs)
+        monkeypatch.setattr(mod, "record_exchange", wrapper)
+
+    _counted(sim_mod, "sim", sim_mod.record_exchange)
+    _counted(sim_scpi_mod, "sim_scpi", sim_scpi_mod.record_exchange)
+    _counted(sim_msg_mod, "sim_msg", sim_msg_mod.record_exchange)
+    monkeypatch.setattr(shal_log, "_clean_payload",
+                        lambda v: clean_calls.append(v) or v)
+
     with shal.load(_I2C_TOPO) as hal:
         hal.get_device("t").read_celsius()
     with shal.load(_SCPI_TOPO) as hal, shal.approver(shal.AutoApprove()):
         hal.get_device("p").set_voltage(3.3)
     with shal.load(_MSG_TOPO) as hal:
         hal.get_node("bench").driver.exchange("relay1", {"fc": 5, "address": 0, "value": True})
-    assert list(tmp_path.iterdir()) == []   # no file written anywhere
+
+    assert counts == {"sim": 1, "sim_scpi": 1, "sim_msg": 1}   # the hook really ran
+    assert clean_calls == []                                   # but never redacted anything
+    assert shal_log._exchange_sink.get() is None
+    assert list(tmp_path.iterdir()) == []   # cwd, via monkeypatch.chdir above
 
 
-def test_exchange_sink_only_captures_bus_calls_made_while_it_is_active() -> None:
+def test_exchange_sink_only_captures_bus_calls_made_while_it_is_active(monkeypatch) -> None:
+    clean_calls = []
+    monkeypatch.setattr(shal_log, "_clean_payload",
+                        lambda v: clean_calls.append(v) or v)
+
     captured: list = []
     with shal_log.exchange_sink(captured.append):
         pass   # no bus call happens while the sink is active
@@ -257,6 +287,7 @@ def test_exchange_sink_only_captures_bus_calls_made_while_it_is_active() -> None
     with shal.load(_SCPI_TOPO) as hal, shal.approver(shal.AutoApprove()):
         hal.get_device("p").set_voltage(5.0)   # OUTSIDE the `with exchange_sink` above
     assert captured == []   # still nothing: the sink had already been removed
+    assert clean_calls == []   # and no redaction work happened for this call either
 
 
 # --------------------------------------------------------------------------- #
@@ -302,6 +333,60 @@ def test_a_secret_scpi_reply_is_logged_only_in_redacted_form() -> None:
     (exc,) = captured
     assert "s3cr3t-token" not in exc.response and "token=abc123" not in exc.response
     assert exc.response == shal_log.redact_url(_SECRET_URL)
+
+
+# -- CTO review round 2: the text rule must clean ONLY the URL substring,
+# never mangle ordinary text (a real SCPI channel list) or leave userinfo
+# behind depending on where in the string the URL falls -----------------
+
+_EMBEDDED_SECRET_URL = "ENDPOINT https://user:s3cr3t-token@example.invalid/path?token=abc123 OK"
+_CHANNEL_LIST_REPLY = "MEAS:VOLT? (@1)"
+
+
+@scpi_sim_model("test,secret-scpi-embedded")
+class _SecretScpiEmbeddedModel:
+    def scpi(self, cmd: str) -> str:
+        return _EMBEDDED_SECRET_URL
+
+
+@scpi_sim_model("test,scpi-channel-list")
+class _ScpiChannelListModel:
+    def scpi(self, cmd: str) -> str:
+        return _CHANNEL_LIST_REPLY
+
+
+_register_dummy_driver("test,secret-scpi-embedded", MessageTransport)
+_register_dummy_driver("test,scpi-channel-list", MessageTransport)
+
+
+def test_an_embedded_secret_url_is_redacted_with_no_userinfo_left(tmp_path: Path) -> None:
+    topo = {"shal_version": 1, "root": {"bench": {
+        "id": "bench", "driver": "shal,sim-scpi", "address": "sim0",
+        "children": {"p": {"id": "p", "driver": "test,secret-scpi-embedded",
+                           "address": "psu1"}}}}}
+    captured: list = []
+    with shal.load(topo) as hal, shal_log.exchange_sink(captured.append):
+        hal.get_node("bench").driver.exchange("psu1", {"scpi": "GET?", "query": True})
+    (exc,) = captured
+    assert "s3cr3t-token" not in exc.response
+    assert "token=abc123" not in exc.response
+    assert exc.response == "ENDPOINT https://example.invalid/path OK"
+
+
+def test_a_real_scpi_channel_list_reply_is_logged_unchanged() -> None:
+    """`MEAS:VOLT? (@1)` is a real SCPI channel-list reply on real
+    instruments (`scpi_raw`) -- it has no `://` anywhere, so the text rule
+    must never touch it (it used to be mangled into `"1)"` by treating the
+    whole string as a bare address because it contains `@`)."""
+    topo = {"shal_version": 1, "root": {"bench": {
+        "id": "bench", "driver": "shal,sim-scpi", "address": "sim0",
+        "children": {"p": {"id": "p", "driver": "test,scpi-channel-list",
+                           "address": "psu1"}}}}}
+    captured: list = []
+    with shal.load(topo) as hal, shal_log.exchange_sink(captured.append):
+        hal.get_node("bench").driver.exchange("psu1", {"scpi": "GET?", "query": True})
+    (exc,) = captured
+    assert exc.response == _CHANNEL_LIST_REPLY
 
 
 def test_a_secret_modbus_value_is_logged_only_in_redacted_form() -> None:

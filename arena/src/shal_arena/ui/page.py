@@ -252,6 +252,14 @@ function stepDetail(e) {
   if (e.kind === "damage") return "card destroyed";
   if (e.kind === "reading") return fmtNum(e.detail.value, e.detail.unit);
   if (e.kind === "measure") return "attempted";
+  // a SCPI query/write row (issue #457 round 2 nit): show the command and
+  // its real answer, the same way an `exchange` row already does -- a
+  // bare "Read dmm0" with no detail at all left out the cmd/reply the
+  // data has carried since #457.
+  if ((e.kind === "query" || e.kind === "write") && e.detail.cmd !== undefined) {
+    const reply = e.detail.reply;
+    return reply === undefined || reply === "" ? e.detail.cmd : `${e.detail.cmd} -> ${reply}`;
+  }
   if (e.kind === "exchange") {
     const req = JSON.stringify(e.detail.request), res = JSON.stringify(e.detail.response);
     return res === undefined || res === '""' ? req : `${req} -> ${res}`;
