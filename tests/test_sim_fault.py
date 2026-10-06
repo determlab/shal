@@ -92,12 +92,29 @@ def test_shal_sim_unplug_env_var_raises_hop_error_delivered_no_with_host_port(
         assert hal.get_device("psu1").measure_voltage() == pytest.approx(0.0)
 
 
-def test_shal_sim_unplug_naming_an_unrelated_id_changes_nothing(tmp_path, monkeypatch):
+def test_shal_sim_unplug_naming_a_different_real_id_changes_only_that_one(
+        tmp_path, monkeypatch):
+    p = _topo(tmp_path, faulted=False)
+    monkeypatch.setenv("SHAL_SIM_UNPLUG", "psu1")
+    with shal.load(p) as hal:
+        # psu0, the one this test would otherwise probe, is untouched --
+        # only the NAMED id (psu1) is unplugged.
+        assert hal.get_device("psu0").measure_voltage() == pytest.approx(0.0)
+        with pytest.raises(HopError):
+            hal.get_device("psu1").measure_voltage()
+
+
+def test_shal_sim_unplug_naming_an_unknown_id_raises_load_error(tmp_path, monkeypatch):
+    # issue #417: this used to silently unplug nothing -- a false "healthy"
+    # pass, since nothing matched `some-other-node` at all. Covered in
+    # full detail (the real sample, the error text) by
+    # tests/test_sim_unplug_id.py; this is the smoke test on THIS file's
+    # own fixture topology.
     p = _topo(tmp_path, faulted=False)
     monkeypatch.setenv("SHAL_SIM_UNPLUG", "some-other-node")
-    with shal.load(p) as hal:
-        assert hal.get_device("psu0").measure_voltage() == pytest.approx(0.0)
-        assert hal.get_device("psu1").measure_voltage() == pytest.approx(0.0)
+    with pytest.raises(shal.LoadError) as ei:
+        shal.load(p)
+    assert "some-other-node" in str(ei.value)
 
 
 # ---- the CLI reports it as `Unreachable`, same type and exit code as shal#300 -----

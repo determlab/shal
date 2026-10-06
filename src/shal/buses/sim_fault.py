@@ -28,10 +28,15 @@ class SimFaultMixin:
         self._fault_calls: dict[Any, int] = {}          # addr -> calls seen so far
 
     def _register_fault(self, node: Node) -> None:
+        # issue #417: `SHAL_SIM_UNPLUG` matches a node's `id` (the ADK-style
+        # compatible-string id, e.g. "dmm") OR its `name` (the path segment
+        # a topology names it under, e.g. "dmm0") -- both are things a
+        # player might reasonably type, and `hal.load()`'s own unknown-id
+        # check (same rule) is what catches a value that matches neither.
         unplug_id = os.environ.get("SHAL_SIM_UNPLUG")
         spec = getattr(node, "spec", {}) or {}
         if spec.get("fault") == "unplugged" or (
-                unplug_id is not None and node.id == unplug_id):
+                unplug_id is not None and unplug_id in (node.id, node.name)):
             self._fault_after[node.address] = spec.get("after")
 
     def _faulted(self, addr: Any) -> bool:
