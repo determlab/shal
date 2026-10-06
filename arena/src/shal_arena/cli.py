@@ -46,6 +46,32 @@ def _cmd_demo(args: argparse.Namespace) -> int:
     return run_story(pause=pause, json_mode=args.json)
 
 
+def _cmd_ui(args: argparse.Namespace) -> int:
+    if args.export:
+        from .ui.export import build_export
+        try:
+            html = build_export(args.run, state_dir=args.state_dir, agent=args.agent)
+        except ArenaError as e:
+            return _report_error(e, as_json=True)
+        Path(args.export).write_text(html, encoding="utf-8")
+        print(f"shal-arena ui: wrote {args.export}")
+        return 0
+
+    from .ui.server import serve
+    try:
+        httpd = serve(args.run, state_dir=args.state_dir, port=args.port,
+                      open_browser=not args.no_open)
+    except ArenaError as e:
+        return _report_error(e, as_json=True)
+    try:
+        httpd.serve_forever()
+    except KeyboardInterrupt:
+        pass
+    finally:
+        httpd.server_close()
+    return 0
+
+
 def _json_out(payload: dict) -> None:
     print(json.dumps(payload, indent=2, default=str))
 
@@ -227,6 +253,23 @@ def _build_parser() -> argparse.ArgumentParser:
     p_demo.add_argument("--json", action="store_true",
                         help="print one JSON document on stdout instead of narrating")
     p_demo.set_defaults(func=_cmd_demo)
+
+    p_ui = sub.add_parser(
+        "ui", help="WATCH a run live in a local page, or export a finished one (issue #406)")
+    p_ui.add_argument("--run", required=True, metavar="RUN_ID",
+                      help="the run_id to watch (from `run`'s own output)")
+    p_ui.add_argument("--port", type=int, default=0,
+                      help="local port (default: 0, picks a free one)")
+    p_ui.add_argument("--no-open", action="store_true",
+                      help="do not open the browser automatically")
+    p_ui.add_argument("--export", default=None, metavar="PATH",
+                      help="write one self-contained replay HTML for a FINISHED run to "
+                           "PATH instead of serving a live page")
+    p_ui.add_argument("--agent", default=None, metavar="LABEL",
+                      help="--export only: the agent/session label the replay badge shows")
+    p_ui.add_argument("--state-dir", default=".shal-arena", metavar="DIR",
+                      help="where run state lives (default: ./.shal-arena)")
+    p_ui.set_defaults(func=_cmd_ui)
 
     p_run = sub.add_parser("run", help="start a run from a task.yaml")
     p_run.add_argument("task", help="path to the task.yaml")

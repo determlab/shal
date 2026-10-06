@@ -301,6 +301,36 @@ Pass `--out <path>` to also write that YAML to a file. `setup-yaml` and the
 page it backs take any of the packaged case names (`shal-arena setup-yaml
 --help`, or see `src/shal_arena/cases.py`'s `CASES`).
 
+## Watch a run live (issue #406)
+
+Illustrative only below (unlike every runnable block elsewhere in this
+file) — `ui` with no `--export` blocks forever serving the page, so there
+is no one command a doc test can run and expect back:
+
+```
+shal-arena ui --run <run-id> --port 0
+```
+
+opens a local page (stdlib `http.server`, bound to `127.0.0.1` only — never
+reachable from another machine) that follows that one run live: a schematic
+bench (PSU → card → DMM, the rail drawn with its live value), a timeline of
+every call, and a verdict bar the moment the run closes. It polls
+`GET /api/run/<run-id>` (the same JSON the page itself renders from) once a
+second; `--port 0` picks a free port and prints the URL. Nothing about the
+hidden fault is ever in either response before the run closes — `record.json`
+and `score.json` are only read once `status` is `closed`, same discipline
+`replay/card.py` already holds.
+
+For a finished run, `--export page.html [--agent LABEL]` writes one
+self-contained HTML file instead — inline CSS and JS, no network, the
+timeline replayed as an animation, labelled "Replay of a recorded run ·
+`LABEL` · date · simulated instruments" at the top. Opens and plays offline;
+the only outside link anywhere on the page is the repo's own.
+
+Read-only: `ui` never writes to a run, and has no PLAY buttons (a separate
+ticket). Mobile-first — a 360 px wide screen, tap targets at least 44 px, no
+drag.
+
 ## Task and card format (v1)
 
 Ruled by the CTO on issue #310: two data-only YAML files, no expressions, no
