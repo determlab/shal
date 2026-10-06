@@ -460,3 +460,9 @@ fixed probe/drives pair — e.g. `call <run-id> relay0 ./driver.py set_relay
 0 false --json` and `call <run-id> relay0 ./driver.py read_relay 0
 --json`; `measure`/`check-driver` are unchanged and still cover the probe
 instruments, `dmm0` and `temp0`.
+
+Issue #390 adds leaderboard part 1: `shal-arena verify <score.json> --json`
+replays a closed run from `arena/challenges/<week>.yaml`'s published seed and
+prints `{"ok", "result": "verified"|"disqualified"|"refused", "reason",
+"week", "side_effect": "none"}`, exit 0 only on `verified` — a PR with a
+score file and its run record can be checked without a server.
