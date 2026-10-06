@@ -541,6 +541,16 @@ def start_run(task_path: str, *, seed: int | None = None,
             "question": task.question.text,
         },
         "instruments": [_instrument_view(i) for i in task.instruments],
+        # issue #428: the card's own documented limit, in volts -- without
+        # this, the agent has no numeric tolerance to check a reading
+        # against and must guess one (CTO review on #427: a real run judged
+        # "2.9 V is outside 3.3 V +/-5-10%" against a limit it invented).
+        "rails": [
+            {"name": r.name, "test_point": r.test_point, "nominal_v": r.nominal_v,
+             "tol_pct": r.tol_pct, "min_v": r.nominal_v * (1 - r.tol_pct / 100),
+             "max_v": r.nominal_v * (1 + r.tol_pct / 100)}
+            for r in card.rails
+        ],
         "limits": {"max_turns": task.limits.max_turns, "max_minutes": task.limits.max_minutes},
     }
 
