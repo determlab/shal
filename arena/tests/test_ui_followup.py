@@ -16,7 +16,13 @@ from shal_arena.ui.data import run_payload
 from shal_arena.ui.export import build_export
 from shal_arena.ui.page import PROBLEM_LINES, render_watch_page
 
-from .conftest import PASSING_DMM_DRIVER, PASSING_TEMP_DRIVER, RELAY_RAIL_TASK, SAMPLE_TASK
+from .conftest import (
+    BUGGY_DMM_DRIVER,
+    PASSING_DMM_DRIVER,
+    PASSING_TEMP_DRIVER,
+    RELAY_RAIL_TASK,
+    SAMPLE_TASK,
+)
 
 _BASE_PAYLOAD = {
     "run_id": "run-x", "task_id": "t", "title": "T", "question": "Q",
@@ -365,12 +371,13 @@ def test_a_successful_drive_is_its_own_timeline_step(tmp_path: Path) -> None:
     assert writes[0]["detail"]["volts"] == 5.0
 
 
-def test_a_query_without_a_reading_says_the_driver_failed_not_no_answer(
+def test_a_query_with_no_reading_and_no_failed_line_has_no_measured_clause(
         tmp_path: Path) -> None:
-    """CTO review round 3: an old capture (the adk-lab shape, from before
-    the `reading` sim-log kind existed) has `measure` + `query` entries
-    but no `reading` line -- the exchange worked, so this is never "No
-    answer"."""
+    """issue #432 CTO review: the cause comes from a logged `failed` line
+    now, never inferred from a `query` line's mere presence -- a `measure`
+    + `query` with neither a `reading` nor a `failed` entry (an old
+    capture's shape) says nothing about this instrument, not "driver
+    failed" and not "No answer"."""
     run_id = start_run(str(SAMPLE_TASK), seed=2, state_dir=tmp_path)["run_id"]
     drive_input(run_id, "psu0", 5.0, state_dir=tmp_path)
 
@@ -385,7 +392,8 @@ def test_a_query_without_a_reading_says_the_driver_failed_not_no_answer(
     payload = run_payload(run_id, state_dir=tmp_path)
     sentence = payload["answer_sentence"]
     assert "No answer" not in sentence
-    assert "the agent's driver failed to read the DMM" in sentence
+    assert "driver failed" not in sentence
+    assert sentence == "The agent's answer: ok. Correct."
 
 
 def test_a_measure_with_no_query_at_all_is_a_real_no_answer(tmp_path: Path) -> None:
@@ -409,6 +417,110 @@ def test_a_measure_with_no_query_at_all_is_a_real_no_answer(tmp_path: Path) -> N
     assert not any(e["kind"] == "query" for e in entries)
     sentence = payload["answer_sentence"]
     assert "No answer from the DMM" in sentence
+
+
+def test_failure_cause_driver_bug_gives_a_driver_cause_sentence(tmp_path: Path) -> None:
+    """issue #432: a driver that raises its own bug (never reaches the
+    bus) must say "the agent's driver failed to read", logged from the
+    real cause `take_measurement` itself classifies -- never inferred
+    after the fact from whether a `query` line exists."""
+    from shal_arena.errors import MeasurementFailed
+
+    run_id = start_run(str(SAMPLE_TASK), seed=2, state_dir=tmp_path)["run_id"]
+    drive_input(run_id, "psu0", 5.0, state_dir=tmp_path)
+    with pytest.raises(MeasurementFailed):
+        take_measurement(run_id, "dmm0", BUGGY_DMM_DRIVER, state_dir=tmp_path)
+    answer(run_id, "ok", state_dir=tmp_path)
+
+    payload = run_payload(run_id, state_dir=tmp_path)
+    entries = [e for e in payload["timeline"] if e["address"] == "dmm0"]
+    assert any(e["kind"] == "failed" and e["detail"]["cause"] == "driver" for e in entries)
+    sentence = payload["answer_sentence"]
+    assert "the agent's driver failed to read the DMM" in sentence
+    assert "No answer" not in sentence
+
+
+def test_failure_cause_open_fault_gives_a_transport_cause_sentence(tmp_path: Path) -> None:
+    """The `open` fault never reaches the bus at all -- the real transport
+    failure, logged with cause="transport"."""
+    from shal_arena import fault as fault_mod
+    from shal_arena.errors import MeasurementFailed
+    from shal_arena.loader import load_task
+
+    card = load_task(str(SAMPLE_TASK)).card
+    seed = next(s for s in range(200)
+               if fault_mod.realized_fault(card, s).fault_id == "open")
+    run_id = start_run(str(SAMPLE_TASK), seed=seed, state_dir=tmp_path)["run_id"]
+    drive_input(run_id, "psu0", 5.0, state_dir=tmp_path)
+    with pytest.raises(MeasurementFailed):
+        take_measurement(run_id, "dmm0", PASSING_DMM_DRIVER, state_dir=tmp_path)
+    answer(run_id, "open", state_dir=tmp_path)
+
+    payload = run_payload(run_id, state_dir=tmp_path)
+    entries = [e for e in payload["timeline"] if e["address"] == "dmm0"]
+    assert any(e["kind"] == "failed" and e["detail"]["cause"] == "transport" for e in entries)
+    sentence = payload["answer_sentence"]
+    assert "No answer from the DMM" in sentence
+
+
+def test_failure_cause_old_capture_with_no_reading_has_no_measured_clause(
+        tmp_path: Path) -> None:
+    """An old capture made before the `reading`/`failed` sim-log kinds
+    existed has neither for an instrument -- leave the measured clause out
+    entirely, never guess at "No answer" or "driver failed"."""
+    run_id = start_run(str(SAMPLE_TASK), seed=1, state_dir=tmp_path)["run_id"]
+    log_path = tmp_path / f"{run_id}.simlog.jsonl"
+    with log_path.open("a", encoding="utf-8") as f:
+        f.write(json.dumps({"ts": "2026-10-06T13:25:20Z", "address": "dmm0",
+                            "kind": "measure"}) + "\n")
+    answer(run_id, "ok", state_dir=tmp_path)
+
+    payload = run_payload(run_id, state_dir=tmp_path)
+    sentence = payload["answer_sentence"]
+    assert "No answer" not in sentence
+    assert "driver failed" not in sentence
+    assert sentence == "The agent's answer: ok. Wrong: the card has a fault."
+
+
+def test_overheat_sentence_contains_the_delta_in_celsius(tmp_path: Path) -> None:
+    """issue #432: the overheat template must show the delta, e.g. "5.0 °C
+    above its 85.0 °C limit", not just the bare limit."""
+    from shal_arena import fault as fault_mod
+    from shal_arena.loader import load_task
+
+    card = load_task(str(RELAY_RAIL_TASK)).card
+    seed = next(s for s in range(500)
+               if fault_mod.realized_fault(card, s).fault_id == "overheat")
+    run_id = start_run(str(RELAY_RAIL_TASK), seed=seed, state_dir=tmp_path)["run_id"]
+    take_measurement(run_id, "temp0", PASSING_TEMP_DRIVER, state_dir=tmp_path)
+    answer(run_id, "overheat", state_dir=tmp_path)
+
+    payload = run_payload(run_id, state_dir=tmp_path)
+    sentence = payload["answer_sentence"]
+    import re
+    m = re.search(r"regulator (\d+\.\d) °C, (\d+\.\d) °C above its (\d+\.\d) °C limit",
+                  sentence)
+    assert m, sentence
+    reading, delta, limit = (float(x) for x in m.groups())
+    assert round(reading - limit, 1) == round(delta, 1)
+
+
+def test_every_screenshot_is_a_genuine_full_page_capture() -> None:
+    """issue #432 Done-when: image height is greater than the viewport
+    height the page was captured at when the page scrolls -- not a
+    single-screen crop. Skips if Pillow is not installed (a dev-only
+    tool for this check, never a package dependency)."""
+    PIL_Image = pytest.importorskip("PIL.Image")
+    shots_dir = Path(__file__).resolve().parents[1] / "src" / "shal_arena" / "ui" / "screenshots"
+    # the live server's own window this session captured at -- every
+    # single-viewport screenshot these pages were ever taken at in this
+    # project has been at or under this height.
+    _SINGLE_VIEWPORT_MAX = 950
+    files = sorted(shots_dir.glob("*.png")) + sorted(shots_dir.glob("*.jpg"))
+    assert files
+    for path in files:
+        with PIL_Image.open(path) as img:
+            assert img.height > _SINGLE_VIEWPORT_MAX, (path.name, img.size)
 
 
 def test_answer_sentence_on_a_destroyed_card(tmp_path: Path) -> None:

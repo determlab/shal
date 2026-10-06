@@ -712,6 +712,16 @@ def take_measurement(run_id: str, address: str, driver_path: str | Path, *,
     except CheckCouldNotRun:
         raise
     except Exception as e:  # noqa: BLE001 - a live answer to THIS call, never persisted
+        # issue #432: the WATCH sentence used to infer a failed read's
+        # cause from the log's own shape (a `query` line present or not) --
+        # unreliable in practice. Log the real cause instead: `HopError`/
+        # `HopTimeout` are shal core's own "the hop never completed" (the
+        # `open` fault, extending `fault: unplugged`, is exactly this); any
+        # other exception is the driver's own code raising, after or
+        # without ever reaching the bus.
+        cause = "transport" if isinstance(e, (shal.errors.HopError, shal.errors.HopTimeout)) \
+            else "driver"
+        sim_log.append(str(address), "failed", cause=cause)
         raise MeasurementFailed(
             f"{read_op} raised {type(e).__name__}: {e}",
             fix="the instrument did not answer this call — if that's unexpected, "

@@ -88,28 +88,26 @@ def _temp_clause(temp: dict[str, Any], values: list[float]) -> str:
 
 
 def _measured_clause(name: str, rail: dict[str, Any] | None, temp: dict[str, Any] | None,
-                     readings: list[float], has_query: bool, has_measure: bool) -> str | None:
+                     readings: list[float], cause: str | None) -> str | None:
     """`None` means "say nothing about this instrument" -- no attempt was
-    ever logged for it (an old capture made before this ticket, or an
-    instrument the agent never touched).
+    ever logged for it (an old capture made before this ticket with no
+    `reading` line, or an instrument the agent never touched).
 
-    issue #427 CTO review round 3: three states, not two. A `reading` line
-    -- the number. No `reading` but a `query` DID happen -- the exchange
-    with the bus worked (this is "a read that worked", never "No answer");
-    we just have no number for it (an old capture made before the
-    `reading` kind existed, or a reply the driver could not parse) -- "the
-    agent's driver failed to read". No `query` at all, only the neutral
-    `measure` marker -- the read never reached the bus (a real transport
-    failure, e.g. the `open` fault) -- this is the one real "No answer"."""
+    issue #432 CTO review: the failed-read cause comes from a `failed`
+    sim-log line `take_measurement` itself writes (its own except block,
+    classifying the real exception -- `shal.errors.HopError`/`HopTimeout`
+    is "transport", anything else is the driver's own code), never
+    inferred after the fact from whether a `query` line happens to be
+    present -- that inference was wrong in practice."""
     if readings:
         if rail is not None:
             return _rail_clause(rail, readings)
         if temp is not None:
             return _temp_clause(temp, readings)
         return f"the {name} reads {readings[-1]:.2f}"
-    if has_query:
+    if cause == "driver":
         return f"the agent's driver failed to read the {name}"
-    if has_measure:
+    if cause == "transport":
         return f"No answer from the {name}"
     return None
 
@@ -138,19 +136,16 @@ def _answer_sentence(payload: dict[str, Any], rails: list[dict[str, Any]],
         temp = temps_by_tp.get(test_point)
         if rail is None and temp is None:
             continue
-        readings, has_query, has_measure = [], False, False
+        readings, cause = [], None
         for e in timeline:
             if e.get("address") != instrument["address"]:
                 continue
             if e.get("kind") == "reading":
                 readings.append(e["detail"]["value"])
-            elif e.get("kind") == "query":
-                has_query = True
-            elif e.get("kind") == "measure":
-                has_measure = True
+            elif e.get("kind") == "failed":
+                cause = e["detail"].get("cause")
         clause = _measured_clause(
-            _name_for_address(instrument["address"]), rail, temp, readings, has_query,
-            has_measure)
+            _name_for_address(instrument["address"]), rail, temp, readings, cause)
         if clause is not None:
             clauses.append(clause)
 
