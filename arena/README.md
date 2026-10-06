@@ -327,7 +327,9 @@ every call, and a verdict bar the moment the run closes. It polls
 second; `--port 0` picks a free port and prints the URL. Nothing about the
 hidden fault is ever in either response before the run closes — `arena-record.json`
 and `score.json` are only read once `status` is `closed`, same discipline
-`replay/card.py` already holds.
+`replay/card.py` already holds. An older capture made before the
+`record.json` → `arena-record.json` rename (#435) still reads here, and in
+`export` and `replay` — no migration needed.
 
 For a finished run, `--export page.html [--agent LABEL]` writes one
 self-contained HTML file instead — inline CSS and JS, no network, the
