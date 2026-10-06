@@ -143,10 +143,12 @@ is yours to change.
    the instrument now (SHAL gates those; see the main `AGENTS.md`).
    `@idempotent` marks a read, or a write that is safe to resend (an
    absolute setpoint, like `set_voltage` below).
-3. **Check it, then play it** — one instrument at a time, no `override=True`
-   (arena#394 fixed the need for that in a `bench` run; checking and then
-   measuring the SAME instrument's driver in one sitting outside `bench`
-   still needs it, same reason — one more re-import of the same file):
+3. **Check one, then measure a different one.** No `override=True` needed
+   (arena#394 fixed that for a `bench` run) — but checking and then
+   measuring the *same* instrument's driver outside `bench`, in one sitting,
+   still re-imports the same file twice and needs it. Sidestep that
+   entirely by checking one instrument and measuring another, same as the
+   walkthrough above:
 
    ```bash
    shal-arena check-driver <run-id> psu0 examples/minimal_psu_driver.py --json
@@ -158,6 +160,30 @@ is yours to change.
 
 `arena/tests/test_readme_examples.py` runs both minimal examples this same
 way, in CI, so copying them keeps working.
+
+**What `open` looks like.** One of the faults a card can hide is `open`: the
+instrument simply does not answer — every hop to it raises, the same as a
+cut cable. Your driver does not need to detect this itself; just let the
+exchange raise, same as `minimal_dmm_driver.py` above already does. `measure`
+reports it as a normal failure, never a crash:
+
+```
+$ shal-arena measure <run-id> dmm0 examples/minimal_dmm_driver.py --json
+shal-arena: measure_voltage raised HopError: no answer from the instrument
+at 'dmm0' (hop: sim-scpi, delivered=no)
+{
+  "ok": false,
+  "error": {
+    "type": "MeasurementFailed",
+    "message": "measure_voltage raised HopError: no answer from the instrument at 'dmm0' (hop: sim-scpi, delivered=no)",
+    "fix": "the instrument did not answer this call — if that's unexpected, check your driver.py's handling of the case's SCPI dialect"
+  }
+}
+```
+
+Exit code 1 — the op failed, same family as `shal call`'s own "op failed"
+outcome, not a crash in the check machinery. A failure shaped exactly like
+this, on an otherwise-correct driver, is itself the signal: answer `open`.
 
 Answer and close the run. `ok` below is a placeholder answer to show the
 command's shape — the real method for picking a value is reading the
