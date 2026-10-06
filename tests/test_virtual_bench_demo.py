@@ -210,7 +210,13 @@ def test_no_record_written_carries_a_fix(tmp_path, monkeypatch, capsys):
     summary = json.loads(capsys.readouterr().out)
     assert code == run_bench.EXIT_CANNOT_RUN
     assert summary["error"].startswith("no record written")
-    assert summary["fix"] == "pip install pytest pytest-shal"
+    # pytest-shal isn't on PyPI (CTO review on #386): a bare package name in the
+    # fix would fail for a cold agent that tries it, same as the prose above —
+    # and it must name the same pinned commit the README's own Install block does.
+    assert summary["fix"] == run_bench.PYTEST_SHAL_FIX
+    assert PYTEST_SHAL_REF in run_bench.PYTEST_SHAL_FIX
+    assert "pip install" in run_bench.PYTEST_SHAL_FIX
+    assert "pytest==9.1.1" in run_bench.PYTEST_SHAL_FIX
 
 
 # ---------------------------------------------------------------------------

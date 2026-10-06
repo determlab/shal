@@ -34,6 +34,13 @@ EXIT_FAIL = 1
 EXIT_CANNOT_RUN = 3
 EXIT_UNREACHABLE = 4
 
+# pytest-shal isn't on PyPI (README's Install section), so the fix for a pytest
+# subprocess that never ran (no module, or an unrecognized --shal-setup flag) is
+# this pinned source, not a bare package name.
+PYTEST_SHAL_FIX = ('pip install pytest==9.1.1 "pytest-shal @ '
+                   'git+https://github.com/determlab/pytest-shal'
+                   '@f45937de74737473e3b2b896b25bef087468da40"')
+
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
@@ -85,7 +92,7 @@ def main(argv: list[str] | None = None) -> int:
     if not new:
         print(json.dumps({"ok": False,
                            "error": "no record written — see stderr for the pytest run",
-                           "fix": "pip install pytest pytest-shal"}))
+                           "fix": PYTEST_SHAL_FIX}))
         return EXIT_CANNOT_RUN
     if len(new) > 1:
         ids = ", ".join(sorted(r.record for r in new))

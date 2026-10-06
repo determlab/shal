@@ -28,9 +28,10 @@ release yet)** needs the unreleased source instead:
 The fuller bench — a simulated PSU and DMM scored by
 [pytest-shal](https://github.com/determlab/pytest-shal) — ships as a sample:
 `shal docs --sample virtual-bench --to bench` writes it **(main only, not in the PyPI release yet)**.
-It also needs `pip install pytest pytest-shal` (pyshal itself you already have); then
-`python bench/run_bench.py` runs it. For agent-scored practice runs on top of it:
-`pip install shal-arena`.
+It also needs `pytest` and a pinned `pytest-shal` (pyshal itself you already have) —
+`pip install pytest==9.1.1 "pytest-shal @ git+https://github.com/determlab/pytest-shal@f45937de74737473e3b2b896b25bef087468da40"`
+**(main only, not in the PyPI release yet)** — then `python bench/run_bench.py` runs it.
+For agent-scored practice runs on top of it: `pip install shal-arena`.
 
 ## First success
 
