@@ -72,7 +72,8 @@ def temp_point_for_fault(card: Card, realized: RealizedFault) -> TempPoint | Non
     return next((t for t in card.temp_points if t.name == temp_name), None)
 
 
-def harness_for_run(case: Any, *, rail: Rail, realized: RealizedFault, seed: int) -> dict:
+def harness_for_run(case: Any, *, rail: Rail, realized: RealizedFault, seed: int,
+                    nonce: int = 0) -> dict:
     """The case's harness topology, generated in memory for THIS run only —
     never written to any file (Scope: "never written to a file the player or
     agent can read") — with ``realized`` wired onto the one child node under
@@ -87,6 +88,18 @@ def harness_for_run(case: Any, *, rail: Rail, realized: RealizedFault, seed: int
     - ``ok``: the caller should not need this at all — see
       ``runner._topology_for_instrument``, which returns the case's static
       harness unchanged when there is nothing to inject.
+
+    ``nonce`` (issue #431 bug fix): this harness is rebuilt fresh on every
+    CLI call (a separate process each time), with no state of its own
+    carried between them -- `config["seed"]` used to be the run's own
+    ``seed`` alone, so the sim model's own ripple RNG started from the SAME
+    state on every single call, and ``noise`` read back the exact same
+    "random" value every time. The caller passes something that varies
+    call to call (``state.turns``, already incremented before this run) so
+    two measurements of the same run's noise realize two different ripple
+    samples, while the SAME (seed, nonce) pair still reproduces the same
+    one -- this file's own rule ("same seed always realizes the same ...
+    ripple") still holds for one fixed call.
     """
     doc = yaml.safe_load(Path(case.harness_topology).read_text(encoding="utf-8"))
     bench = next(iter(doc["root"].values()))
@@ -103,6 +116,6 @@ def harness_for_run(case: Any, *, rail: Rail, realized: RealizedFault, seed: int
     ripple_vpp = realized.extra.get("ripple_vpp")
     if ripple_vpp is not None:
         config["ripple_vpp"] = ripple_vpp
-        config["seed"] = seed
+        config["seed"] = seed * 1_000_003 + nonce
     child["config"] = config
     return doc
