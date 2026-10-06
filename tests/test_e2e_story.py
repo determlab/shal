@@ -2,10 +2,17 @@
 real evidence.json (produced by the first version of the story on one OS and
 committed at tests/data/e2e/sample-evidence.json — no hand-written fixture).
 
-These tests never touch a venv, a subprocess, or the network: every check
-function takes the same JSON/exit-code shape the real story already
+Most of these tests never touch a venv, a subprocess, or the network: every
+check function takes the same JSON/exit-code shape the real story already
 produced, and this file just proves the function agrees with what is on
 disk. A regression in the *logic* (not the *environment*) fails here, fast.
+
+The one exception, at the bottom (issue #403 CTO review round 2): a real,
+simulator-only sweep over seeds 0-29 for every level, through this
+interpreter's own subprocess calls -- no network, no real hardware, same as
+every other arena test. `noise` cannot be proven correct any other way: a
+single reading can land inside the tolerance band by chance, so only a run
+across many seeds actually exercises the spread check.
 """
 from __future__ import annotations
 
@@ -98,9 +105,12 @@ def test_arena_score_file_check_catches_zero_turns():
 
 def test_arena_score_file_check_catches_an_uncaught_fault():
     # a task whose realized fault was NOT "ok" (`fault_type`) but the run
-    # scored `faults_caught: 0` -- the fault existed and was missed.
+    # scored `faults_caught: 0` -- the fault existed and was missed. CTO
+    # review: `correct` must be True here, or the existing `correct is
+    # True` clause alone already fails this case and the test passes for
+    # the wrong reason, never exercising the `faults_caught` clause at all.
     score = {"task_id": "medium", "fault_type": "low_voltage", "faults_caught": 0, "turns": 2}
-    answer_doc = {"score": score, "correct": False, "disqualified": False}
+    answer_doc = {"score": score, "correct": True, "disqualified": False}
     result = story.check_arena_score_file("medium", True, answer_doc, _RERUN)
     assert result["result"] == "fail"
 
@@ -208,3 +218,20 @@ def test_pull_request_trigger_covers_the_sample_and_cli_py():
     paths = on["pull_request"]["paths"]
     assert "src/shal/samples/virtual-bench/**" in paths
     assert "src/shal/cli.py" in paths
+
+
+# --------------------------------------------------------------------------- #
+# issue #403 CTO review round 2: a REAL seed sweep -- `noise` can only be
+# proven correct by actually running the diagnosis across many seeds.
+# Simulator only: this interpreter's own subprocess calls, no network.
+# --------------------------------------------------------------------------- #
+
+@pytest.mark.parametrize("level", story.ARENA_TASK_LEVELS)
+def test_every_seed_0_to_29_is_correctly_diagnosed(level, tmp_path):
+    failures = []
+    for seed in range(30):
+        result = story.run_arena_task_score_file(
+            sys.executable, level, tmp_path / level / str(seed), seed=seed)
+        if result["result"] != "pass":
+            failures.append((seed, result["log"]))
+    assert not failures, failures
