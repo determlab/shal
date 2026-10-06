@@ -47,6 +47,15 @@ def main(argv: list[str] | None = None) -> int:
         env["SHAL_SIM_UNPLUG"] = args.unplug
     unplugged = bool(env.get("SHAL_SIM_UNPLUG"))
 
+    import shal
+    from shal import record as shal_record
+
+    try:
+        before = {r.record for r in shal_record.read(HERE)}
+    except shal.Error as e:
+        print(json.dumps({"ok": False, "error": f"{type(e).__name__}: {e}"}))
+        return EXIT_CANNOT_RUN
+
     proc = subprocess.run(
         [sys.executable, "-m", "pytest", "test_bench.py",
          "--shal-setup", "bench.yaml", "-q", "--tb=line"],
@@ -55,25 +64,36 @@ def main(argv: list[str] | None = None) -> int:
     sys.stderr.write(proc.stdout)
     sys.stderr.write(proc.stderr)
 
-    import shal
-    from shal import record as shal_record
-
     try:
         # No `sequence` filter: pytest's nodeid (and so the stored `sequence`)
         # is relative to whatever rootdir pytest finds by walking up from
         # here, which differs between a standalone copy of this folder and a
         # checkout of the whole shal repo — this folder's store holds only
-        # this one test's records anyway, so the newest one is unambiguous.
+        # this one test's records anyway, so filtering on sequence buys nothing.
         records = shal_record.read(HERE)
     except shal.Error as e:
         print(json.dumps({"ok": False, "error": f"{type(e).__name__}: {e}"}))
         return EXIT_CANNOT_RUN
-    if not records:
+
+    # Never by position (#379): two runs that land in the same wall-clock
+    # second sort by their random id suffix, not by write order, so taking
+    # the last item of this list can silently return a different run's
+    # record — seen as a verdict `pass` printed with the DMM unplugged. The
+    # record THIS run wrote is whichever id did not exist in the store
+    # before this run started.
+    new = [r for r in records if r.record not in before]
+    if not new:
         print(json.dumps({"ok": False,
                            "error": "no record written — see stderr for the pytest run"}))
         return EXIT_CANNOT_RUN
+    if len(new) > 1:
+        ids = ", ".join(sorted(r.record for r in new))
+        print(json.dumps({"ok": False,
+                           "error": f"this run wrote more than one new record ({ids}) "
+                                    f"— cannot tell which one is ours"}))
+        return EXIT_CANNOT_RUN
 
-    rec = records[-1]  # shal_record.read() returns oldest first; ours is the newest
+    rec = new[0]
     cause = "transport" if (rec.verdict == "error" and unplugged) else None
     summary = {"verdict": rec.verdict, "cause": cause, "record": rec.record,
                "unit": rec.unit, "sequence": rec.sequence}
