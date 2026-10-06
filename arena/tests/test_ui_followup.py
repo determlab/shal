@@ -1,8 +1,8 @@
 """issue #427 (demo follow-up to #406): the CMO problem text is on every
 page, `drivers` round-trips into the embedded payload and is never
 interpreted as markup, `rails`/`level` are in the payload for the answer
-sentence, and the static shell has the separate containers the
-"Two more checks, scripted" section and the driver-code fold need."""
+sentence, and the static shell has the separate containers the scripted
+section and the driver-code fold need."""
 from __future__ import annotations
 
 import json
@@ -46,8 +46,6 @@ _STEP_CAPTIONS = (
     "It writes a driver for each one and checks it.",
     "The bench: power supply, multimeter, card.",
     "It powers the card and measures the 3.3 V rail.",
-    "A scripted step asks for 30 V on purpose. The gate stops it. Nothing was sent.",
-    "A cable is unplugged. The result is error, not fail: the card is not blamed.",
     "The answer: which measurement failed, against which limit.",
 )
 
@@ -65,6 +63,18 @@ def test_all_seven_step_captions_are_verbatim_on_the_page() -> None:
     html = render_watch_page("run-x", _BASE_PAYLOAD)
     for caption in _STEP_CAPTIONS:
         assert caption in html, caption
+
+
+def test_scripted_section_title_and_lines_match_the_exact_cmo_wording() -> None:
+    """issue #444: the scripted checks did not happen in THIS replayed run
+    -- the heading and both lines say so explicitly, exact CMO text."""
+    html = render_watch_page("run-x", _BASE_PAYLOAD)
+    assert "Not in this run: two checks from the scripted demo" in html
+    assert "In the scripted demo (<code>shal-arena demo</code>), a step asks for 30 V " in html
+    assert "on purpose. The gate stops it before anything is sent." in html
+    assert "In the scripted demo, a cable is unplugged. The result is error, not fail: " in html
+    assert "the card is not blamed." in html
+    assert "Two more checks, scripted" not in html
 
 
 def test_shell_has_the_driver_code_and_scripted_containers() -> None:
