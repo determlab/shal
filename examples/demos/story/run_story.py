@@ -349,6 +349,12 @@ def _run_bench_10_runs(ctx: dict[str, Any]) -> dict[str, Any]:
            "without_shal_destroyed": result["without_shal"]["destroyed"]}
 
 
+# CTO review on #383 (the CMO's addition): the arena steps and the gate-on/
+# off step are played by this script's own fixed logic (_diagnose, the
+# bench policy above) -- never an AI agent -- so each of their lines says so
+# up front. A viewer must not mistake a scripted number for an agent's.
+_SCRIPTED_PLAYER_NOTE = "Scripted player, not an AI agent."
+
 _STEPS: list[tuple[str, str, Any, Any]] = [
     ("virtual_bench_pass",
      "Setting the bench power supply to 3.3 volts and reading it back on the "
@@ -360,16 +366,23 @@ _STEPS: list[tuple[str, str, Any, Any]] = [
     ("psu_30v_blocked",
      "Asking the power supply for 30 volts, above the board's declared limit.",
      _run_psu_30v_blocked, check_psu_30v_blocked),
-    ("arena_easy", "Running the easy arena task: measuring the rail and answering from it.",
+    ("arena_easy",
+     f"{_SCRIPTED_PLAYER_NOTE} Running the easy arena task: measuring the rail "
+     "and answering from it.",
      lambda ctx: _run_arena_task(ctx, "easy"), check_arena_task),
-    ("arena_medium", "Running the medium arena task: measuring the rail and answering from it.",
+    ("arena_medium",
+     f"{_SCRIPTED_PLAYER_NOTE} Running the medium arena task: measuring the rail "
+     "and answering from it.",
      lambda ctx: _run_arena_task(ctx, "medium"), check_arena_task),
-    ("arena_hard", "Running the hard arena task: measuring the rail and answering from it.",
+    ("arena_hard",
+     f"{_SCRIPTED_PLAYER_NOTE} Running the hard arena task: measuring the rail "
+     "and answering from it.",
      lambda ctx: _run_arena_task(ctx, "hard"), check_arena_task),
     ("arena_result_card", "Writing the result card for the hard run.",
      _run_arena_result_card, check_arena_result_card),
     ("bench_10_runs",
-     "Running the rail task ten times, with the gate on and with the gate off.",
+     f"{_SCRIPTED_PLAYER_NOTE} Running the rail task ten times, with the gate on "
+     "and with the gate off.",
      _run_bench_10_runs, check_bench_10_runs),
 ]
 

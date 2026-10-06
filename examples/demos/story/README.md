@@ -43,12 +43,17 @@ Setting the bench power supply to 3.3 volts and reading it back on the simulated
 Unplugging the simulated multimeter and reading it again.
   -> error
 ...
-Running the easy arena task: measuring the rail and answering from it.
+Scripted player, not an AI agent. Running the easy arena task: measuring the rail and answering from it.
   -> correct (ok)
 ...
 Writing the result card for the hard run.
   -> wrote /tmp/shal-story-xxxxxxxx/cards/run-....card.html
 ```
+
+The arena tasks and the gate-on/off benchmark are played by this script's
+own fixed logic (`_diagnose`, the bench policy), never by an AI agent — each
+of their lines says so up front (CTO review on #383), so nobody watching
+mistakes a scripted number for an agent's.
 
 The script writes its run state (including that result card) under a
 directory of its own in the OS temp location, printed at the end of a
@@ -70,7 +75,7 @@ in order.
 | File | Role |
 |---|---|
 | `run_story.py` | the one script: no install of its own, embeds the `examples/demos/virtual-bench/bench.yaml` device tree (that example ships in no wheel yet — issue #384) and reads SHAL Arena's tasks/cards from the installed `shal-arena` package itself (`importlib.resources`, never a checkout path), so running this proves the wheel, not the source tree |
-| `story.gif` | one real run, recorded: `python run_story.py --pause 1.2`'s real stdout, captured with its real per-line timing and rendered verbatim into the GIF (durations clamped to stay watchable; no line's text was altered) |
+| `story.gif` | one real run, recorded: `python run_story.py --pause 1.2`'s real stdout, captured with its real per-line timing and rendered verbatim into the GIF (durations clamped to stay watchable; no line's text was altered). Scripted player, not an AI agent: the arena and gate-on/off numbers in it come from this script's own fixed logic, not from an agent playing the challenge. |
 
 `tests/test_story_script.py` (repo root) runs this script with
 `--pause 0 --json`, checks every step's shape, and separately unit-tests

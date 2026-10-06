@@ -95,6 +95,19 @@ def test_the_30v_step_is_blocked_by_limits_not_sent():
     assert blocked["result"]["blocked"] == "limits"
 
 
+def test_the_scripted_steps_say_they_are_not_an_ai_agent():
+    # CTO review on #383 (the CMO's addition): a viewer must not mistake a
+    # scripted number for an agent's.
+    _lines, doc, _ec = _run_story()
+    scripted = {"arena_easy", "arena_medium", "arena_hard", "bench_10_runs"}
+    for step in doc["steps"]:
+        line = step["line"]
+        if step["step"] in scripted:
+            assert line.startswith("Scripted player, not an AI agent.")
+        else:
+            assert "Scripted player" not in line
+
+
 def test_the_arena_steps_actually_measure_and_answer_correctly():
     # CTO review on #343: answering "ok" with no measurement is disqualified,
     # not success. Each arena step must have taken a real reading and
