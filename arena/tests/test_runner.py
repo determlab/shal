@@ -10,7 +10,7 @@ from pathlib import Path
 import pytest
 
 from shal_arena.errors import CheckCouldNotRun, UnknownRun
-from shal_arena.loader import load_task
+from shal_arena.loader import list_tasks, load_task
 from shal_arena.runner import (
     NotSupported,
     answer,
@@ -22,7 +22,7 @@ from shal_arena.runner import (
 )
 from shal_arena.store import RunStore
 
-from .conftest import FAILING_DRIVER, MEDIUM_TASK, PASSING_DRIVER, SAMPLE_TASK
+from .conftest import FAILING_DRIVER, MEDIUM_TASK, PASSING_DRIVER, RELAY_RAIL_TASK, SAMPLE_TASK
 
 
 def _expected_fault(run_id: str, state_dir: Path) -> str:
@@ -65,6 +65,33 @@ def test_start_run_states_the_rail_limit_in_volts_matching_the_card(tmp_path: Pa
     assert rail["max_v"] == pytest.approx(card_rail.nominal_v * (1 + card_rail.tol_pct / 100))
     assert rail["min_v"] == pytest.approx(3.3 * 0.97)
     assert rail["max_v"] == pytest.approx(3.3 * 1.03)
+
+
+def test_rail_min_v_and_max_v_are_rounded_to_4_decimals_for_every_card(tmp_path: Path) -> None:
+    """issue #451: unrounded float arithmetic gives 3.2009999999999996 for
+    some cards' tol_pct -- every packaged task's rails must round cleanly."""
+    for t in list_tasks():
+        result = start_run(t["path"], state_dir=tmp_path)
+        for rail in result["rails"]:
+            assert round(rail["min_v"], 4) == rail["min_v"], (t["name"], rail)
+            assert round(rail["max_v"], 4) == rail["max_v"], (t["name"], rail)
+
+
+def test_start_run_states_temp_points_matching_the_card(tmp_path: Path) -> None:
+    """issue #451: relay-rail's regulator temp limit (high_c: 85, card
+    description text only) must also be machine-readable in the run JSON,
+    the same gap #428 fixed for rails."""
+    result = start_run(RELAY_RAIL_TASK, state_dir=tmp_path)
+    loaded = load_task(RELAY_RAIL_TASK)
+    card_temp = loaded.card.temp_points[0]
+
+    temp_points = result["temp_points"]
+    assert len(temp_points) == 1
+    temp = temp_points[0]
+    assert temp["name"] == card_temp.name
+    assert temp["test_point"] == card_temp.test_point
+    assert temp["nominal_c"] == card_temp.nominal_c
+    assert temp["high_c"] == card_temp.high_c == 85
 
 
 def test_no_file_the_player_can_read_contains_the_hidden_fault(tmp_path: Path) -> None:
