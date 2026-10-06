@@ -94,19 +94,44 @@ def redact_secret_args(argv: Sequence[str]) -> list[str]:
     return out
 
 
+#: A `scheme://...` substring, greedy to the next whitespace. Deliberately
+#: narrower than "contains a URL": `redact_url` itself was written for a
+#: value that IS an address end to end (a bare `host:port` counts too), not
+#: for free text that happens to contain an `@` for an unrelated reason
+#: (CTO review on #457 round 2: a real SCPI channel list, `MEAS:VOLT? (@1)`,
+#: has no `://` anywhere and must never be touched).
+_URL_SUBSTRING_RE = re.compile(r"[A-Za-z][\w+.-]*://\S+")
+
+
+def redact_url_in_text(value: str) -> str:
+    """Cleans only the URL substrings a string of free text contains,
+    leaving everything else untouched (#457/#460 round 2 security fix).
+    `redact_url` was written for a value that IS a URL/address, not for
+    text that might merely contain one — applying it to a whole string
+    mangled ordinary text with an unrelated `@` (`MEAS:VOLT? (@1)`, a real
+    SCPI channel list) and, worse, could leave a URL's own userinfo in
+    place depending on where in the string it fell. Finds each
+    `scheme://...` substring and runs the real `redact_url` on just that
+    piece."""
+    return _URL_SUBSTRING_RE.sub(lambda m: redact_url(m.group(0)), value)
+
+
 def redact_structured(value: Any) -> Any:
-    """Recursively applies the text rule (`redact_url`) to every string, and
-    masks any dict value whose key contains a secret keyword (same list as
-    `redact_secret_args`) with ``***`` -- for JSON-like data (dict/list/str/
-    number/bool/None). Shared by the bus exchange hook (#457, a structured
-    message's string values) and the CLI call log (#460, its `json`/`text`)."""
+    """Recursively applies the text rule (`redact_url_in_text`) to every
+    string, and masks any dict value whose key contains a secret keyword
+    (same list as `redact_secret_args`) with ``***`` -- for JSON-like data
+    (dict/list/tuple/str/number/bool/None). Shared by the bus exchange hook
+    (#457, a structured message's string values) and the CLI call log
+    (#460, its `json`/`text`)."""
     if isinstance(value, str):
-        return redact_url(value)
+        return redact_url_in_text(value)
     if isinstance(value, dict):
         return {k: ("***" if _SECRET_KEY_RE.search(k) else redact_structured(v))
                for k, v in value.items()}
     if isinstance(value, list):
         return [redact_structured(v) for v in value]
+    if isinstance(value, tuple):
+        return tuple(redact_structured(v) for v in value)
     return value
 
 
