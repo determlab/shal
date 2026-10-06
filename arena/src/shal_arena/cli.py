@@ -7,6 +7,7 @@
     shal-arena measure <run-id> dmm0 ./driver.py --json
     shal-arena drive <run-id> psu0 6.5 --json
     shal-arena answer <run-id> low_voltage --json
+    shal-arena bench --runs 10 --json
     shal-arena bench tasks/rail-3v3.yaml --runs 10 --policy ./policy.py --json
 
 Non-interactive by design: no prompt ever blocks a command, so an agent can
@@ -23,7 +24,13 @@ import json
 import sys
 from pathlib import Path
 
-from .bench import import_policy, run_benchmark
+from .bench import (
+    DEFAULT_POLICY,
+    DEFAULT_TASK,
+    _default_dmm_driver_registered,
+    import_policy,
+    run_benchmark,
+)
 from .errors import ArenaError
 from .replay.card import build_result_card
 from .replay.rack import build_setup_yaml, render_rack_page
@@ -125,10 +132,21 @@ def _cmd_answer(args: argparse.Namespace) -> int:
 
 def _cmd_bench(args: argparse.Namespace) -> int:
     try:
-        policy = import_policy(args.policy)
-        result = run_benchmark(args.task, play_with_shal=policy.play_with_shal,
-                               play_without_shal=policy.play_without_shal,
-                               runs=args.runs, seed_base=args.seed, state_dir=args.state_dir)
+        task = args.task or str(DEFAULT_TASK)
+        if args.policy:
+            policy = import_policy(args.policy)
+            result = run_benchmark(task, play_with_shal=policy.play_with_shal,
+                                   play_without_shal=policy.play_without_shal,
+                                   runs=args.runs, seed_base=args.seed, state_dir=args.state_dir)
+        else:
+            # issue #397 CTO review: the built-in policy's own dmm driver is
+            # registered only for the duration of this call, never when a
+            # --policy was given, so it can never collide with one.
+            with _default_dmm_driver_registered():
+                result = run_benchmark(task, play_with_shal=DEFAULT_POLICY.play_with_shal,
+                                       play_without_shal=DEFAULT_POLICY.play_without_shal,
+                                       runs=args.runs, seed_base=args.seed,
+                                       state_dir=args.state_dir)
     except ArenaError as e:
         return _report_error(e, args.json)
     if args.json:
@@ -236,16 +254,20 @@ def _build_parser() -> argparse.ArgumentParser:
     p_bench = sub.add_parser(
         "bench",
         help="benchmark mode: the same task with SHAL and without it (issue #314 Agent path)")
-    p_bench.add_argument("task", help="path to the task.yaml")
+    p_bench.add_argument("task", nargs="?", default=None,
+                         help="path to the task.yaml (default: the built-in sample task, "
+                              "tasks/rail-3v3.yaml — only meaningful without --policy too)")
     p_bench.add_argument("--runs", type=int, default=10,
                          help="runs per side, >= 10 (default: 10)")
     p_bench.add_argument("--seed", type=int, default=0,
                          help="base seed; run i on each side uses seed + i (default: 0)")
-    p_bench.add_argument("--policy", required=True, metavar="PY_FILE",
+    p_bench.add_argument("--policy", metavar="PY_FILE",
                          help="a Python file defining play_with_shal(task_path, seed, "
                               "state_dir) and play_without_shal(...), each returning "
                               "(run_id, the dict `answer` returned) — your own agent or a "
-                              "scripted one; shal-arena plays no model of its own")
+                              "scripted one; shal-arena plays no model of its own. Without "
+                              "this, bench plays its own built-in default policy, which only "
+                              "knows the built-in sample task above")
     add_common(p_bench)
     p_bench.set_defaults(func=_cmd_bench)
 

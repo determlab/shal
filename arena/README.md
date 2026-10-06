@@ -337,24 +337,41 @@ Issue #313 ships the damage model and the generic card simulator
 Issue #314 adds benchmark mode: the same task played with SHAL (today's
 `run`/`check-driver`/`measure`/`drive`/`answer`, unmodified) and without it
 (raw SCPI access — no driver.py, no gate, no record), on the identical seeded
-world, so the two are comparable. Illustrative only below — unlike every
-other block in this file, `bench` needs a `--policy` file you write (one
-Python file defining `play_with_shal(task_path, seed, state_dir)` and
-`play_without_shal(...)`, each returning `(run_id, the dict answer
-returned)`), so there's no single command a cold agent can paste and run:
+world, so the two are comparable:
+
+```bash
+shal-arena bench --runs 10 --json
+```
+
+Issue #397 gives `bench` a built-in default policy, so the command above
+works with no file of your own and no task argument — it plays the
+built-in sample task (`tasks/rail-3v3.yaml`) with a policy of its own that
+drives the PSU's own max setpoint (30 V) on purpose, takes one reading,
+and answers from that reading (not a hardcoded guess). That voltage is
+past the card's documented abs max, so this also shows what the two sides
+being "comparable" actually buys you: `drive`'s own gate (issue #330)
+refuses it, every time, with nothing sent; `raw_scpi` has no gate and
+sends it straight through, destroying the card, every time it gets that
+far. Not meant to score the *task* well — only to prove the plumbing
+works, with a real, non-trivial result.
+
+Pass `--policy` to play your own task, or your own agent, instead:
 
 ```
 shal-arena bench src/shal_arena/tasks/rail-3v3.yaml --runs 10 --policy ./policy.py --json
 #  -> {"with_shal": {"median_turns": ..., "turns_range": [...], "sim_logs": [...]}, "without_shal": {...}}
 ```
 
-Your own agent, or a scripted one — `shal-arena` plays no model of its own
-(running an actual model across many tasks and publishing numbers is out of
-scope for this ticket — see `shal_arena.bench`'s own docstring). One turn =
-one call that reaches the sim on either side (`check`, `measure`, `drive`,
-or a raw SCPI command, via `shal_arena.runner.raw_scpi`); `answer` is never
-a turn. `--runs` below 10 is refused, naming the fix. Results always report
-both sides — a task where "without SHAL" does better is never filtered out.
+`./policy.py` is one Python file defining `play_with_shal(task_path, seed,
+state_dir)` and `play_without_shal(...)`, each returning `(run_id, the dict
+answer returned)` — your own agent, or a scripted one; `shal-arena` plays no
+model of its own (running an actual model across many tasks and publishing
+numbers is out of scope for this ticket — see `shal_arena.bench`'s own
+docstring). One turn = one call that reaches the sim on either side
+(`check`, `measure`, `drive`, or a raw SCPI command, via
+`shal_arena.runner.raw_scpi`); `answer` is never a turn. `--runs` below 10
+is refused, naming the fix. Results always report both sides — a task
+where "without SHAL" does better is never filtered out.
 
 Issue #315 adds the replay/result-card and rack pages, both offline single
 HTML files built by `shal_arena.replay` — see "Agent path" above for a
