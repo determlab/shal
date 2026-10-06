@@ -38,10 +38,11 @@ Invariants this file enforces — they are the contract, and the tests check the
 7.  **The `record_version` 3 additions are always present, `null` when unknown**
     (`record.md` §2.1, #409) — the one exception to "optional fields are
     omitted when unset" above. `Step.ops`, `Measurement.instrument_id`/
-    `limit_source` and `Record.repeatability` are written on every v3 record
-    so an agent sees every key without reading docs; a record built with an
-    explicit older `record_version` (a v1/v2 file, or a test reconstructing
-    one) omits them, since that version never had them to write.
+    `instrument_simulated`/`limit_source` and `Record.repeatability` are
+    written on every v3 record so an agent sees every key without reading
+    docs; a record built with an explicit older `record_version` (a v1/v2
+    file, or a test reconstructing one) omits them, since that version never
+    had them to write.
 
 Determinism: `started`/`ended` are ISO-8601 UTC **strings**, not `datetime` —
 PyYAML would parse a bare timestamp back into a `datetime` while JSON would hand
@@ -71,9 +72,10 @@ import yaml
 from .errors import Error, HopError
 
 # `record.md` §7 — the first field, so a reader knows what it holds. 3 since
-# #409 reserved `Measurement.instrument_id`/`limit_source` and `Record.
-# repeatability` — all optional, so a v2 reader's required keys are untouched,
-# but the version still moves so a reader knows these new keys may be present.
+# #409 reserved `Step.ops`, `Measurement.instrument_id`/`instrument_simulated`/
+# `limit_source` and `Record.repeatability` — all optional, so a v2 reader's
+# required keys are untouched, but the version still moves so a reader knows
+# these new keys may be present.
 RECORD_VERSION = 3
 
 #: File layout under a store directory (`record.md` §4).
@@ -207,6 +209,19 @@ class OpBlocked:
     reason: BlockedReason
     message: str
 
+    def __post_init__(self) -> None:
+        # CTO review on #409 (PR #452): `BlockedReason`/`OpResult` are
+        # `Literal`s, which Python never enforces at runtime -- without this,
+        # `Op(..., blocked=OpBlocked(reason="bogus", ...))` would construct
+        # cleanly, `write()` would store it, and only the NEXT `read()` would
+        # ever catch it (`_enum` in `_op_from_mapping`). The writer must
+        # refuse it before it reaches disk, same as every other invariant
+        # here.
+        if self.reason not in _BLOCKED_REASONS:
+            raise RecordError(
+                f"blocked.reason must be one of {', '.join(sorted(_BLOCKED_REASONS))} "
+                f"— got {self.reason!r}")
+
 
 @dataclass(frozen=True, kw_only=True)
 class Op:
@@ -232,10 +247,22 @@ class Op:
     blocked: OpBlocked | None = None
 
     def __post_init__(self) -> None:
+        # CTO review on #409 (PR #452): validate at construction, not only on
+        # read -- `result` is a `Literal`, not enforced at runtime, and
+        # `retries` had no check at all. Without this, `write()` could store
+        # a record its own `read()` would refuse.
+        if self.result not in _OP_RESULTS:
+            raise RecordError(
+                f"an op's result must be one of {', '.join(sorted(_OP_RESULTS))} "
+                f"— got {self.result!r}")
         if (self.result == "error") != (self.error is not None):
             raise RecordError("an op's 'error' is set if and only if result='error'")
         if (self.result == "blocked") != (self.blocked is not None):
             raise RecordError("an op's 'blocked' is set if and only if result='blocked'")
+        if isinstance(self.retries, bool) or not isinstance(self.retries, int) \
+                or self.retries < 0:
+            raise RecordError(f"an op's retries must be a non-negative int — "
+                              f"got {self.retries!r}")
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -314,7 +341,8 @@ class Record:
     firmware: str | None = None
     abort: Abort | None = None
     # #409: reserved, always None for now — no ticket computes repeatability
-    # yet. Omitted when unset, like every other optional field here.
+    # yet. A v3 record always WRITES this key, `null` — never omitted, unlike
+    # every other optional field here (invariant 7 below).
     repeatability: Any | None = None
     record_version: int = RECORD_VERSION
 

@@ -441,6 +441,35 @@ def test_an_unknown_blocked_reason_is_refused(tmp_path):
         Record.from_mapping(doc)
 
 
+# CTO review on #409 (PR #452): the writer must refuse what its own reader
+# would refuse, at construction time -- not only discover it on the next
+# `read()`, by which point a bad record is already on disk.
+
+def test_an_unknown_op_result_is_refused_at_construction():
+    with pytest.raises(RecordError, match="result"):
+        Op(device="d", op="o", args={}, side_effect="none", result="weird")
+
+
+def test_an_unknown_blocked_reason_is_refused_at_construction():
+    with pytest.raises(RecordError, match="reason"):
+        OpBlocked(reason="weird", message="x")
+
+
+@pytest.mark.parametrize("bad", ["three", None, -1, True])
+def test_a_bad_retries_is_refused_at_construction(bad):
+    with pytest.raises(RecordError, match="retries"):
+        Op(device="d", op="o", args={}, side_effect="none", result="ok", retries=bad)
+
+
+def test_a_bad_retries_in_a_stored_file_is_refused_on_read():
+    doc = _with(steps=[Step(name="s", verdict="pass",
+                           ops=[Op(device="d", op="o", args={}, side_effect="none",
+                                  result="ok")])]).to_mapping()
+    doc["steps"][0]["ops"][0]["retries"] = "three"
+    with pytest.raises(RecordError, match="retries"):
+        Record.from_mapping(doc)
+
+
 @pytest.mark.parametrize("drop", [None, "unit", "steps", "verdict"])
 def test_a_newer_record_is_refused_in_one_sentence_naming_no_key(drop):
     doc = FULL.to_mapping()
