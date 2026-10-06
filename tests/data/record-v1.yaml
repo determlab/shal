@@ -1,0 +1,24 @@
+record_version: 1
+record: rec-20250601T090000-aaaa11
+unit: SN-000100
+station: bench-hemi
+sequence: psu-bringup
+sequence_version: 1a2b3c4
+setup: bench.yaml
+setup_version: aaaaaaa
+runner: pytest
+started: '2025-06-01T09:00:00Z'
+ended: '2025-06-01T09:00:30Z'
+verdict: pass
+steps:
+- name: measure_vout
+  verdict: pass
+  measurements:
+  - name: vout
+    value: 4.98
+    unit: V
+    limits:
+      min: 4.9
+      max: 5.1
+    pass: true
+calls: []

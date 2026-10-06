@@ -1,0 +1,23 @@
+record_version: 2
+record: rec-20260101T120000-bbbb22
+unit: SN-000200
+station: line2-st4
+sequence: psu-bringup
+sequence_version: 5d6e7f8
+setup: bench.yaml
+setup_version: bbbbbbb
+runner: bricks
+started: '2026-01-01T12:00:00Z'
+ended: '2026-01-01T12:00:45Z'
+verdict: fail
+steps:
+- name: measure_vout
+  verdict: fail
+  measurements:
+  - name: vout
+    value: 4.7
+    unit: V
+    limits:
+      min: 4.9
+      max: 5.1
+    pass: false
