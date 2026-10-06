@@ -70,7 +70,11 @@ def _reference_dmm_driver_path():
 #: can easily land inside the tolerance band by chance (CTO: 17 of 17 noise
 #: seeds across easy/medium/hard failed with a single read). Several reads,
 #: and the SPREAD across them, is what noise actually looks like.
-_N_READS = 5
+#: CTO review round 3: 5 reads passed 90/90 seeds but with a thin margin on
+#: `hard` (band 0.066 V, smallest observed noise spread 0.0748 V) -- 8 widens
+#: that margin without exposing the fault's own ripple_vpp (which the run
+#: JSON must never leak).
+_N_READS = 8
 
 
 def _diagnose(nominal_v: float, tol_pct: float, readings: list[float],
