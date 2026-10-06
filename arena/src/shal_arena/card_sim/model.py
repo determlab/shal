@@ -206,6 +206,12 @@ class CardSim:
         elif breaches:
             self._log(address, "protection", input=name, volts=volts,
                       limit_v=breaches[0].above_v, source=breaches[0].source)
+        else:
+            # issue #427 CTO review round 3: a clean, in-range drive wrote
+            # nothing at all to the sim log before this -- the Watch
+            # timeline had no step for it (the PSU box's own value changed
+            # with no explanation). Same shape as every other entry here.
+            self._log(address, "write", input=name, volts=volts)
         return Result(True, self.state, detail={"input": name, "volts": volts})
 
     def _log(self, address: str, kind: str, **extra: Any) -> None:

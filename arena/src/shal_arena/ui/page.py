@@ -191,14 +191,16 @@ const KIND_LABEL = {
   refused: "Tried to set", protection: "Set", damage: "Set", reading: "Measured",
 };
 
-// issue #427 CTO review round 2: 2 decimal places, with the unit symbol,
-// everywhere a number is shown -- bench boxes, timeline rows and the
-// closing sentence alike (fixes "90.00114442664224°C" running off its
-// box, and "3.3 volt" touching the box edge).
+// issue #427 CTO review: a number is shown with a unit symbol everywhere
+// it appears -- bench boxes, timeline rows and the closing sentence alike
+// (fixes "90.00114442664224°C" running off its box, and "3.3 volt"
+// touching the box edge). Round 3: temperatures are 1 decimal ("90.0 °C"),
+// voltages stay 2 ("3.30 V") -- a temperature reading is never as precise
+// as a calibrated voltage reference.
 function fmtNum(value, unit) {
   const n = Number(value);
   if (!Number.isFinite(n)) return String(value);
-  if (unit === "celsius") return `${n.toFixed(2)} °C`;
+  if (unit === "celsius") return `${n.toFixed(1)} °C`;
   return `${n.toFixed(2)} V`;
 }
 
@@ -207,7 +209,14 @@ function stepTitle(e) {
   if (e.kind === "check") return `Checked driver on ${addr}`;
   if (e.kind === "reading" || e.kind === "measure") return `Measured ${addr}`;
   if (e.kind === "query") return `Read ${addr}`;
-  if (e.kind === "write") return `Wrote ${addr}`;
+  if (e.kind === "write") {
+    // issue #427 CTO review round 3: a clean, in-range drive is now its
+    // own step ("Powered the card at 12.00 V") -- it used to write
+    // nothing to the sim log at all, so the PSU box's value changed with
+    // no step explaining it.
+    const v = e.detail && e.detail.volts;
+    return v === undefined ? `Wrote ${addr}` : `Powered the card at ${fmtNum(v)}`;
+  }
   if (e.kind === "call") {
     const op = e.detail && e.detail.op, args = (e.detail && e.detail.args) || [];
     if (op === "set_relay") return `Switched ${addr} ${args[1] === "true" ? "on" : "off"}`;

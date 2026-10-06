@@ -57,30 +57,61 @@ def _answer_label(fault_id: str) -> str:
     return "ok" if fault_id == "ok" else fault_id.replace("_", " ")
 
 
+# issue #427 CTO review round 3: the noise fault gives a DIFFERENT reading
+# on every read -- a single "reads X" is misleading when the log has more
+# than one distinct value for this address; name the range actually seen
+# instead of picking one arbitrarily.
+def _varies(values: list[float], decimals: int) -> bool:
+    return len({round(v, decimals) for v in values}) > 1
+
+
+def _rail_clause(rail: dict[str, Any], values: list[float]) -> str:
+    label, lo, hi = f"the {rail['name']} rail", rail["lo"], rail["hi"]
+    if _varies(values, 2):
+        return f"{label} reads {min(values):.2f}-{max(values):.2f} V across reads"
+    v = values[-1]
+    if lo <= v <= hi:
+        return f"{label} reads {v:.2f} V, inside its {lo:.2f}-{hi:.2f} V window"
+    side = "below" if v < lo else "above"
+    limit = lo if v < lo else hi
+    return f"{label} reads {v:.2f} V, {side} its {limit:.2f} V limit"
+
+
+def _temp_clause(temp: dict[str, Any], values: list[float]) -> str:
+    label, high = temp["name"], temp["high_c"]
+    if _varies(values, 1):
+        return f"{label} reads {min(values):.1f}-{max(values):.1f} °C across reads"
+    v = values[-1]
+    if v <= high:
+        return f"{label} {v:.1f} °C, within its {high:.1f} °C limit"
+    return f"{label} {v:.1f} °C, {v - high:.1f} °C above its {high:.1f} °C limit"
+
+
 def _measured_clause(name: str, rail: dict[str, Any] | None, temp: dict[str, Any] | None,
-                     reading: float | None, attempted: bool) -> str | None:
+                     readings: list[float], has_query: bool, has_measure: bool) -> str | None:
     """`None` means "say nothing about this instrument" -- no attempt was
     ever logged for it (an old capture made before this ticket, or an
-    instrument the agent never touched), as opposed to a real failed read
-    (issue #427 CTO review round 2: "No answer" only when a read really
-    failed, never just because the log has no `reading` line)."""
-    if reading is None:
-        return f"No answer from the {name}" if attempted else None
-    v = reading
-    if rail is not None:
-        lo, hi = rail["lo"], rail["hi"]
-        if lo <= v <= hi:
-            return f"the {rail['name']} rail reads {v:.2f} V, inside its {lo:.2f}-{hi:.2f} V window"
-        side = "below" if v < lo else "above"
-        limit = lo if v < lo else hi
-        return f"the {rail['name']} rail reads {v:.2f} V, {side} its {limit:.2f} V limit"
-    if temp is not None:
-        high = temp["high_c"]
-        if v <= high:
-            return f"{temp['name']} {v:.2f} °C, within its {high:.2f} °C limit"
-        return (f"{temp['name']} {v:.2f} °C, {v - high:.2f} °C above its "
-                f"{high:.2f} °C limit")
-    return f"the {name} reads {v:.2f}"
+    instrument the agent never touched).
+
+    issue #427 CTO review round 3: three states, not two. A `reading` line
+    -- the number. No `reading` but a `query` DID happen -- the exchange
+    with the bus worked (this is "a read that worked", never "No answer");
+    we just have no number for it (an old capture made before the
+    `reading` kind existed, or a reply the driver could not parse) -- "the
+    agent's driver failed to read". No `query` at all, only the neutral
+    `measure` marker -- the read never reached the bus (a real transport
+    failure, e.g. the `open` fault) -- this is the one real "No answer"."""
+    if readings:
+        if rail is not None:
+            return _rail_clause(rail, readings)
+        if temp is not None:
+            return _temp_clause(temp, readings)
+        return f"the {name} reads {readings[-1]:.2f}"
+    if has_query:
+        return f"the agent's driver failed to read the {name}"
+    if has_measure:
+        return f"No answer from the {name}"
+    return None
 
 
 def _answer_sentence(payload: dict[str, Any], rails: list[dict[str, Any]],
@@ -107,16 +138,19 @@ def _answer_sentence(payload: dict[str, Any], rails: list[dict[str, Any]],
         temp = temps_by_tp.get(test_point)
         if rail is None and temp is None:
             continue
-        reading, attempted = None, False
-        for e in reversed(timeline):
+        readings, has_query, has_measure = [], False, False
+        for e in timeline:
             if e.get("address") != instrument["address"]:
                 continue
-            if e.get("kind") == "reading" and reading is None:
-                reading = e["detail"]["value"]
-            if e.get("kind") in ("measure", "query"):
-                attempted = True
+            if e.get("kind") == "reading":
+                readings.append(e["detail"]["value"])
+            elif e.get("kind") == "query":
+                has_query = True
+            elif e.get("kind") == "measure":
+                has_measure = True
         clause = _measured_clause(
-            _name_for_address(instrument["address"]), rail, temp, reading, attempted)
+            _name_for_address(instrument["address"]), rail, temp, readings, has_query,
+            has_measure)
         if clause is not None:
             clauses.append(clause)
 
@@ -131,10 +165,14 @@ def _answer_sentence(payload: dict[str, Any], rails: list[dict[str, Any]],
         measured = None
 
     given_label = _answer_label(record["given"])
-    if record["correct"]:
+    # issue #427 CTO review round 3 (blocker): a destroyed card must never
+    # say "Correct" -- checked before `record["correct"]`, which only ever
+    # compares the agent's answer to the hidden fault and knows nothing
+    # about the card's physical state.
+    if payload["card"]["destroyed"]:
+        verdict = "Wrong: the card is destroyed."
+    elif record["correct"]:
         verdict = "Correct."
-    elif payload["card"]["destroyed"]:
-        verdict = "Wrong: the card was destroyed before it could answer."
     elif record["fault_id"] == "ok":
         verdict = "Wrong: the card was fine."
     elif record["given"] == "ok":

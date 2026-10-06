@@ -189,6 +189,29 @@ def test_answer_sentence_covers_the_noise_fault(tmp_path: Path) -> None:
     assert "The agent's answer: noise." in sentence
 
 
+def test_answer_sentence_names_the_range_across_repeated_noisy_reads(tmp_path: Path) -> None:
+    """CTO review round 3: the noise fault can give a different reading on
+    every read -- the sentence must name the range actually seen, not pick
+    one arbitrary value. This sim's own ripple is deterministic per run
+    (same seed, same shift every call), so the varying-value case is built
+    directly from the sim log, the same shape a real noisy instrument
+    would leave."""
+    run_id = start_run(str(SAMPLE_TASK), seed=2, state_dir=tmp_path)["run_id"]
+    drive_input(run_id, "psu0", 5.0, state_dir=tmp_path)
+    take_measurement(run_id, "dmm0", PASSING_DMM_DRIVER, state_dir=tmp_path)
+
+    log_path = tmp_path / f"{run_id}.simlog.jsonl"
+    with log_path.open("a", encoding="utf-8") as f:
+        for i, value in enumerate((3.25, 3.38, 3.31)):
+            f.write(json.dumps({"ts": f"2026-10-06T13:25:2{i}Z", "address": "dmm0",
+                                "kind": "reading", "value": value, "unit": "volt"}) + "\n")
+    answer(run_id, "noise", state_dir=tmp_path)
+
+    payload = run_payload(run_id, state_dir=tmp_path)
+    sentence = payload["answer_sentence"]
+    assert "reads 3.25-3.38 V across reads" in sentence
+
+
 def test_answer_sentence_on_a_destroyed_card_after_a_real_reading(tmp_path: Path) -> None:
     """CTO review round 2: "destroyed" must not say "before any reading"
     when a reading was in fact taken first."""
@@ -307,6 +330,85 @@ def test_answer_sentence_covers_the_open_fault_with_no_reading(tmp_path: Path) -
     sentence = payload["answer_sentence"]
     assert "No answer from the DMM" in sentence
     assert sentence.endswith("Correct.")
+
+
+def test_a_destroyed_card_never_says_correct_even_if_the_answer_would_match(
+        tmp_path: Path) -> None:
+    """CTO review round 3 (blocker): seed 2 realizes 'ok' -- measuring
+    first would make 'ok' the technically correct answer, but the card is
+    destroyed right after, and the sentence must say so, never 'Correct'."""
+    run_id = start_run(str(SAMPLE_TASK), seed=2, state_dir=tmp_path)["run_id"]
+    drive_input(run_id, "psu0", 5.0, state_dir=tmp_path)
+    take_measurement(run_id, "dmm0", PASSING_DMM_DRIVER, state_dir=tmp_path)
+    from shal_arena.runner import raw_scpi
+    raw_scpi(run_id, "psu0", "VOLT 30.0", state_dir=tmp_path)
+    answer(run_id, "ok", state_dir=tmp_path)
+
+    payload = run_payload(run_id, state_dir=tmp_path)
+    assert payload["card"]["destroyed"] is True
+    sentence = payload["answer_sentence"]
+    assert "Correct" not in sentence
+    assert sentence.endswith("Wrong: the card is destroyed.")
+
+
+def test_a_successful_drive_is_its_own_timeline_step(tmp_path: Path) -> None:
+    """CTO review round 3: a clean, in-range drive used to write nothing
+    to the sim log at all -- the Watch timeline had no step explaining why
+    the PSU box's value changed. Now it logs a `write` entry."""
+    run_id = start_run(str(SAMPLE_TASK), seed=2, state_dir=tmp_path)["run_id"]
+    drive_input(run_id, "psu0", 5.0, state_dir=tmp_path)
+
+    payload = run_payload(run_id, state_dir=tmp_path)
+    writes = [e for e in payload["timeline"]
+             if e["kind"] == "write" and e["address"] == "psu0"]
+    assert len(writes) == 1
+    assert writes[0]["detail"]["volts"] == 5.0
+
+
+def test_a_query_without_a_reading_says_the_driver_failed_not_no_answer(
+        tmp_path: Path) -> None:
+    """CTO review round 3: an old capture (the adk-lab shape, from before
+    the `reading` sim-log kind existed) has `measure` + `query` entries
+    but no `reading` line -- the exchange worked, so this is never "No
+    answer"."""
+    run_id = start_run(str(SAMPLE_TASK), seed=2, state_dir=tmp_path)["run_id"]
+    drive_input(run_id, "psu0", 5.0, state_dir=tmp_path)
+
+    log_path = tmp_path / f"{run_id}.simlog.jsonl"
+    with log_path.open("a", encoding="utf-8") as f:
+        f.write(json.dumps({"ts": "2026-10-06T13:25:20Z", "address": "dmm0",
+                            "kind": "measure"}) + "\n")
+        f.write(json.dumps({"ts": "2026-10-06T13:25:21Z", "address": "dmm0",
+                            "kind": "query", "cmd": "MEAS:VOLT:DC?"}) + "\n")
+    answer(run_id, "ok", state_dir=tmp_path)
+
+    payload = run_payload(run_id, state_dir=tmp_path)
+    sentence = payload["answer_sentence"]
+    assert "No answer" not in sentence
+    assert "the agent's driver failed to read the DMM" in sentence
+
+
+def test_a_measure_with_no_query_at_all_is_a_real_no_answer(tmp_path: Path) -> None:
+    """The `open` fault: the read never reaches the bus at all -- only the
+    neutral `measure` marker is logged. This is the one real failure."""
+    from shal_arena import fault as fault_mod
+    from shal_arena.errors import MeasurementFailed
+    from shal_arena.loader import load_task
+
+    card = load_task(str(SAMPLE_TASK)).card
+    seed = next(s for s in range(200)
+               if fault_mod.realized_fault(card, s).fault_id == "open")
+    run_id = start_run(str(SAMPLE_TASK), seed=seed, state_dir=tmp_path)["run_id"]
+    drive_input(run_id, "psu0", 5.0, state_dir=tmp_path)
+    with pytest.raises(MeasurementFailed):
+        take_measurement(run_id, "dmm0", PASSING_DMM_DRIVER, state_dir=tmp_path)
+    answer(run_id, "open", state_dir=tmp_path)
+
+    payload = run_payload(run_id, state_dir=tmp_path)
+    entries = [e for e in payload["timeline"] if e["address"] == "dmm0"]
+    assert not any(e["kind"] == "query" for e in entries)
+    sentence = payload["answer_sentence"]
+    assert "No answer from the DMM" in sentence
 
 
 def test_answer_sentence_on_a_destroyed_card(tmp_path: Path) -> None:
