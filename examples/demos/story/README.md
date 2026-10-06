@@ -9,21 +9,20 @@ the gate on and with the gate off.
 
 ## Install
 
-Two wheels, nothing else — this script never touches `pytest-shal`:
-
-```bash
-pip install pyshal shal-arena
-```
-
-**(main only, not in the PyPI release yet)** — PyPI's `pyshal` is still
-0.3.0 and has no `shal-arena` release at all. Until both are released, use
-the release-candidate wheels instead (`.github/workflows/rc-wheels.yml`
-builds `rc-pyshal` and `rc-shal-arena` from `main` on every push):
+**(main only, not in the PyPI release yet)** — neither `pyshal` 0.4.0 nor
+`shal-arena` is on PyPI (PyPI's `pyshal` is still 0.3.0, and `shal-arena`
+has never been published). Install both from source instead. This script
+never touches `pytest-shal`, so that's the only other dependency:
 
 ```bash
 pip install "pyshal @ git+https://github.com/determlab/shal" \
             "shal-arena @ git+https://github.com/determlab/shal#subdirectory=arena"
 ```
+
+(`.github/workflows/rc-wheels.yml` builds the same two packages as
+`rc-pyshal`/`rc-shal-arena` wheel artifacts from `main` on every push, for a
+CI job that wants a pinned wheel instead of installing from source.) Once
+both are on PyPI, this becomes `pip install pyshal shal-arena`.
 
 ## Run it
 

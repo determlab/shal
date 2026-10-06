@@ -6,23 +6,22 @@ measured for real and answered from that reading), a result card for the
 last one, then the rail benchmark run ten times with the gate on and with
 the gate off.
 
-This installs nothing itself. A fresh venv needs exactly two wheels,
-``pyshal`` and ``shal-arena`` (the release-candidate build, D1, until both
-are on PyPI — see this directory's README). Everything this script reads at
-run time comes from those two installed packages, not from a checkout:
-SHAL Arena's tasks and cards are its own package data
-(``importlib.resources``, not ``arena/src/...`` on disk), and the bench
-topology below is the same device tree as
-``examples/demos/virtual-bench/bench.yaml`` embedded verbatim — that
-example itself ships in no wheel yet (issue #384 is the ticket to fix
-that; until it lands, a checkout-free run needs its own copy).
+This installs nothing itself. A fresh venv needs exactly two packages,
+``pyshal`` and ``shal-arena`` (neither on PyPI yet — install both from
+source, see this directory's README). Everything this script reads at run
+time comes from those two installed packages, not from a checkout: SHAL
+Arena's tasks and cards are its own package data (``importlib.resources``,
+not ``arena/src/...`` on disk), and the bench topology below is the same
+device tree as ``examples/demos/virtual-bench/bench.yaml`` embedded
+verbatim — that example itself ships in no wheel yet (issue #384 is the
+ticket to fix that; until it lands, a checkout-free run needs its own copy).
 
-Every step prints one plain line before it runs (no claim about speed or
-score — a step either did what it was there to show, or it did not; the
-arena steps measure the rail for real and report correct/wrong/
-disqualified, never a bare "it ran"). ``--pause 0`` and ``--json`` exist
-for CI: no waiting, and one JSON document on stdout instead of the
-narration, right after this module's one fixed first line.
+Every step prints one plain line before it runs, then one of: a real
+measured verdict, ``correct``/``wrong``/``disqualified`` for an arena task,
+or ``crashed`` — never a neutral word standing in for a bad result.
+``--pause 0`` and ``--json`` exist for CI: no waiting, and one JSON document
+on stdout instead of the narration, right after this module's one fixed
+first line.
 """
 from __future__ import annotations
 
@@ -114,6 +113,53 @@ def play_without_shal(task_path, seed, state_dir):
     raw_scpi(run_id, "psu0", "VOLT 30.0", state_dir=state_dir)
     return run_id, _fault_answer(run_id, task_path, seed, state_dir)
 '''
+
+# A reference `driver.py` for the packaged "dmm" ADK case (same shape as
+# arena/src/shal_arena/adk/dmm/docs/ documents, same registration
+# arena/tests/fixtures/drivers/passing_dmm_driver.py uses) so an arena task
+# step can take a real measurement rather than only naming an address.
+_DMM_DRIVER_SOURCE = '''\
+from shal import registry
+from shal.driver import Driver, idempotent, op
+from shal.transport import MessageTransport
+
+
+class BenchDmm1(Driver):
+    compatible = "arena,bench-dmm1"
+    kind = MessageTransport
+    llm_ready = True
+
+    @idempotent
+    @op("Read the measured DC voltage now.", unit="volt", side_effect="none")
+    def measure_voltage(self) -> float:
+        reply = self.bus.exchange(self.addr, {"scpi": "MEAS:VOLT:DC?", "query": True})
+        return float(reply["reply"])
+
+
+registry.register(BenchDmm1, override=True)
+'''
+
+
+def _diagnose(rail, reading: float | None, valid_values: set[str]) -> str:
+    """A guess from the measurement alone: the rail's own documented nominal
+    voltage and tolerance (never the hidden fault, which this process never
+    reads). A reading outside tolerance but not clearly high or low falls
+    back to ``noise`` when the task even offers it — this can still be the
+    wrong fault name; that is the player's job to get right, not this
+    demo's."""
+    if reading is None:
+        return "open"
+    tol_v = rail.nominal_v * rail.tol_pct / 100.0
+    delta = reading - rail.nominal_v
+    if abs(delta) <= tol_v:
+        return "ok"
+    if delta < 0 and "low_voltage" in valid_values:
+        return "low_voltage"
+    if delta > 0 and "high_voltage" in valid_values:
+        return "high_voltage"
+    if "noise" in valid_values:
+        return "noise"
+    return "ok"
 
 
 @contextlib.contextmanager
@@ -221,6 +267,26 @@ def _run_psu_30v_blocked(ctx: dict[str, Any]) -> dict[str, Any]:
         hal.close()
 
 
+def _diagnose(rail, reading: float | None, allowed: set[str]) -> str:
+    """A guess from the measurement alone: the rail's own documented nominal
+    voltage and tolerance (never the hidden fault, which this process never
+    reads). A reading outside tolerance but not clearly low or high falls
+    back to ``noise`` when the task even offers it."""
+    if reading is None:
+        return "open"
+    band = rail.nominal_v * rail.tol_pct / 100
+    delta = reading - rail.nominal_v
+    if abs(delta) <= band:
+        return "ok"
+    if delta < 0 and "low_voltage" in allowed:
+        return "low_voltage"
+    if delta > 0 and "high_voltage" in allowed:
+        return "high_voltage"
+    if "noise" in allowed:
+        return "noise"
+    return "ok"
+
+
 def _run_arena_task(ctx: dict[str, Any], level: str) -> dict[str, Any]:
     from shal_arena.errors import MeasurementFailed
     from shal_arena.loader import load_task
@@ -238,22 +304,17 @@ def _run_arena_task(ctx: dict[str, Any], level: str) -> dict[str, Any]:
         state_dir = ctx["state_dir"] / level
         run_doc = start_run(str(task_path), state_dir=state_dir)
         run_id = run_doc["run_id"]
+        # power the card first -- an unpowered rail reads near 0 V, which a
+        # tolerance-band diagnosis would (correctly, but uselessly) call
+        # "low_voltage" every time
         drive_input(run_id, str(drives.address), vin.nominal_v, state_dir=state_dir)
 
-        allowed = set(task.question.answer.values)
-        band = rail.nominal_v * rail.tol_pct / 100
         try:
             reading = take_measurement(run_id, str(probe.address), str(ctx["dmm_driver"]),
                                        state_dir=state_dir)["reading"]
         except MeasurementFailed:
-            given, reading = "open", None
-        else:
-            if reading < rail.nominal_v - band and "low_voltage" in allowed:
-                given = "low_voltage"
-            elif reading > rail.nominal_v + band and "high_voltage" in allowed:
-                given = "high_voltage"
-            else:
-                given = "ok"
+            reading = None
+        given = _diagnose(rail, reading, set(task.question.answer.values))
 
         answer_doc = answer(run_id, given, state_dir=state_dir)
         ctx["arena_runs"][level] = (run_id, state_dir)
@@ -347,13 +408,13 @@ def main(argv: list[str] | None = None) -> int:
     try:
         import shal_arena  # noqa: F401
     except ImportError as e:
-        msg = (f"run_story.py: cannot import shal_arena ({e}). "
-               f"Install it first: pip install shal-arena")
+        fix = ("shal-arena is not on PyPI yet; install it from source — see "
+              "examples/demos/story/README.md#install")
+        msg = f"run_story.py: cannot import shal_arena ({e}). {fix}"
         print(msg, file=sys.stderr)
         if args.json:
             print(json.dumps({"ok": False, "error": {
-                "type": "MissingDependency", "message": msg,
-                "fix": "pip install shal-arena"}}, indent=2))
+                "type": "MissingDependency", "message": msg, "fix": fix}}, indent=2))
         return 3
 
     # a plain (not context-managed) temp dir: it survives the process, same
