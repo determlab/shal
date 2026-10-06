@@ -490,11 +490,12 @@ def test_failure_cause_old_capture_with_no_reading_has_no_measured_clause(
 
 
 def test_overheat_sentence_matches_the_exact_cmo_wording(tmp_path: Path) -> None:
-    """issue #432 CMO wording (CTO-approved, exact text): "Measured: the
-    regulator reads 90 °C, above its 85 °C limit. The agent's answer:
-    overheat. Correct." -- no decimals, no delta, and the in-spec rail
-    reading is dropped: the sentence leads with the failing measurement
-    only."""
+    """issue #432 CMO wording (CTO-approved, exact text), issue #439 fix:
+    "Measured: the regulator reads 90.0 °C, above its 85 °C limit. The
+    agent's answer: overheat. Correct." -- the reading keeps 1 decimal
+    (same precision as the TEMP box), the limit stays a whole number, no
+    delta, and the in-spec rail reading is dropped: the sentence leads
+    with the failing measurement only."""
     from shal_arena import fault as fault_mod
     from shal_arena.loader import load_task
 
@@ -509,8 +510,23 @@ def test_overheat_sentence_matches_the_exact_cmo_wording(tmp_path: Path) -> None
     payload = run_payload(run_id, state_dir=tmp_path)
     sentence = payload["answer_sentence"]
     assert sentence == (
-        "Measured: the regulator reads 90 °C, above its 85 °C limit. "
+        "Measured: the regulator reads 90.0 °C, above its 85 °C limit. "
         "The agent's answer: overheat. Correct.")
+
+
+def test_a_reading_of_85_point_3_never_prints_as_the_bare_85_limit(tmp_path: Path) -> None:
+    """issue #439's own repro: a reading of 85.3 must never round to
+    "85 °C, above its 85 °C limit" -- that reads as a contradiction."""
+    run_id = start_run(str(RELAY_RAIL_TASK), seed=1, state_dir=tmp_path)["run_id"]
+    log_path = tmp_path / f"{run_id}.simlog.jsonl"
+    with log_path.open("a", encoding="utf-8") as f:
+        f.write(json.dumps({"ts": "2026-10-07T00:00:00Z", "address": "temp0",
+                            "kind": "reading", "value": 85.3, "unit": "celsius"}) + "\n")
+    answer(run_id, "overheat", state_dir=tmp_path)
+
+    payload = run_payload(run_id, state_dir=tmp_path)
+    sentence = payload["answer_sentence"]
+    assert "85.3 °C, above its 85 °C limit" in sentence
 
 
 def test_every_screenshot_is_a_genuine_full_page_capture() -> None:

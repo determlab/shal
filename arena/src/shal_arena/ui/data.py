@@ -78,15 +78,19 @@ def _rail_clause(rail: dict[str, Any], values: list[float]) -> tuple[str, bool]:
 
 
 def _temp_clause(temp: dict[str, Any], values: list[float]) -> tuple[str, bool]:
-    # issue #432 CMO wording (CTO-approved, exact text): no decimals, no
-    # delta -- "the regulator reads 90 °C, above its 85 °C limit."
+    # issue #432 CMO wording (CTO-approved, exact text): no delta --
+    # "the regulator reads 90.0 °C, above its 85 °C limit." issue #439:
+    # the READING keeps 1 decimal (same precision as the TEMP box) -- a
+    # whole-degree reading read as "85 °C, above its 85 °C limit" when the
+    # real value was 85.3. The LIMIT, the card's own documented spec, stays
+    # a whole number.
     label, high = f"the {temp['name']}", temp["high_c"]
-    if _varies(values, 0):
-        return f"{label} reads {min(values):.0f}-{max(values):.0f} °C across reads", True
+    if _varies(values, 1):
+        return f"{label} reads {min(values):.1f}-{max(values):.1f} °C across reads", True
     v = values[-1]
     if v <= high:
-        return f"{label} reads {v:.0f} °C, within its {high:.0f} °C limit", False
-    return f"{label} reads {v:.0f} °C, above its {high:.0f} °C limit", True
+        return f"{label} reads {v:.1f} °C, within its {high:.0f} °C limit", False
+    return f"{label} reads {v:.1f} °C, above its {high:.0f} °C limit", True
 
 
 def _measured_clause(name: str, rail: dict[str, Any] | None, temp: dict[str, Any] | None,
