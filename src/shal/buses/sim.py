@@ -173,9 +173,7 @@ class SimI2cBus(SimFaultMixin, Driver, Transport, ByteTransport):
             if self.log.isEnabledFor(logging.DEBUG):  # hot path costs nothing when off
                 self.log.debug("txn -> %s", redact(result),
                                event="txn", addr=hex(addr))
-            written = b"".join(o.data for o in ops if isinstance(o, Write))
-            record_exchange("sim_i2c", self.host.path, addr, redact(written),
-                            redact(result))
+            record_exchange("sim_i2c", self.host.path, addr, ops, result)
             return result
 
 

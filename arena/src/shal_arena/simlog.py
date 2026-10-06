@@ -14,10 +14,14 @@ payload.
 
 A SCPI exchange (`sim_scpi`/`scpi_raw`) keeps its original two kinds,
 ``query``/``write`` (issue #10), told apart the same way `runner.raw_scpi`
-already does -- a command ending in ``?`` is a query. Every other protocol
+already does -- a command ending in ``?`` is a query -- now also carrying
+``reply`` (issue #457 round 2: a row with the command but not its answer
+missed the DoD's own "command AND answer"). Every other protocol
 (Modbus-shaped messages on `sim_msg`, bytes on `sim_i2c`/`i2c_cli`) is one
 kind, ``exchange``, carrying `bus_family`/`request`/`response` in its own
-natural shape: never invented, only what the bus really sent and got back.
+natural shape: never invented, only what the bus really sent and got back,
+and already sanitized by `record_exchange` itself before it ever reaches
+this file -- nothing here redacts a second time.
 
 "An answer with no matching measurement in the log is disqualified"
 (`runner.answer`) reads this log back for a ``measure`` entry at a probe
@@ -78,8 +82,12 @@ class SimLog:
                 # issue #10's original two kinds, kept: a command ending in
                 # "?" is a query, the same rule `runner.raw_scpi` already
                 # uses -- never guessed from whether the reply is empty.
+                # CTO review on #457 round 2: a write's `reply` is always
+                # "", but a query's real answer belongs on this row too --
+                # the DoD asks for command AND answer, and a reader
+                # comparing bus-layer rows to the UI must see it here.
                 kind = "query" if str(exc.request).strip().endswith("?") else "write"
-                self.append(address, kind, cmd=exc.request)
+                self.append(address, kind, cmd=exc.request, reply=exc.response)
             else:
                 self.append(address, "exchange", bus_family=exc.bus_family,
                            request=exc.request, response=exc.response)

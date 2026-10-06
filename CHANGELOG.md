@@ -38,14 +38,21 @@ All notable changes to this project are documented here. The format follows
 - **An opt-in, off-by-default bus exchange hook: `shal.log.exchange_sink`/
   `record_exchange`** (#457). Every bus (`scpi_raw`, `sim_scpi`, `sim_msg`,
   `sim.py`'s `sim_i2c`, `i2c_cli`) calls `record_exchange` right after a real
-  exchange completes; it is a no-op unless `exchange_sink` is active, so a
-  plain `shal` run never logs a payload — the buses also run against real
-  instruments, where an always-on log would be a standing liability.
+  exchange completes, with its own RAW request/response — `record_exchange`
+  checks `exchange_sink` first, before any work, so a bus pays nothing when
+  no sink is set, and a plain `shal` run never logs a payload (the buses
+  also run against real instruments, where an always-on log would be a
+  standing liability). Sanitizing is done once, in `record_exchange` itself,
+  not copied into each bus: `address` through `redact_url`; raw bytes
+  through `shal.log.redact`; every other string, loose or inside a
+  structured message, through the new shared `redact_structured`
+  (`redact_url` plus a key-based rule, `token`/`password`/`passwd`/`secret`/
+  `api_key`/`apikey`/`auth`, masked to `***` — shared with #460's CLI log).
   SHAL Arena's `SimLog.record_for` turns the hook on for the duration of a
-  check: SCPI keeps its original `query`/`write` kinds, and the other two
-  protocols get one new kind, `exchange`, carrying `bus_family`/`request`/
-  `response` in each protocol's own real shape (Modbus-style structured
-  messages, I2C bytes through `shal.log.redact`) — never invented. The
+  check: SCPI keeps its original `query`/`write` kinds (now also carrying
+  `reply`), and the other two protocols get one new kind, `exchange`,
+  carrying `bus_family`/`request`/`response` in each protocol's own real
+  shape (Modbus-style structured messages, I2C bytes) — never invented. The
   arena Watch page now shows this log for all 3 protocols, each
   instrument's role straight from the task yaml's own `drives:`/`probe:`
   (never hand-written), and `drive`'s own row names SHAL's gate, not the
