@@ -15,8 +15,11 @@ import sys
 from pathlib import Path
 from types import ModuleType
 
+import yaml
+
 REPO_ROOT = Path(__file__).resolve().parent.parent
 SAMPLE_EVIDENCE = REPO_ROOT / "tests" / "data" / "e2e" / "sample-evidence.json"
+WORKFLOW = REPO_ROOT / ".github" / "workflows" / "e2e-clean-machine.yml"
 
 
 def _load_story() -> ModuleType:
@@ -129,3 +132,14 @@ def test_story_gets_the_bench_from_the_packaged_sample_not_a_repo_checkout_path(
     assert "examples/demos/virtual-bench" not in text
     assert '"demos"' not in text and '"virtual-bench"' in text   # no Path()-built demo path
     assert "docs --sample virtual-bench" in text or '"--sample", "virtual-bench"' in text
+
+
+def test_pull_request_trigger_covers_the_sample_and_cli_py():
+    # #385: the PR path filter must cover the virtual-bench sample's packaged
+    # copy and src/shal/cli.py (the `shal docs --sample` entry point #384's
+    # story now depends on), not just the original examples/demos/ path.
+    config = yaml.safe_load(WORKFLOW.read_text("utf-8"))
+    on = config[True] if True in config else config["on"]
+    paths = on["pull_request"]["paths"]
+    assert "src/shal/samples/virtual-bench/**" in paths
+    assert "src/shal/cli.py" in paths
