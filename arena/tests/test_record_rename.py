@@ -56,6 +56,27 @@ def test_replay_card_reads_an_old_layout_capture(tmp_path: Path) -> None:
     assert data.record["given"] == "ok"
 
 
+def test_record_path_prefers_the_new_name_when_both_files_exist(tmp_path: Path) -> None:
+    """issue #445 (follow-up to #435, PR #441 CTO review): a run folder can
+    hold both files -- a leftover old capture copied in alongside a fresh
+    run, or a migration that copies rather than renames. `record_path`
+    checks the new name first (`store.py`'s `record_path`), so it is picked
+    whenever it exists, never the old one just because it also exists."""
+    run_id = start_run(str(SAMPLE_TASK), seed=1, state_dir=tmp_path)["run_id"]
+    drive_input(run_id, "psu0", 5.0, state_dir=tmp_path)
+    take_measurement(run_id, "dmm0", PASSING_DMM_DRIVER, state_dir=tmp_path)
+    answer(run_id, "ok", state_dir=tmp_path)
+
+    new_path = tmp_path / f"{run_id}.arena-record.json"
+    old_path = tmp_path / f"{run_id}.record.json"
+    assert new_path.is_file()
+    old_path.write_text("not a real record -- must never be read", encoding="utf-8")
+    assert old_path.is_file()
+
+    store = RunStore(tmp_path)
+    assert store.record_path(run_id) == new_path
+
+
 def test_a_fresh_run_still_writes_only_the_new_name(tmp_path: Path) -> None:
     """The rename only applies to READING an old capture -- a run closed
     on this branch never writes the old bare name at all."""
