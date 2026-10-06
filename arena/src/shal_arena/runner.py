@@ -29,13 +29,14 @@ import sys
 from pathlib import Path
 from typing import Any
 
+import shal
 import yaml
 from shal.buses.sim_scpi import SimScpiBus
 from shal.conformance import check_driver as _conformance_check_driver
 from shal.node import Node
 
 from . import fault as _fault
-from .card_sim import CardSim, Dmm, catalogue
+from .card_sim import DAMAGE, CardSim, Dmm, catalogue
 from .cases import CaseSpec, resolve_case
 from .errors import ArenaError, CheckCouldNotRun, MeasurementFailed
 from .loader import LoadedTask, load_task
@@ -130,11 +131,64 @@ def _load_card_sim(loaded: LoadedTask, state: RunState, store: RunStore, run_id:
     return card_sim
 
 
-def _refuse_damage(action: dict[str, Any]) -> bool:
-    """issue #330: the SHAL side's gate for `drive_input` — a non-interactive
-    deny of any action that would damage the card; protection-only and
-    in-range actions pass. `raw_scpi` has no gate."""
-    return action.get("would_cause") != "damage"
+def _shal_damage_gate(card_sim: CardSim, input_name: str,
+                      address: str) -> tuple[Any, dict[str, Any]]:
+    """issue #338: the SHAL side's gate for `drive_input` is shal's own
+    enforcement chain (limits.py, then approval.py, then I/O; driver.py), not
+    a function written inside the arena — if shal's gate broke, this would
+    show it breaking too. Driven by the card's own documented absolute
+    maximum for ``input_name`` (a `damage`/`destroyed` limit with a `source`
+    in the card yaml): one real `shal,sim-psu` node, bound through
+    `shal.load`, whose `config.limits` narrows `set_voltage`'s advertised
+    0-30 V range down to that one number — the SAME mechanism a real
+    installation uses to tighten a driver's class-level bounds
+    (`src/shal/limits.py` "installation policy" layer). `shal.AutoApprove()`
+    is seated so a refusal here can only be the limit, never an approval deny
+    (protection-only and in-range actions pass; `raw_scpi` has no gate).
+
+    If this card's documented damage limit for ``input_name`` cannot be
+    expressed this way (no such limit on the card), the caller's own
+    `NotSupported` tells the operator to flag it rather than invent a second,
+    arena-local gate (issue #338 Constraints)."""
+    limit = next((lim for lim in card_sim.limits
+                 if lim.input == input_name and lim.effect == DAMAGE and lim.documented),
+                 None)
+    if limit is None:
+        raise NotSupported(
+            f"{input_name}: this card declares no documented damage limit for this "
+            "input, so there is nothing for shal's own gate to enforce",
+            fix="label this agent:needs-human; do not add a second, arena-local gate")
+    topology = {
+        "shal_version": 1,
+        "root": {
+            "bench": {
+                "driver": "shal,sim-scpi",
+                "address": f"sim-gate-{address}",
+                "children": {
+                    "psu": {
+                        "id": "arena_gate_psu",
+                        "driver": "shal,sim-psu",
+                        "address": f"gate-{address}",
+                        "config": {"limits": {
+                            "set_voltage": {"volts": {"maximum": limit.above_v}}}},
+                    },
+                },
+            },
+        },
+    }
+    hal = shal.load(topology, approver=shal.AutoApprove())
+    detail: dict[str, Any] = {}
+
+    def gate(action: dict[str, Any]) -> bool:
+        result = hal.call_tool("arena_gate_psu__set_voltage", {"volts": action["volts"]})
+        if result["ok"]:
+            return True
+        detail["rejected"] = result.get("rejected")
+        detail["error"] = result.get("error")
+        detail["violations"] = result.get("violations")
+        return False
+
+    return gate, detail
 
 
 def drive_input(run_id: str, address: str, volts: float, *,
@@ -167,16 +221,20 @@ def drive_input(run_id: str, address: str, volts: float, *,
     input_name = instrument.drives.removeprefix("card.")
 
     card_sim = _load_card_sim(loaded, state, store, run_id)
-    result = card_sim.apply_input(input_name, volts, gate=_refuse_damage,
-                                  address=str(address))
+    gate, gate_detail = _shal_damage_gate(card_sim, input_name, str(address))
+    result = card_sim.apply_input(input_name, volts, gate=gate, address=str(address))
     store.set_card_state(run_id, applied=card_sim.applied, destroyed=card_sim.destroyed)
     # side_effect stays "write" from as_dict() even on a refusal: it counted a
     # turn and wrote a refused line to the sim log (CTO review on #330,
     # following the #328 ruling for apply_input itself).
     out = {"run_id": run_id, "address": instrument.address, **result.as_dict()}
-    if not result.sent:  # the gate stopped it: nothing was applied (issue #330)
+    if not result.sent:  # shal's own gate stopped it: nothing was applied (issue #338)
+        out["rejected"] = gate_detail.get("rejected", out.get("rejected"))
+        if gate_detail.get("violations") is not None:
+            out["violations"] = gate_detail["violations"]
         out["reason"] = (f"{volts} V on {input_name} would damage the card; "
-                         "the SHAL gate refused it and nothing was sent")
+                         f"shal's own gate refused it ({gate_detail.get('error')}) "
+                         "and nothing was sent")
         out["fix"] = "pick a voltage inside the card's documented input range"
     return out
 

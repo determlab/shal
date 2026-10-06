@@ -89,7 +89,7 @@ def test_drive_cli_shows_state_change_in_json_and_sim_log(tmp_path: Path) -> Non
     drive_doc = json.loads(drive_proc.stdout)
     assert drive_doc["ok"] is False
     assert drive_doc["sent"] is False
-    assert drive_doc["rejected"] == "approval"
+    assert drive_doc["rejected"] == "limits"
     assert drive_doc["side_effect"] == "write"
     assert drive_doc["state"] == "ok"
     assert drive_doc["fix"]
