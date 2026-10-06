@@ -78,6 +78,35 @@ def _read_yaml(path: Path, where: str) -> Any:
                               fix=f"fix the YAML syntax in {path}") from e
 
 
+_PACKAGED_TASKS_DIR = Path(__file__).resolve().parent / "tasks"
+_LEVEL_ORDER = {"easy": 0, "medium": 1, "hard": 2}
+
+
+def list_tasks() -> list[dict[str, str]]:
+    """The packaged tasks (package data, issue #416): ``name`` (the file stem,
+    what ``shal-arena run <name>`` takes), ``path`` and ``level``."""
+    tasks = []
+    for path in _PACKAGED_TASKS_DIR.glob("*.yaml"):
+        doc = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
+        tasks.append({"name": path.stem, "path": str(path), "level": str(doc.get("level", ""))})
+    tasks.sort(key=lambda t: (_LEVEL_ORDER.get(t["level"], len(_LEVEL_ORDER)), t["name"]))
+    return tasks
+
+
+def resolve_task(name_or_path: str | Path) -> Path:
+    """A task file path as given, else a packaged task by name (issue #416)."""
+    path = Path(name_or_path)
+    if path.is_file():
+        return path
+    packaged = {t["name"]: t["path"] for t in list_tasks()}
+    if str(name_or_path) in packaged:
+        return Path(packaged[str(name_or_path)])
+    raise TaskFormatError(
+        f"no task file or packaged task named {str(name_or_path)!r}; "
+        f"valid names: {', '.join(packaged)}",
+        fix="pick one of the valid names, or run `shal-arena tasks --json` to list them")
+
+
 def load_task(task_path: str | Path) -> LoadedTask:
     """Load, validate and cross-check ``task_path`` and the ``card.yaml`` it
     names. Raises `TaskFormatError` naming the key and the fix on any problem."""
