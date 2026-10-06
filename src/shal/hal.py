@@ -214,7 +214,8 @@ class Hal:
             pin = (arguments or {}).get("via")
             if routed and pin is not None and pin not in route_names(node):
                 # an unknown route name (#237): the valid names, for the next call
-                return {"ok": False, "error": str(e), "routes": route_names(node)}
+                return {"ok": False, "error": str(e), "routes": route_names(node),
+                        **_retry_fields()}
             return {"ok": False, "error": str(e), **_retry_fields()}
         finally:
             via = last_via.get()

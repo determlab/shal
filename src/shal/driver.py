@@ -39,20 +39,18 @@ if TYPE_CHECKING:
 
 _audit = logging.getLogger("shal.audit")
 
-#: issue #348: the LAST call's retry count and the hop that dropped, if any —
-#: read by `Hal.call_tool` (`hal.py`) right after the call, same pattern
-#: `last_via` (`routes.py`) already uses to thread per-call detail out of this
-#: closure. Reset to 0/None at the start of every call, so a later call that
-#: never retries never inherits a previous one's leftover value.
+#: issue #348: the TOP-LEVEL call's retry count and the hop that dropped,
+#: if any — read by `Hal.call_tool` (`hal.py`) right after the call, which
+#: owns the reset-with-token around it (same pattern it already uses for
+#: `last_via`, `routes.py`). `call` itself only WRITES these, and only for
+#: the outermost op: a nested op call (`_op_policy` already set) must
+#: never reset or overwrite the vars the top-level call's own result and
+#: audit line will read — CTO review round 2: with nested ops, resetting
+#: unconditionally let an inner retry go uncredited (the outer result said
+#: `retries: 0` while its audit line said `attempt: 2`) or get wrongly
+#: credited to an unrelated outer call.
 last_retries: ContextVar[int] = ContextVar("shal_last_retries", default=0)
 last_dropped: ContextVar[str | None] = ContextVar("shal_last_dropped", default=None)
-
-
-def _dropped_field(dropped: dict) -> dict:
-    """issue #348: an explicit `dropped` audit key (the hop that dropped),
-    alongside the existing `hop` key `**dropped` already spreads (additive
-    only — `hop` is unchanged, so no existing assertion on it breaks)."""
-    return {"dropped": dropped["hop"]} if dropped else {}
 
 
 def idempotent(fn: Callable) -> Callable:
@@ -581,14 +579,6 @@ class Driver:
             t0 = time.perf_counter()
             attempt = 1  # 2 once the idempotent reconnect-and-retry fires
             dropped: dict = {}  # {"hop": <hop that dropped>} once the retry fires
-            # issue #348: visible on the call result/--json output/audit line,
-            # not only a WARNING log line. Set here (no token/reset -- same
-            # as `_last_via.set(...)` below: `call_tool`, the caller, owns
-            # the token/reset around its own `method(...)` call, the same
-            # pattern it already uses for `last_via`), so a previous call's
-            # retry never leaks into this one.
-            last_retries.set(0)
-            last_dropped.set(None)
             before = op_token = route_token = None
             in_body = False  # True once the driver body runs (after limits + approval)
             # a pin is not an op argument: take it off before limits see the call
@@ -606,6 +596,17 @@ class Driver:
                 # the policy is the operator's (ADR-001 addendum 5): an ENCLOSING op
                 # that changed it before calling this one is caught here, pre-I/O
                 outer = op_var.get()
+                # issue #348 (CTO review round 2): only the TOP-LEVEL call writes
+                # last_retries/last_dropped. A nested op call (outer is not None,
+                # e.g. one @idempotent op calling another through its own `bus`)
+                # must never touch them -- call_tool already reset both, with a
+                # token, around the OUTER call it actually invoked; the outer
+                # call's own result and audit line are what must read them, not
+                # whatever an inner call happened to do last.
+                top_level = outer is None
+                if top_level:
+                    last_retries.set(0)
+                    last_dropped.set(None)
                 if outer is not None:
                     snap, outer_drv, outer_op, outer_txn = outer
                     _refuse_policy_change(outer_drv, outer_op, snap, txn=outer_txn,
@@ -658,9 +659,10 @@ class Driver:
                         # carrying the dropped hop in the stable `hop` field — the
                         # same key and meaning as this WARNING line (#194)
                         attempt = 2
-                        dropped = {"hop": e.hop}
-                        last_retries.set(attempt - 1)
-                        last_dropped.set(e.hop)
+                        dropped = {"hop": e.hop, "dropped": e.hop}   # #348: additive key
+                        if top_level:   # #348 round 2: never credit a nested retry to the caller
+                            last_retries.set(attempt - 1)
+                            last_dropped.set(e.hop)
                         self.log.warning("reconnect-and-retry after drop (1/1)",
                                          event="retry", op=op, attempt=2, hop=e.hop)
                         self.bus.close()
@@ -680,7 +682,7 @@ class Driver:
                                        "path": self.node.path, "op": op,
                                        "outcome": "ok", "duration_ms": duration,
                                        "attempt": attempt, "retries": attempt - 1,
-                                       **dropped, **_dropped_field(dropped), **route,
+                                       **dropped, **route,
                                        "txn": _log.current_txn.get()})
                 return result
             except HopError as e:
@@ -701,7 +703,7 @@ class Driver:
                                        "outcome": "error", "delivered": e.delivered,
                                        "duration_ms": duration, "attempt": attempt,
                                        "retries": attempt - 1,
-                                       **dropped, **_dropped_field(dropped), **route,
+                                       **dropped, **route,
                                        "txn": _log.current_txn.get()})
                 raise
             except _ShalError as e:
@@ -722,7 +724,7 @@ class Driver:
                                        "outcome": "device-error",
                                        "duration_ms": duration, "attempt": attempt,
                                        "retries": attempt - 1,
-                                       **dropped, **_dropped_field(dropped), **route,
+                                       **dropped, **route,
                                        "txn": _log.current_txn.get()})
                 raise
             finally:
