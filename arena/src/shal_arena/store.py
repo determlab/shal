@@ -14,8 +14,10 @@ which was on disk, hence readable, for the run's whole open lifetime).
 """
 from __future__ import annotations
 
+import contextlib
 import json
 import secrets
+import sys
 import time
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
@@ -57,6 +59,41 @@ class RunState:
     card_power_on: bool = True
     # issue #325: addresses of DMMs whose current-input fuse has burned.
     fuses_blown: list[str] = field(default_factory=list)
+
+
+@contextlib.contextmanager
+def _locked_turns_file(public_path: Path):
+    """issue #436: an OS-level exclusive lock, held for one run's own
+    read-modify-write of `turns`, so two `shal-arena` processes racing on
+    the same run serialize instead of overwriting each other. A sidecar
+    ``<run>.turns.lock`` file (never the public state file itself, which
+    `_write_public` replaces wholesale each call) -- `flock` on POSIX,
+    `msvcrt.locking` on Windows; both block until the other process's lock
+    releases, so this never busy-waits past the other call's own short
+    critical section."""
+    public_path.parent.mkdir(parents=True, exist_ok=True)
+    lock_path = public_path.with_suffix(public_path.suffix + ".turns.lock")
+    with lock_path.open("a+b") as f:
+        if sys.platform == "win32":
+            import msvcrt
+            while True:
+                try:
+                    msvcrt.locking(f.fileno(), msvcrt.LK_LOCK, 1)
+                    break
+                except OSError:
+                    time.sleep(0.01)
+            try:
+                yield
+            finally:
+                f.seek(0)
+                msvcrt.locking(f.fileno(), msvcrt.LK_UNLCK, 1)
+        else:
+            import fcntl
+            fcntl.flock(f.fileno(), fcntl.LOCK_EX)
+            try:
+                yield
+            finally:
+                fcntl.flock(f.fileno(), fcntl.LOCK_UN)
 
 
 class RunStore:
@@ -161,10 +198,20 @@ class RunStore:
         """Issue #312 score field ``turns``: one call that reaches the sim
         (`check`, `measure`, `drive`), whatever its result, is one turn.
         Called before the call itself runs, so a turn is counted even if it
-        later raises. A closed run refuses (issue #325)."""
-        state = self.load_open(run_id)
-        state.turns += 1
-        self._write_public(state)
+        later raises. A closed run refuses (issue #325).
+
+        Issue #436: `shal-arena` is a fresh process per call, so two
+        measures started at the same moment can both read the same
+        pre-increment `turns`, then both write the same post-increment
+        value back -- one turn lost, and (issue #433) the `noise` fault's
+        own per-call nonce is this same counter, so two reads can also
+        share a ripple sample. `_locked_turns_file` serializes the whole
+        read-modify-write under an OS file lock, so this is atomic across
+        processes, not just within one."""
+        with _locked_turns_file(self._public_path(run_id)):
+            state = self.load_open(run_id)
+            state.turns += 1
+            self._write_public(state)
         return state
 
     def answer(self, run_id: str, *, given: str, fault_id: str) -> dict[str, Any]:
