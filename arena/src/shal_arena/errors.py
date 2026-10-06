@@ -72,3 +72,13 @@ class TooFewRuns(ArenaError):
     Exit 2: a usage mistake, not a crash."""
 
     exit_code = 2
+
+
+class LockTimeout(ArenaError):
+    """issue #436 CTO review: the per-run state file lock (``store.py``'s
+    ``_locked_state_file``) waited past its own deadline — another process
+    is genuinely stuck holding it (crashed mid-write, or a debugger
+    attached to it), not just slow. Exit 1: a crash, not a usage
+    mistake — a healthy run never hits this."""
+
+    exit_code = 1

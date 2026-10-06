@@ -582,8 +582,12 @@ def check_instrument_driver(run_id: str, address: str, driver_path: str | Path, 
     with no action from the player (every player runs it, pass or fail, just
     to light the tile). `take_measurement` is the player's own read."""
     store = RunStore(state_dir)
-    store.increment_turns(run_id)
-    state = store.load(run_id)
+    # issue #436 CTO review: `store.load` again here, after
+    # `increment_turns` already returned the post-increment state, re-read
+    # OUTSIDE that call's own lock -- a second process's write could land
+    # in between, so this use the RETURNED state directly (same as
+    # drive_input/call_op already do).
+    state = store.increment_turns(run_id)
     loaded = load_task(state.task_path)
     instrument = next((i for i in loaded.task.instruments
                        if str(i.address) == str(address)), None)
@@ -667,8 +671,10 @@ def take_measurement(run_id: str, address: str, driver_path: str | Path, *,
     from shal.hal import load as _load
 
     store = RunStore(state_dir)
-    store.increment_turns(run_id)
-    state = store.load(run_id)
+    # issue #436 CTO review: use the state `increment_turns` itself
+    # returns -- a second `store.load` here would re-read OUTSIDE that
+    # call's own lock, same bug as check_instrument_driver had.
+    state = store.increment_turns(run_id)
     loaded = load_task(state.task_path)
     instrument = next((i for i in loaded.task.instruments
                        if str(i.address) == str(address)), None)

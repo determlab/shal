@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import contextlib
 import json
+import os
 import secrets
 import sys
 import time
@@ -23,7 +24,13 @@ from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import Any
 
-from .errors import RunClosed, UnknownRun
+from .errors import LockTimeout, RunClosed, UnknownRun
+
+#: issue #436 CTO review: a lock that never gives up can hang a whole run on
+#: one stuck process (crashed mid-write, a debugger attached to it) --
+#: generous for a critical section this short (one JSON read + write), but
+#: finite.
+_LOCK_TIMEOUT_S = 10.0
 
 DEFAULT_STATE_DIR = ".shal-arena"
 
@@ -62,25 +69,56 @@ class RunState:
 
 
 @contextlib.contextmanager
-def _locked_turns_file(public_path: Path):
+def _locked_state_file(public_path: Path, *, timeout: float | None = None):
     """issue #436: an OS-level exclusive lock, held for one run's own
-    read-modify-write of `turns`, so two `shal-arena` processes racing on
-    the same run serialize instead of overwriting each other. A sidecar
-    ``<run>.turns.lock`` file (never the public state file itself, which
-    `_write_public` replaces wholesale each call) -- `flock` on POSIX,
-    `msvcrt.locking` on Windows; both block until the other process's lock
-    releases, so this never busy-waits past the other call's own short
-    critical section."""
+    read-modify-write of its public state file, so two `shal-arena`
+    processes racing on the same run serialize instead of overwriting each
+    other (or, #436 CTO review, both reading the same pre-write state and
+    both writing the same post-write one back). A sidecar
+    ``<run>.json.lock`` file (never the public state file itself, which
+    `_write_public` replaces atomically each call) -- `flock` on POSIX,
+    `msvcrt.locking` on Windows.
+
+    Neither primitive blocks forever by default here: both are polled on a
+    short interval against a wall-clock deadline, so a process that died
+    mid-write (or a debugger attached to it) raises `LockTimeout` --
+    naming the lock file and the fix -- instead of hanging every other
+    call on this run indefinitely."""
+    if timeout is None:
+        timeout = _LOCK_TIMEOUT_S  # read at call time, not def time -- a test can patch it
     public_path.parent.mkdir(parents=True, exist_ok=True)
-    lock_path = public_path.with_suffix(public_path.suffix + ".turns.lock")
+    lock_path = public_path.with_suffix(public_path.suffix + ".lock")
+    deadline = time.monotonic() + timeout
     with lock_path.open("a+b") as f:
         if sys.platform == "win32":
             import msvcrt
+            # `LK_LOCK` locks a byte RANGE at the current position -- make
+            # sure that byte actually exists (an empty lock file is the
+            # common case right after `mkdir`) and that every opener locks
+            # the SAME byte 0, not wherever "a+b" mode happened to leave
+            # the file pointer.
+            f.seek(0, 2)
+            if f.tell() == 0:
+                f.write(b"0")
+                f.flush()
+            f.seek(0)
             while True:
                 try:
-                    msvcrt.locking(f.fileno(), msvcrt.LK_LOCK, 1)
+                    # `LK_LOCK` has its OWN built-in blocking retry (up to
+                    # ~10 one-second attempts) before it raises -- it would
+                    # swallow our deadline check inside one call. `LK_NBLCK`
+                    # fails immediately instead, so this loop's own
+                    # `deadline` is what actually governs how long this
+                    # waits.
+                    msvcrt.locking(f.fileno(), msvcrt.LK_NBLCK, 1)
                     break
                 except OSError:
+                    if time.monotonic() >= deadline:
+                        raise LockTimeout(
+                            f"could not lock {lock_path} within {timeout:.0f}s "
+                            "-- another shal-arena process may be stuck",
+                            fix=f"check for a stuck shal-arena process, then "
+                                f"delete {lock_path} if none is running") from None
                     time.sleep(0.01)
             try:
                 yield
@@ -89,7 +127,18 @@ def _locked_turns_file(public_path: Path):
                 msvcrt.locking(f.fileno(), msvcrt.LK_UNLCK, 1)
         else:
             import fcntl
-            fcntl.flock(f.fileno(), fcntl.LOCK_EX)
+            while True:
+                try:
+                    fcntl.flock(f.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+                    break
+                except OSError:
+                    if time.monotonic() >= deadline:
+                        raise LockTimeout(
+                            f"could not lock {lock_path} within {timeout:.0f}s "
+                            "-- another shal-arena process may be stuck",
+                            fix=f"check for a stuck shal-arena process, then "
+                                f"delete {lock_path} if none is running") from None
+                    time.sleep(0.01)
             try:
                 yield
             finally:
@@ -136,8 +185,16 @@ class RunStore:
         return state
 
     def _write_public(self, state: RunState) -> None:
+        # issue #436 CTO review: write to a sibling temp file, then
+        # `os.replace` it over the real path -- `os.replace` is an atomic
+        # rename on both POSIX and Windows (unlike a direct
+        # `path.write_text`, which a reader could observe mid-write, or
+        # which a crash between open and close could leave truncated).
+        path = self._public_path(state.run_id)
         doc = asdict(state)
-        self._public_path(state.run_id).write_text(json.dumps(doc, indent=2), encoding="utf-8")
+        tmp_path = path.with_suffix(path.suffix + f".{secrets.token_hex(4)}.tmp")
+        tmp_path.write_text(json.dumps(doc, indent=2), encoding="utf-8")
+        os.replace(tmp_path, path)
 
     def load(self, run_id: str) -> RunState:
         path = self._public_path(run_id)
@@ -160,18 +217,20 @@ class RunStore:
         return state
 
     def set_fuse_blown(self, run_id: str, address: str) -> RunState:
-        state = self.load_open(run_id)
-        if str(address) not in state.fuses_blown:
-            state.fuses_blown.append(str(address))
-            self._write_public(state)
+        with _locked_state_file(self._public_path(run_id)):
+            state = self.load_open(run_id)
+            if str(address) not in state.fuses_blown:
+                state.fuses_blown.append(str(address))
+                self._write_public(state)
         return state
 
     def set_tile(self, run_id: str, address: str, *, case: str, passed: bool) -> RunState:
-        state = self.load_open(run_id)
-        state.tiles[str(address)] = Tile(case=case, passed=passed,
-                                         checked_at=time.strftime("%Y-%m-%dT%H:%M:%SZ",
-                                                                   time.gmtime()))
-        self._write_public(state)
+        with _locked_state_file(self._public_path(run_id)):
+            state = self.load_open(run_id)
+            state.tiles[str(address)] = Tile(case=case, passed=passed,
+                                             checked_at=time.strftime("%Y-%m-%dT%H:%M:%SZ",
+                                                                       time.gmtime()))
+            self._write_public(state)
         return state
 
     def set_card_state(self, run_id: str, *, applied: dict[str, float],
@@ -179,19 +238,21 @@ class RunStore:
         """issue #313: persist `CardSim.applied`/`CardSim.destroyed` after a
         `drive` call, so the next CLI invocation for this run restores the
         same card instead of starting it fresh from nominal every time."""
-        state = self.load_open(run_id)
-        state.card_applied = dict(applied)
-        state.card_destroyed = destroyed
-        self._write_public(state)
+        with _locked_state_file(self._public_path(run_id)):
+            state = self.load_open(run_id)
+            state.card_applied = dict(applied)
+            state.card_destroyed = destroyed
+            self._write_public(state)
         return state
 
     def set_card_power(self, run_id: str, power_on: bool) -> RunState:
         """issue relay-rail: persist the card's own relay state between
         separate CLI invocations of `call`, the same way `set_card_state`
         persists `CardSim.applied`/`destroyed` after a `drive` call."""
-        state = self.load_open(run_id)
-        state.card_power_on = bool(power_on)
-        self._write_public(state)
+        with _locked_state_file(self._public_path(run_id)):
+            state = self.load_open(run_id)
+            state.card_power_on = bool(power_on)
+            self._write_public(state)
         return state
 
     def increment_turns(self, run_id: str) -> RunState:
@@ -205,10 +266,12 @@ class RunStore:
         pre-increment `turns`, then both write the same post-increment
         value back -- one turn lost, and (issue #433) the `noise` fault's
         own per-call nonce is this same counter, so two reads can also
-        share a ripple sample. `_locked_turns_file` serializes the whole
+        share a ripple sample. `_locked_state_file` serializes the whole
         read-modify-write under an OS file lock, so this is atomic across
-        processes, not just within one."""
-        with _locked_turns_file(self._public_path(run_id)):
+        processes, not just within one. CTO review: every caller must use
+        THIS call's own returned state afterward, never a separate
+        `store.load` -- that would re-read outside the lock."""
+        with _locked_state_file(self._public_path(run_id)):
             state = self.load_open(run_id)
             state.turns += 1
             self._write_public(state)
@@ -218,20 +281,22 @@ class RunStore:
         """Close the run and write/return the record. ``fault_id`` is the
         caller's job to recompute (from the public ``state.seed``) — this
         store never holds it before this call."""
-        state = self.load(run_id)
-        if state.status != "open":
-            raise UnknownRun(f"run {run_id!r} is already closed", fix="start a new run")
-        record = {
-            "run_id": run_id,
-            "task_path": state.task_path,
-            "card_path": state.card_path,
-            "given": given,
-            "fault_id": fault_id,
-            "correct": given == fault_id,
-            "closed_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
-        }
-        self._record_path(run_id).write_text(json.dumps(record, indent=2), encoding="utf-8")
-        state.status = "closed"
-        state.closed_at = record["closed_at"]
-        self._write_public(state)
+        with _locked_state_file(self._public_path(run_id)):
+            state = self.load(run_id)
+            if state.status != "open":
+                raise UnknownRun(f"run {run_id!r} is already closed", fix="start a new run")
+            record = {
+                "run_id": run_id,
+                "task_path": state.task_path,
+                "card_path": state.card_path,
+                "given": given,
+                "fault_id": fault_id,
+                "correct": given == fault_id,
+                "closed_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+            }
+            self._record_path(run_id).write_text(json.dumps(record, indent=2),
+                                                  encoding="utf-8")
+            state.status = "closed"
+            state.closed_at = record["closed_at"]
+            self._write_public(state)
         return record
