@@ -209,6 +209,10 @@ def main(argv: list[str] | None = None) -> int:
     state_dir = (Path(args.state_dir) if args.state_dir
                 else Path(tempfile.mkdtemp(prefix="e2e-arena-")))
     out_path = Path(args.out)
+    # CTO review on #380: the evidence page can't see a retry without these --
+    # GitHub Actions sets both on every job, no workflow change needed.
+    run_id = os.environ.get("GITHUB_RUN_ID", "unknown")
+    run_attempt = os.environ.get("GITHUB_RUN_ATTEMPT", "unknown")
 
     checks: list[dict[str, Any]] = []
 
@@ -227,8 +231,8 @@ def main(argv: list[str] | None = None) -> int:
             checks.append(_result(step_label, False, f"{type(e).__name__}: {e}", rerun))
         else:
             checks.extend(result) if isinstance(result, list) else checks.append(result)
-        evidence = {"os": args.os_label, "python": args.python_label, "versions": versions,
-                   "checks": checks}
+        evidence = {"os": args.os_label, "python": args.python_label, "run_id": run_id,
+                   "run_attempt": run_attempt, "versions": versions, "checks": checks}
         out_path.write_text(json.dumps(evidence, indent=2), encoding="utf-8")
 
     venv_py = args.venv_python
