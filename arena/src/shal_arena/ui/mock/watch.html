@@ -3,187 +3,273 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>shal-arena · Watch (design mock)</title>
+<title>shal-arena · Watch (design mock, round 2)</title>
 <style>
   :root {
-    --bg: #0f1216;
-    --panel: #171b21;
-    --panel-2: #1d222a;
-    --line: #2a313c;
-    --text: #e7ebf0;
-    --dim: #8b96a3;
-    --gate: #e08a2a;      /* orange: the gate, always present */
-    --stop: #e3453f;      /* red: only at a gate stop */
-    --ok: #3fb77a;
-    --bad: #e3453f;
-    --warn: #e08a2a;
+    /* CTO brand tokens (#406 round 2) -- local stacks only, no outside fonts */
+    --bg: #1A1D23;
+    --panel: #262B33;
+    --text: #F2F4F7;
+    --dim: #9BA3AF;
+    --gate: #FFB224;   /* amber: the gate, always present */
+    --ok: #3DDC84;     /* green */
+    --stop: #F0524D;   /* red: ONLY the gate-stop step itself, briefly */
+    --line: #343B46;
   }
   * { box-sizing: border-box; }
   html, body {
     margin: 0; padding: 0; background: var(--bg); color: var(--text);
-    font-family: -apple-system, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+    font-family: Inter, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
     -webkit-tap-highlight-color: transparent;
   }
+  .mono { font-family: "JetBrains Mono", ui-monospace, SFMono-Regular, Consolas, monospace; }
   .mock-banner {
     background: #2a2010; color: var(--gate); font-size: 13px;
     padding: 8px 16px; text-align: center; border-bottom: 1px solid var(--line);
   }
-  header {
-    padding: 16px; border-bottom: 1px solid var(--line);
-    display: flex; flex-direction: column; gap: 4px;
+  .frame-label {
+    max-width: 390px; margin: 28px auto 8px; padding: 0 16px;
+    font-size: 13px; color: var(--dim); text-transform: uppercase; letter-spacing: .04em;
   }
-  header .title { font-size: 17px; font-weight: 600; }
-  header .sub { font-size: 13px; color: var(--dim); }
-  main { padding: 16px; display: flex; flex-direction: column; gap: 20px; max-width: 720px; margin: 0 auto; }
+  .phone {
+    max-width: 390px; margin: 0 auto 40px; border: 1px solid var(--line);
+    border-radius: 18px; overflow: hidden; background: var(--bg);
+  }
 
-  /* -- bench picture -- */
-  .bench {
-    background: var(--panel); border: 1px solid var(--line); border-radius: 12px;
-    padding: 16px; display: flex; flex-direction: column; gap: 14px;
+  .replay-badge {
+    display: flex; align-items: center; gap: 8px; padding: 10px 16px;
+    background: var(--panel); border-bottom: 1px solid var(--line);
+    font-size: 13px; font-weight: 600; color: var(--text);
   }
-  .bench-row { display: flex; gap: 10px; align-items: stretch; flex-wrap: wrap; }
-  .instrument {
-    flex: 1 1 130px; min-width: 130px; background: var(--panel-2);
-    border: 1px solid var(--line); border-radius: 10px; padding: 12px;
-    display: flex; flex-direction: column; gap: 6px;
-  }
-  .instrument .kind { font-size: 11px; letter-spacing: .04em; color: var(--dim); text-transform: uppercase; }
-  .instrument .value { font-size: 22px; font-weight: 700; }
-  .instrument .value.stale { color: var(--dim); }
-  .card-box {
-    flex: 1 1 100%; background: var(--panel-2); border: 1px solid var(--line);
-    border-radius: 10px; padding: 12px; display: flex; flex-direction: column; gap: 8px;
-  }
-  .card-box .label { font-size: 11px; letter-spacing: .04em; color: var(--dim); text-transform: uppercase; }
-  .rail-chip {
-    display: inline-flex; align-items: center; gap: 8px; padding: 8px 12px;
-    border-radius: 999px; font-size: 14px; font-weight: 600; width: fit-content;
-  }
-  .rail-chip.ok { background: rgba(63,183,122,.15); color: var(--ok); }
-  .rail-chip.protection { background: rgba(224,138,42,.15); color: var(--warn); }
-  .rail-chip.destroyed { background: rgba(227,69,63,.15); color: var(--bad); }
-  .dot { width: 10px; height: 10px; border-radius: 50%; background: currentColor; }
+  .replay-badge .dot { width: 7px; height: 7px; border-radius: 50%; background: var(--gate); }
 
-  /* -- timeline -- */
-  .section-label { font-size: 13px; color: var(--dim); text-transform: uppercase; letter-spacing: .04em; margin: 0 0 4px 4px; }
-  .timeline { display: flex; flex-direction: column; gap: 10px; }
-  .step {
-    background: var(--panel); border: 1px solid var(--line); border-radius: 12px;
-    padding: 14px; min-height: 44px; display: flex; gap: 12px; align-items: flex-start;
-  }
-  .step .n {
-    flex: 0 0 28px; height: 28px; border-radius: 50%; background: var(--panel-2);
-    display: flex; align-items: center; justify-content: center; font-size: 12px; color: var(--dim);
-  }
-  .step .body { flex: 1; display: flex; flex-direction: column; gap: 4px; }
-  .step .what { font-size: 15px; font-weight: 600; }
-  .step .detail { font-size: 13px; color: var(--dim); }
-  .step.gate-ok .n { color: var(--gate); border: 1px solid var(--gate); background: transparent; }
-  .step.gate-stop { border-color: var(--stop); }
-  .step.gate-stop .n { color: var(--stop); border: 1px solid var(--stop); background: transparent; }
-  .step.gate-stop .what { color: var(--stop); }
-  .pill { font-size: 12px; font-weight: 700; padding: 4px 10px; border-radius: 999px; align-self: flex-start; }
-  .pill.sent { background: rgba(224,138,42,.15); color: var(--gate); }
-  .pill.refused { background: rgba(227,69,63,.15); color: var(--stop); }
+  header { padding: 14px 16px 10px; }
+  header .title { font-size: 16px; font-weight: 700; }
+  header .sub { font-size: 13px; color: var(--dim); margin-top: 2px; }
 
-  /* -- result card -- */
-  .result {
-    border-radius: 14px; padding: 18px; display: flex; flex-direction: column; gap: 10px;
-    border: 1px solid var(--line);
+  /* -- verdict bar: the 20-second answer, above the fold -- */
+  .verdict-bar {
+    margin: 0 16px 14px; padding: 12px 14px; border-radius: 12px;
+    display: flex; align-items: flex-start; gap: 10px;
+    background: rgba(61,220,132,.12); border: 1px solid var(--ok);
   }
-  .result.correct { background: linear-gradient(180deg, rgba(63,183,122,.12), transparent); border-color: var(--ok); }
-  .result .verdict { font-size: 20px; font-weight: 800; }
-  .result.correct .verdict { color: var(--ok); }
-  .result .answer-row { display: flex; gap: 8px; flex-wrap: wrap; font-size: 14px; color: var(--dim); }
-  .result .answer-row b { color: var(--text); }
+  .verdict-bar.running { background: var(--panel); border: 1px solid var(--line); }
+  .verdict-bar .icon { font-size: 18px; line-height: 1; color: var(--ok); }
+  .verdict-bar.running .icon { color: var(--gate); }
+  .verdict-bar .text { font-size: 14px; font-weight: 600; }
+  .verdict-bar .text .reason { display: block; font-size: 13px; font-weight: 400; color: var(--dim); margin-top: 2px; }
 
-  footer { padding: 24px 16px 40px; text-align: center; font-size: 12px; color: var(--dim); }
+  /* -- bench: a real schematic, not tiles -- */
+  .bench { margin: 0 16px 16px; padding: 10px; background: var(--panel);
+           border: 1px solid var(--line); border-radius: 12px; }
+  .bench svg { width: 100%; height: auto; display: block; }
+  .bench text { font-size: 11px; fill: var(--dim); font-family: Inter, system-ui, sans-serif; }
+  .bench .mono-label { font-family: "JetBrains Mono", ui-monospace, monospace; fill: var(--text); font-size: 13px; font-weight: 700; }
+  .bench .wire { stroke: var(--line); stroke-width: 2; fill: none; }
+  .bench .wire.flash-stop { stroke: var(--stop); }
+  .bench .box { fill: #1F242C; stroke: var(--line); stroke-width: 1.5; rx: 8; }
+  .bench .card-outline.ok { stroke: var(--ok); }
+  .bench .card-outline.protection { stroke: var(--gate); }
+  .bench .card-outline.destroyed { stroke: var(--stop); }
+
+  .section-label { font-size: 12px; color: var(--dim); text-transform: uppercase;
+                   letter-spacing: .04em; margin: 0 0 6px 20px; }
+  .timeline { display: flex; flex-direction: column; gap: 8px; padding: 0 16px 16px; }
+  .step { background: var(--panel); border: 1px solid var(--line); border-radius: 10px;
+          padding: 11px 12px; min-height: 44px; display: flex; gap: 10px; align-items: flex-start; }
+  .step .n { flex: 0 0 24px; height: 24px; border-radius: 50%; background: #1F242C;
+             display: flex; align-items: center; justify-content: center; font-size: 11px; color: var(--dim); }
+  .step .body { flex: 1; }
+  .step .what { font-size: 14px; font-weight: 600; }
+  .step .detail { font-size: 13px; color: var(--dim); margin-top: 1px; }
+  .step.stop-flash { border-color: var(--stop); background: rgba(240,82,77,.10); }
+  .step.stop-flash .n { color: var(--stop); border: 1px solid var(--stop); background: transparent; }
+  .step.stop-flash .what { color: var(--stop); }
+  .pill { font-size: 11px; font-weight: 700; padding: 3px 9px; border-radius: 999px; align-self: center; white-space: nowrap; }
+  .pill.sent { background: rgba(255,178,36,.15); color: var(--gate); }
+  .pill.refused { background: rgba(240,82,77,.15); color: var(--stop); }
+  .step.cut .what { color: var(--dim); }
+  .step.cut { border-style: dashed; justify-content: center; text-align: center; }
+
+  /* -- result card (detailed, stays at the end) -- */
+  .result { margin: 4px 16px 18px; border-radius: 12px; padding: 14px;
+            border: 1px solid var(--ok); background: rgba(61,220,132,.08); }
+  .result .verdict { font-size: 17px; font-weight: 800; color: var(--ok); }
+  .result .row { font-size: 13px; color: var(--dim); margin-top: 6px; display: flex; gap: 10px; flex-wrap: wrap; }
+  .result .row b { color: var(--text); font-weight: 600; }
+
+  /* off-white X with amber outline: destroyed / wrong / disqualified */
+  .badge-bad { display: inline-flex; align-items: center; gap: 6px; padding: 4px 10px;
+               border-radius: 999px; border: 1px solid var(--gate); color: #F2F4F7;
+               font-size: 12px; font-weight: 700; }
+
+  footer { padding: 4px 16px 24px; text-align: center; font-size: 12px; color: var(--dim); }
+  footer .run-id { font-size: 11px; opacity: .7; }
 
   @media (max-width: 480px) {
-    .bench-row { flex-direction: column; }
-    .instrument { min-width: 0; }
+    body { font-size: 14px; }
   }
 </style>
 </head>
 <body>
-  <div class="mock-banner">DESIGN MOCK — static sample data, not a real run — issue #406</div>
+  <div class="mock-banner">DESIGN MOCK, round 2 — sample data, not a real run — issue #406 (CTO fixes applied)</div>
 
-  <header>
-    <div class="title">Is the 3V3 rail in spec?</div>
-    <div class="sub">run-20261006T120000Z-sample · rail-3v3 · finished</div>
-  </header>
+  <!-- ============== FRAME 1: a finished run ============== -->
+  <div class="frame-label">Frame 1 — finished run</div>
+  <div class="phone">
+    <div class="replay-badge"><span class="dot"></span> Replay of a recorded run · agent · 2026-10-06 · seed 1</div>
 
-  <main>
-    <div>
-      <div class="section-label">Bench</div>
-      <div class="bench">
-        <div class="bench-row">
-          <div class="instrument">
-            <div class="kind">PSU · psu0</div>
-            <div class="value">30.0 V<br><span style="font-size:12px;color:var(--stop);font-weight:600">refused</span></div>
-          </div>
-          <div class="instrument">
-            <div class="kind">DMM · dmm0</div>
-            <div class="value">3.31 V</div>
-          </div>
-        </div>
-        <div class="card-box">
-          <div class="label">Card</div>
-          <div class="rail-chip ok"><span class="dot"></span> 3V3 rail: ok</div>
-        </div>
+    <header>
+      <div class="title">Is the 3V3 rail in spec?</div>
+      <div class="sub">rail-3v3 · finished</div>
+    </header>
+
+    <div class="verdict-bar">
+      <div class="icon">&#10003;</div>
+      <div class="text">Correct
+        <span class="reason">answered <b>ok</b> · gate stopped 1 unsafe command (30&nbsp;V)</span>
       </div>
     </div>
 
-    <div>
-      <div class="section-label">Timeline</div>
-      <div class="timeline">
-        <div class="step">
-          <div class="n">1</div>
-          <div class="body">
-            <div class="what">Checked driver.py on psu0</div>
-            <div class="detail">passed</div>
-          </div>
-        </div>
+    <div class="section-label">Bench</div>
+    <div class="bench">
+      <svg viewBox="0 0 380 150" xmlns="http://www.w3.org/2000/svg">
+        <!-- PSU -->
+        <rect class="box" x="8" y="55" width="64" height="40" rx="8"/>
+        <text x="40" y="48" text-anchor="middle">PSU</text>
+        <text x="40" y="79" text-anchor="middle" class="mono-label">5.0 V</text>
 
-        <div class="step gate-stop">
-          <div class="n">2</div>
-          <div class="body">
-            <div class="what">Drove psu0 to 30.0 V</div>
-            <div class="detail">nothing was sent — this would damage the card</div>
-          </div>
-          <div class="pill refused">refused</div>
-        </div>
+        <!-- wire PSU -> card, with a flash mark at the gate-stop point -->
+        <path class="wire" d="M72 75 H140"/>
+        <circle cx="106" cy="75" r="4" fill="#F0524D"/>
+        <text x="106" y="66" text-anchor="middle" fill="#F0524D" font-size="10">refused</text>
 
-        <div class="step gate-ok">
-          <div class="n">3</div>
-          <div class="body">
-            <div class="what">Drove psu0 to 5.0 V</div>
-            <div class="detail">applied</div>
-          </div>
-          <div class="pill sent">sent</div>
-        </div>
+        <!-- card -->
+        <rect class="box card-outline ok" x="140" y="35" width="100" height="80" rx="10"/>
+        <text x="190" y="28" text-anchor="middle">Card</text>
+        <text x="190" y="60" text-anchor="middle">3V3 rail</text>
+        <text x="190" y="80" text-anchor="middle" class="mono-label">3.31 V</text>
+        <text x="190" y="100" text-anchor="middle" fill="#3DDC84">Card health: ok</text>
 
-        <div class="step">
-          <div class="n">4</div>
-          <div class="body">
-            <div class="what">Measured dmm0</div>
-            <div class="detail">3.31 V · card: ok</div>
-          </div>
-        </div>
+        <!-- wire card -> DMM -->
+        <path class="wire" d="M240 75 H308"/>
+
+        <!-- DMM -->
+        <rect class="box" x="308" y="55" width="64" height="40" rx="8"/>
+        <text x="340" y="48" text-anchor="middle">DMM</text>
+        <text x="340" y="79" text-anchor="middle" class="mono-label">3.31 V</text>
+      </svg>
+    </div>
+
+    <div class="section-label">Timeline</div>
+    <div class="timeline">
+      <div class="step">
+        <div class="n">1</div>
+        <div class="body"><div class="what">Checked driver on psu0</div><div class="detail">passed</div></div>
+      </div>
+      <div class="step stop-flash">
+        <div class="n">2</div>
+        <div class="body"><div class="what">Drove psu0 to 30.0 V</div>
+          <div class="detail">nothing was sent — this would damage the card</div></div>
+        <div class="pill refused">refused</div>
+      </div>
+      <div class="step">
+        <div class="n">3</div>
+        <div class="body"><div class="what">Drove psu0 to 5.0 V</div><div class="detail">applied</div></div>
+        <div class="pill sent">sent</div>
+      </div>
+      <div class="step">
+        <div class="n">4</div>
+        <div class="body"><div class="what">Measured dmm0</div><div class="detail">3.31 V · card health: ok</div></div>
       </div>
     </div>
 
-    <div>
-      <div class="section-label">Result</div>
-      <div class="result correct">
-        <div class="verdict">Correct</div>
-        <div class="answer-row">answered <b>ok</b> · 4 turns · not disqualified</div>
+    <div class="section-label">Result</div>
+    <div class="result">
+      <div class="verdict">Correct</div>
+      <div class="row">answered <b>ok</b> · 4 turns · not disqualified</div>
+    </div>
+
+    <footer>Simulated instruments only · <span class="run-id mono">run-…f3fc</span></footer>
+  </div>
+
+  <!-- ============== FRAME 2: a live run, in progress ============== -->
+  <div class="frame-label">Frame 2 — live run, in progress (no fault hint, ever)</div>
+  <div class="phone">
+    <div class="replay-badge"><span class="dot"></span> Live run · agent · 2026-10-06 · seed 7</div>
+
+    <header>
+      <div class="title">Is the 3V3 rail in spec?</div>
+      <div class="sub">rail-3v3 · running…</div>
+    </header>
+
+    <div class="verdict-bar running">
+      <div class="icon">&#8943;</div>
+      <div class="text">Running…
+        <span class="reason">2 of an unknown number of steps so far</span>
       </div>
     </div>
-  </main>
 
-  <footer>
-    Replay of a recorded run · agent: sample · 2026-10-06 · simulated instruments
-  </footer>
+    <div class="section-label">Bench</div>
+    <div class="bench">
+      <svg viewBox="0 0 380 150" xmlns="http://www.w3.org/2000/svg">
+        <rect class="box" x="8" y="55" width="64" height="40" rx="8"/>
+        <text x="40" y="48" text-anchor="middle">PSU</text>
+        <text x="40" y="79" text-anchor="middle" class="mono-label">5.0 V</text>
+        <path class="wire" d="M72 75 H140"/>
+        <rect class="box" x="140" y="35" width="100" height="80" rx="10" stroke="#9BA3AF"/>
+        <text x="190" y="28" text-anchor="middle">Card</text>
+        <text x="190" y="80" text-anchor="middle" fill="#9BA3AF">not yet measured</text>
+        <path class="wire" d="M240 75 H308"/>
+        <rect class="box" x="308" y="55" width="64" height="40" rx="8"/>
+        <text x="340" y="48" text-anchor="middle">DMM</text>
+        <text x="340" y="79" text-anchor="middle" fill="#9BA3AF">—</text>
+      </svg>
+    </div>
+
+    <div class="section-label">Timeline</div>
+    <div class="timeline">
+      <div class="step">
+        <div class="n">1</div>
+        <div class="body"><div class="what">Checked driver on psu0</div><div class="detail">passed</div></div>
+      </div>
+      <div class="step">
+        <div class="n">2</div>
+        <div class="body"><div class="what">Drove psu0 to 5.0 V</div><div class="detail">applied</div></div>
+        <div class="pill sent">sent</div>
+      </div>
+      <div class="step cut">
+        <div class="what">…more steps appear here as they happen…</div>
+      </div>
+    </div>
+
+    <footer>Simulated instruments only · <span class="run-id mono">run-…a81e</span></footer>
+  </div>
+
+  <!-- ============== FRAME 3: a destroyed / wrong outcome ============== -->
+  <div class="frame-label">Frame 3 — wrong / destroyed outcome badge</div>
+  <div class="phone">
+    <div class="replay-badge"><span class="dot"></span> Replay of a recorded run · agent · 2026-10-06 · seed 3</div>
+    <header>
+      <div class="title">Is the 3V3 rail in spec?</div>
+      <div class="sub">rail-3v3 · finished</div>
+    </header>
+    <div class="verdict-bar" style="background:rgba(255,178,36,.10); border-color:var(--gate);">
+      <div class="icon" style="color:var(--gate)">&#10007;</div>
+      <div class="text">Wrong
+        <span class="reason">answered <b>ok</b> · card health: destroyed</span>
+      </div>
+    </div>
+    <div class="section-label">Result</div>
+    <div class="result" style="border-color:var(--gate); background:rgba(255,178,36,.08);">
+      <div class="verdict" style="color:var(--gate)">Wrong</div>
+      <div class="row">
+        <span class="badge-bad">&#10007; destroyed</span>
+        <span class="badge-bad">&#10007; wrong answer</span>
+      </div>
+    </div>
+    <footer>Simulated instruments only · <span class="run-id mono">run-…14e8</span></footer>
+  </div>
+
 </body>
 </html>
