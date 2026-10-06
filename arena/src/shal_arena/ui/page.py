@@ -343,7 +343,7 @@ function renderBench(payload) {
     const temp = payload.instruments.find(i => i.address.startsWith("temp"));
     const tReading = temp ? latestReading(payload.timeline, temp.address) : null;
     document.getElementById("temp-value").textContent = tReading
-      ? `${tReading.detail.value}°C` : "—";
+      ? `${Math.round(tReading.detail.value * 10) / 10}°C` : "—";
   }
 }
 
