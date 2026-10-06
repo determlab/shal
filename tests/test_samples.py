@@ -34,7 +34,8 @@ REFERENCES = {"tmp102", "mcp23017", "rigol_dp832", "sonos", "order_service", "sq
 
 
 def _on_disk() -> set[str]:
-    return {p.name for p in SAMPLES_DIR.iterdir() if p.is_dir() and (p / "run.py").is_file()}
+    return {p.name for p in SAMPLES_DIR.iterdir()
+            if p.is_dir() and cli._sample_entry(p) is not None}
 
 
 def _json(capsys) -> dict:
@@ -73,6 +74,142 @@ def test_samples_json_is_the_same_list(capsys):
     assert Path(hello["folder"]) == SAMPLES_DIR / "hello"
     assert hello["print_with"] == "shal docs --sample hello"
     assert hello["write_with"] == "shal docs --sample hello --to <DIR>"
+
+
+# -- the virtual-bench sample (#384): the fuller bench, written out from the wheel ---
+
+VIRTUAL_BENCH_SAMPLE = SAMPLES_DIR / "virtual-bench"
+VIRTUAL_BENCH_DEMO = _ROOT / "examples" / "demos" / "virtual-bench"
+# Files this comparison ignores on each side, beyond the four shipped files
+# (bench.yaml, test_bench.py, run_bench.py, README.md): `.gitignore` is never
+# copied into the sample; `expect.json` is the samples-CI-only control file
+# `_cmd_docs_sample`/`_write_sample` already never print or write (also true of
+# hello/jig/limits); `test_run_bench_record.py` is issue #379's own regression
+# test for `examples/demos/virtual-bench/run_bench.py` — a repo test for the demo,
+# landed there before this issue, never part of what a sample ships. `records.db`/
+# `records`/`__pycache__` are runtime artifacts a real pytest-shal run (or a prior
+# test in this session, e.g. tests/test_virtual_bench_demo.py) leaves beside the
+# demo's own files — not repo content, already in the demo's own `.gitignore`.
+_DEMO_ONLY = {".gitignore", "test_run_bench_record.py", "records.db", "records", "__pycache__"}
+_SAMPLE_ONLY = {"expect.json"}
+
+
+def test_virtual_bench_is_listed_with_run_bench_first(capsys):
+    assert cli.main(["docs", "--samples", "--json"]) == 0
+    bench = next(s for s in _json(capsys)["samples"] if s["name"] == "virtual-bench")
+    assert bench["files"][0] == "run_bench.py"
+    assert set(bench["files"]) == {"run_bench.py", "bench.yaml", "test_bench.py", "README.md"}
+    assert bench["print_with"] == "shal docs --sample virtual-bench"
+    assert bench["write_with"] == "shal docs --sample virtual-bench --to <DIR>"
+
+
+def test_virtual_bench_to_writes_exactly_the_four_files(tmp_path):
+    dest = tmp_path / "bench"
+    assert cli.main(["docs", "--sample", "virtual-bench", "--to", str(dest)]) == 0
+    assert sorted(p.name for p in dest.iterdir()) == sorted(
+        {"run_bench.py", "bench.yaml", "test_bench.py", "README.md"})
+
+
+def test_virtual_bench_sample_is_byte_identical_to_the_demo():
+    sample_files = {p.name for p in VIRTUAL_BENCH_SAMPLE.iterdir()} - _SAMPLE_ONLY
+    demo_files = {p.name for p in VIRTUAL_BENCH_DEMO.iterdir()} - _DEMO_ONLY
+    assert sample_files == demo_files == {"run_bench.py", "bench.yaml", "test_bench.py",
+                                          "README.md"}
+    for name in sample_files:
+        assert (VIRTUAL_BENCH_SAMPLE / name).read_bytes() == \
+            (VIRTUAL_BENCH_DEMO / name).read_bytes(), f"{name} drifted from the demo"
+
+
+def test_wheel_contains_the_virtual_bench_sample_files(tmp_path):
+    import zipfile
+
+    dist = tmp_path / "dist"
+    build = subprocess.run([sys.executable, "-m", "build", "--wheel", "--outdir", str(dist)],
+                           cwd=_ROOT, capture_output=True, text=True, timeout=300)
+    if build.returncode != 0:
+        pytest.skip(f"could not build the wheel: {build.stderr[-2000:]}")
+    wheels = list(dist.glob("*.whl"))
+    if not wheels:
+        pytest.skip("wheel build produced no .whl")
+    with zipfile.ZipFile(wheels[0]) as zf:
+        names = set(zf.namelist())
+    for fname in ("run_bench.py", "bench.yaml", "test_bench.py", "README.md"):
+        assert f"shal/samples/virtual-bench/{fname}" in names
+
+
+@pytest.fixture(scope="module")
+def virtual_bench_venv(tmp_path_factory):
+    """A clean venv with this commit's wheel, pytest and pytest-shal installed — same
+    pin test_virtual_bench_demo.py uses. Skips (never fails) without network."""
+    tmp = tmp_path_factory.mktemp("virtual-bench-sample")
+    dist = tmp / "dist"
+    build = subprocess.run([sys.executable, "-m", "build", "--wheel", "--outdir", str(dist)],
+                           cwd=_ROOT, capture_output=True, text=True, timeout=300)
+    if build.returncode != 0:
+        pytest.skip(f"could not build the wheel: {build.stderr[-2000:]}")
+    wheels = list(dist.glob("*.whl"))
+    if not wheels:
+        pytest.skip("wheel build produced no .whl")
+
+    import venv as venv_module
+    venv_dir = tmp / "venv"
+    venv_module.create(venv_dir, with_pip=True)
+    py = venv_dir / ("Scripts/python.exe" if sys.platform == "win32" else "bin/python")
+
+    install = subprocess.run([str(py), "-m", "pip", "install", str(wheels[0]), "pytest"],
+                             capture_output=True, text=True, timeout=300)
+    if install.returncode != 0:
+        pytest.skip(f"could not install the wheel into a clean venv: {install.stderr[-2000:]}")
+
+    plugin = subprocess.run(
+        [str(py), "-m", "pip", "install",
+         "pytest-shal @ git+https://github.com/determlab/pytest-shal"
+         "@f45937de74737473e3b2b896b25bef087468da40"],
+        capture_output=True, text=True, timeout=300)
+    if plugin.returncode != 0:
+        pytest.skip(f"could not install pytest-shal (needs network): {plugin.stderr[-2000:]}")
+    return venv_dir
+
+
+def _venv_shal(venv_dir: Path) -> str:
+    bindir = run_samples.venv_bin(venv_dir)
+    shal = run_samples.shutil.which("shal", path=str(bindir))
+    assert shal, f"no `shal` in {bindir}"
+    return shal
+
+
+def test_virtual_bench_sample_runs_for_real(virtual_bench_venv: Path, tmp_path: Path):
+    """The agent path (issue #384): `shal docs --sample virtual-bench --to DIR`
+    (non-interactive, this venv's own install), then `python DIR/run_bench.py` on that
+    clean copy — the same two commands `examples/demos/virtual-bench` always ran,
+    now reached through the packaged sample instead of a repo checkout path."""
+    shal = _venv_shal(virtual_bench_venv)
+    py = str(virtual_bench_venv / ("Scripts/python.exe" if sys.platform == "win32"
+                                   else "bin/python"))
+    dest = tmp_path / "bench"
+    w = subprocess.run([shal, "docs", "--sample", "virtual-bench", "--to", str(dest)],
+                       stdin=subprocess.DEVNULL, capture_output=True, text=True, timeout=60)
+    assert w.returncode == 0, w.stderr
+
+    r = subprocess.run([py, "run_bench.py"], cwd=dest, capture_output=True, text=True,
+                       timeout=120)
+    assert r.returncode == 0, r.stdout + r.stderr
+    summary = json.loads(r.stdout)
+    assert summary["verdict"] == "pass"
+
+    env = dict(os.environ, SHAL_SIM_UNPLUG="dmm")
+    r2 = subprocess.run([py, "run_bench.py", "--unplug", "dmm"], cwd=dest, env=env,
+                        capture_output=True, text=True, timeout=120)
+    assert r2.returncode == 4
+    summary2 = json.loads(r2.stdout)
+    assert summary2["verdict"] == "error" and summary2["cause"] == "transport"
+
+
+def test_unknown_sample_names_shal_docs_samples(capsys):
+    assert cli.main(["docs", "--sample", "no-such-sample"]) == 2
+    err = capsys.readouterr().err
+    assert "no sample named 'no-such-sample'" in err
+    assert "shal docs --samples" in err
 
 
 def test_no_sample_is_a_placeholder(capsys):
@@ -198,7 +335,7 @@ def test_the_printed_command_runs_from_another_folder(tmp_path, capsys):
 # -- the CI runner --------------------------------------------------------------------
 
 def test_expect_defaults_to_exit_0(tmp_path):
-    assert load_expect(tmp_path) == {"exit": 0}
+    assert load_expect(tmp_path) == {"exit": 0, "needs_import": []}
 
 
 def test_expect_reads_the_file(tmp_path):
@@ -206,7 +343,7 @@ def test_expect_reads_the_file(tmp_path):
         '{"exit": 2, "stderr_has": ["refused"], "stderr_lacks": ["Traceback"]}',
         encoding="utf-8")
     assert load_expect(tmp_path) == {"exit": 2, "stderr_has": ["refused"],
-                                     "stderr_lacks": ["Traceback"]}
+                                     "stderr_lacks": ["Traceback"], "needs_import": []}
 
 
 @pytest.mark.parametrize("text, match", [
@@ -243,6 +380,26 @@ def test_verdict_names_each_miss():
                    "stderr lacks 'limit'", "stderr has 'Traceback'"]
 
 
+def test_target_python_with_no_venv_is_sys_executable():
+    assert run_samples.target_python(None) == sys.executable
+
+
+def test_target_python_with_a_venv_is_under_its_own_bin_or_scripts(tmp_path, monkeypatch):
+    # #384 CI: a raw install's console script and interpreter needn't share a
+    # folder (Windows: `python.exe` at the install root, `shal.exe` in `Scripts\`),
+    # which is exactly why this is never derived from `shal`'s own path.
+    monkeypatch.setattr(run_samples.os, "name", "nt")
+    assert run_samples.target_python(tmp_path) == str(tmp_path / "Scripts" / "python.exe")
+    monkeypatch.setattr(run_samples.os, "name", "posix")
+    assert run_samples.target_python(tmp_path) == str(tmp_path / "bin" / "python")
+
+
+def test_needs_import_skips_on_a_python_that_lacks_it(tmp_path):
+    assert run_samples._missing_imports(sys.executable, ["no_such_module_xyz"], os.environ) == \
+        ["no_such_module_xyz"]
+    assert run_samples._missing_imports(sys.executable, ["json"], os.environ) == []
+
+
 def test_run_one_gives_the_sample_no_terminal(tmp_path, monkeypatch, capsys):
     # On Windows a DEVNULL stdin is the NUL device, and NUL is a character device:
     # isatty() is True, so ConsoleApprover.has_person() is True and a gated op
@@ -268,7 +425,7 @@ def test_run_one_gives_the_sample_no_terminal(tmp_path, monkeypatch, capsys):
     env = {**os.environ, "PATH": str(Path(sys.executable).parent) + os.pathsep
            + os.environ.get("PATH", "")}
     sample = {"name": "tty", "folder": str(src), "files": ["run.py"]}
-    assert run_samples.run_one(sample, "shal", tmp_path / "scratch", env) == []
+    assert run_samples.run_one(sample, "shal", sys.executable, tmp_path / "scratch", env) == []
 
 
 def test_runner_runs_every_installed_sample(tmp_path, capsys):
@@ -277,6 +434,11 @@ def test_runner_runs_every_installed_sample(tmp_path, capsys):
     out = capsys.readouterr().out
     assert "ok    hello" in out and "all " in out
     assert (tmp_path / "samples" / "hello" / "run.py").is_file()
+    # virtual-bench (#384) needs `pytest-shal` beyond the wheel (not on PyPI, so not
+    # in this dev venv): an honest `skip`, not a `FAIL` for a gap this runner can't
+    # close. test_virtual_bench_sample_runs_for_real below builds its own venv with
+    # it and exercises the real pass / --unplug dmm paths.
+    assert "skip  virtual-bench: needs pytest_shal" in out
 
 
 # -- the limits sample (#207) ------------------------------------------------------------
@@ -333,10 +495,12 @@ def test_limits_first_comment_is_the_issue_text():
     assert "approver(" not in LIMITS.read_text(encoding="utf-8")   # never pins one
 
 
-@pytest.mark.parametrize("name", sorted(_on_disk()))
+@pytest.mark.parametrize("name", sorted(_on_disk() - {"virtual-bench"}))
 def test_every_sample_fits_on_one_screen(name):
     # one screen, comments included (#207): counting code alone would let a
-    # sample become a wall of comments
+    # sample become a wall of comments. virtual-bench (#384) is the fuller bench,
+    # kept byte-identical to examples/demos/virtual-bench on purpose — not a
+    # one-screen intro sample, so it is exempt by name, not by raising the limit.
     run = SAMPLES_DIR / name / "run.py"
     assert len(run.read_text(encoding="utf-8").splitlines()) <= 50
 

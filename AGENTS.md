@@ -25,6 +25,14 @@ runs on except where noted. A command marked **(main only, not in the PyPI
 release yet)** needs the unreleased source instead:
 `pip install git+https://github.com/determlab/shal`.
 
+The fuller bench — a simulated PSU and DMM scored by
+[pytest-shal](https://github.com/determlab/pytest-shal) — ships as a sample:
+`shal docs --sample virtual-bench --to bench` writes it **(main only, not in the PyPI release yet)**.
+It also needs `pytest` and a pinned `pytest-shal` (pyshal itself you already have) —
+`pip install pytest==9.1.1 "pytest-shal @ git+https://github.com/determlab/pytest-shal@f45937de74737473e3b2b896b25bef087468da40"`
+**(main only, not in the PyPI release yet)** — then `python bench/run_bench.py` runs it.
+For agent-scored practice runs on top of it: `pip install shal-arena`.
+
 ## First success
 
 No account, no API key, no hardware. The command needs one file: a topology you

@@ -959,28 +959,47 @@ def _cmd_docs_example(name: str) -> int:
 _SAMPLE_EXPECT = "expect.json"
 
 
+_RUN_UNDERSCORE_PY = re.compile(r"run_.*\.py")
+
+
+def _sample_entry(folder) -> object | None:
+    """A sample's entry file: ``run.py`` if present, else the one ``run_*.py`` file in
+    the folder (#384 — a sample whose own name matters, like ``run_bench.py``, keeps
+    it). None when neither is there (or more than one ``run_*.py`` candidate is, since
+    nothing picks among them)."""
+    run_py = folder / "run.py"
+    if run_py.is_file():
+        return run_py
+    candidates = [f for f in folder.iterdir()
+                  if f.is_file() and _RUN_UNDERSCORE_PY.fullmatch(f.name)]
+    return candidates[0] if len(candidates) == 1 else None
+
+
 def _samples() -> dict[str, object]:
     """The samples: name -> its folder in the installed package. Every subfolder of
-    ``shal/samples`` holding a ``run.py`` is one; found on disk, never imported."""
+    ``shal/samples`` with an entry file (see ``_sample_entry``) is one; found on disk,
+    never imported."""
     from importlib.resources import files
     root = files("shal") / "samples"
     if not root.is_dir():
         return {}
     return {d.name: d for d in sorted(root.iterdir(), key=lambda d: d.name)
-            if d.is_dir() and (d / "run.py").is_file()}
+            if d.is_dir() and _sample_entry(d) is not None}
 
 
 def _sample_files(sample) -> list:
-    """The files of one sample, ``run.py`` first, then the rest by name."""
+    """The files of one sample, its entry file first, then the rest by name."""
+    entry = _sample_entry(sample)
     picked = [f for f in sample.iterdir() if f.is_file() and f.name != _SAMPLE_EXPECT
               and not f.name.endswith((".pyc", ".pyo"))]
-    return sorted(picked, key=lambda f: (f.name != "run.py", f.name))
+    return sorted(picked, key=lambda f: (f.name != entry.name, f.name))
 
 
 def _sample_summary(sample) -> str:
-    """The first line of ``run.py``'s module docstring, read as text (no import)."""
+    """The first line of the entry file's module docstring, read as text (no import)."""
     import ast
-    doc = ast.get_docstring(ast.parse((sample / "run.py").read_text(encoding="utf-8")))
+    entry = _sample_entry(sample)
+    doc = ast.get_docstring(ast.parse(entry.read_text(encoding="utf-8")))
     return (doc or "").strip().splitlines()[0] if doc else ""
 
 
@@ -1008,8 +1027,8 @@ def _cmd_docs_sample(name: str, to: str | None) -> int:
     samples = _samples()
     sample = samples.get(name)
     if sample is None:
-        print(f"shal docs: no sample named '{name}' "
-              f"(samples: {', '.join(samples) or 'none'})", file=sys.stderr)
+        print(f"shal docs: no sample named '{name}' — run 'shal docs --samples' to "
+              f"list them (have: {', '.join(samples) or 'none'})", file=sys.stderr)
         return 2
     files = _sample_files(sample)
     if to is not None:
@@ -1041,7 +1060,7 @@ def _write_sample(name: str, files: list, to: str) -> int:
     dest.mkdir(parents=True, exist_ok=True)
     for f in files:
         (dest / f.name).write_bytes(f.read_bytes())
-    run_py = str(dest / "run.py")
+    run_py = str(dest / files[0].name)   # the entry file, first by `_sample_files`
     # pastes into bash, PowerShell and cmd when it can (see _shell_token); a path
     # with any other character is quoted as the best a single line can do
     token = _shell_token("./" + run_py if run_py.startswith("-") else run_py)

@@ -29,11 +29,18 @@ not write it, and ``--sample`` does not print it). Every key is optional::
      "stdout_has":   ["..."],          # each text must be in stdout
      "stdout_lacks": ["..."],          # each text must not be in stdout
      "stderr_has":   ["..."],
-     "stderr_lacks": ["Traceback"]}
+     "stderr_lacks": ["Traceback"],
+     "needs_import": ["pytest_shal"]}  # skip (not fail) if any import fails in --venv
 
 An unknown key is a failure, so a typo cannot pass silently. Each sample gets
-one line (``ok`` / ``FAIL``), with what is wrong under a failing one. Exit 0
-when every sample passes, 1 otherwise (no sample found is a failure too).
+one line (``ok`` / ``FAIL`` / ``skip``), with what is wrong under a failing one.
+``needs_import`` is for a sample that needs something beyond the wheel itself
+(``virtual-bench``, #384, needs the separate ``pytest-shal`` plugin, which isn't
+even on PyPI yet): checked against ``--venv``'s own python (or the running one,
+with no ``--venv``) before the sample runs, so a venv that lacks it gets an
+honest ``skip``, not a confusing ``FAIL`` for a gap this script cannot close.
+Exit 0 when every sample passes or skips, 1 if any fails (no sample found is a
+failure too).
 
 Usage:
     run_samples.py [--venv VENV_DIR] [--scratch DIR]
@@ -61,27 +68,34 @@ class BadSample(Exception):
     """A sample cannot be written or run as a person would."""
 
 
+class SampleUnavailable(Exception):
+    """A sample's declared ``needs_import`` isn't installed in the target venv — a
+    gap this script cannot close, so the sample is skipped, not failed."""
+
+
 def load_expect(folder: Path) -> dict:
-    """The sample's ``expect.json``, checked; ``{"exit": 0}`` when there is none."""
+    """The sample's ``expect.json``, checked; ``{"exit": 0, "needs_import": []}`` when
+    there is none."""
     path = folder / EXPECT_FILE
     if not path.is_file():
-        return {"exit": 0}
+        return {"exit": 0, "needs_import": []}
     try:
         expect = json.loads(path.read_text(encoding="utf-8"))
     except json.JSONDecodeError as e:
         raise BadSample(f"{path}: not JSON: {e}") from e
     if not isinstance(expect, dict):
         raise BadSample(f"{path}: must be a JSON object")
-    unknown = sorted(set(expect) - {"exit", *_LISTS})
+    unknown = sorted(set(expect) - {"exit", "needs_import", *_LISTS})
     if unknown:
-        raise BadSample(f"{path}: unknown key(s) {unknown}; known: exit, {', '.join(_LISTS)}")
+        raise BadSample(f"{path}: unknown key(s) {unknown}; known: exit, needs_import, "
+                        f"{', '.join(_LISTS)}")
     if not isinstance(expect.get("exit", 0), int) or isinstance(expect.get("exit"), bool):
         raise BadSample(f"{path}: 'exit' must be an integer")
-    for key in _LISTS:
+    for key in (*_LISTS, "needs_import"):
         val = expect.get(key, [])
         if not (isinstance(val, list) and all(isinstance(s, str) for s in val)):
             raise BadSample(f"{path}: '{key}' must be a list of strings")
-    return {"exit": 0, **expect}
+    return {"exit": 0, "needs_import": [], **expect}
 
 
 def verdict(expect: dict, returncode: int, stdout: str, stderr: str) -> list[str]:
@@ -110,11 +124,44 @@ def _tail(text: str, lines: int = 15) -> list[str]:
     return text.rstrip().splitlines()[-lines:]
 
 
-def run_one(sample: dict, shal: str, scratch: Path, env: dict[str, str]) -> list[str]:
-    """Write one sample with ``--to``, run the printed command; return what is wrong."""
+def target_python(venv: Path | None) -> str:
+    """The python a written sample's command line actually runs under: the given
+    venv's own (``venv/Scripts/python.exe`` on Windows, ``venv/bin/python`` else —
+    a `venv`-made environment keeps the interpreter there, unlike a raw install,
+    where a console script and the interpreter needn't share a folder: on Windows,
+    `python.exe` sits at the installation root while `shal.exe` lands one level
+    down in `Scripts\\`), or, with no venv, this running process's own
+    `sys.executable` — which is exactly what a bare ``shal`` on PATH resolves
+    against, since that `shal` came from `pip install -e` into this same
+    interpreter."""
+    if venv is None:
+        return sys.executable
+    return str(venv_bin(venv) / ("python.exe" if os.name == "nt" else "python"))
+
+
+def _missing_imports(python: str, modules: list[str], env: dict[str, str]) -> list[str]:
+    """Which of `modules` `python` cannot import — never installs anything, only
+    looks."""
+    missing = []
+    for mod in modules:
+        r = subprocess.run([python, "-c", f"import {mod}"], env=env,
+                           capture_output=True, timeout=30)
+        if r.returncode != 0:
+            missing.append(mod)
+    return missing
+
+
+def run_one(sample: dict, shal: str, python: str, scratch: Path,
+           env: dict[str, str]) -> list[str]:
+    """Write one sample with ``--to``, run the printed command; return what is wrong.
+    Raises `SampleUnavailable` first when the sample's `needs_import` isn't installed
+    under `python` — never attempted, so that can't show up as a `FAIL`."""
     name = sample["name"]
     dest = scratch / "samples" / name
     expect = load_expect(Path(sample["folder"]))
+    missing = _missing_imports(python, expect["needs_import"], env)
+    if missing:
+        raise SampleUnavailable(f"needs {', '.join(missing)}, not installed in this venv")
     w = subprocess.run([shal, "docs", "--sample", name, "--to", str(dest)], env=env,
                        stdin=subprocess.DEVNULL, capture_output=True, text=True, timeout=60)
     if w.returncode != 0:
@@ -155,10 +202,12 @@ def main(argv: list[str] | None = None) -> int:
     env.pop("PYTHONHOME", None)
     env["PYTHONUTF8"] = "1"
     env["PYTHONDONTWRITEBYTECODE"] = "1"
-    bindir = venv_bin(args.venv.resolve()) if args.venv else Path(sys.executable).parent
-    if args.venv:
-        env["VIRTUAL_ENV"] = str(args.venv.resolve())
+    venv = args.venv.resolve() if args.venv else None
+    bindir = venv_bin(venv) if venv else Path(sys.executable).parent
+    if venv:
+        env["VIRTUAL_ENV"] = str(venv)
     env["PATH"] = str(bindir) + os.pathsep + env.get("PATH", "")
+    python = target_python(venv)
     shal = shutil.which("shal", path=str(bindir)) or shutil.which("shal", path=env["PATH"])
     if shal is None:
         print(f"FAIL: no `shal` in {bindir} or on PATH")
@@ -179,10 +228,15 @@ def main(argv: list[str] | None = None) -> int:
         print("FAIL: no sample found (a subfolder of shal/samples with a run.py)")
         return 1
     failed = []
+    skipped = []
     for sample in samples:
         print(f"-- {sample['name']}")
         try:
-            wrong = run_one(sample, shal, scratch, env)
+            wrong = run_one(sample, shal, python, scratch, env)
+        except SampleUnavailable as e:
+            print(f"skip  {sample['name']}: {e}")
+            skipped.append(sample["name"])
+            continue
         except (BadSample, OSError, subprocess.TimeoutExpired) as e:
             wrong = [str(e)]
         print(f"{'FAIL' if wrong else 'ok  '}  {sample['name']}")
@@ -193,7 +247,9 @@ def main(argv: list[str] | None = None) -> int:
     if failed:
         print(f"FAIL: {len(failed)} of {len(samples)} sample(s): {', '.join(failed)}")
         return 1
-    print(f"all {len(samples)} sample(s) ran as expected")
+    ran = len(samples) - len(skipped)
+    suffix = f" ({len(skipped)} skipped: {', '.join(skipped)})" if skipped else ""
+    print(f"all {ran} sample(s) ran as expected{suffix}")
     return 0
 
 

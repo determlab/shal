@@ -188,6 +188,37 @@ def test_cli_call_rejects_over_limit_set_voltage_with_json() -> None:
     assert error["fix"]  # the one command/change that fixes it (AGENTS.md's JSON contract)
 
 
+def test_no_record_written_carries_a_fix(tmp_path, monkeypatch, capsys):
+    """PR #386 CTO review: with only `pyshal` installed (no `pytest`/`pytest-shal`),
+    the pytest subprocess can't even start, so no new record appears and
+    `run_bench.py` printed `{"ok": false, "error": "no record written..."}` with no
+    `fix` — leaving a cold agent with nothing to act on (AGENTS.md's JSON contract:
+    `fix` is never empty). Stubs `subprocess.run` so this needs no real pytest-shal
+    install; only the no-new-record branch is under test here."""
+    import importlib.util
+
+    spec = importlib.util.spec_from_file_location(
+        "run_bench_no_record", DEMO_DIR / "run_bench.py")
+    run_bench = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(run_bench)
+
+    monkeypatch.setattr(run_bench, "HERE", tmp_path)
+    monkeypatch.setattr(run_bench.subprocess, "run",
+                        lambda *a, **kw: subprocess.CompletedProcess([], 0, "", ""))
+
+    code = run_bench.main([])
+    summary = json.loads(capsys.readouterr().out)
+    assert code == run_bench.EXIT_CANNOT_RUN
+    assert summary["error"].startswith("no record written")
+    # pytest-shal isn't on PyPI (CTO review on #386): a bare package name in the
+    # fix would fail for a cold agent that tries it, same as the prose above —
+    # and it must name the same pinned commit the README's own Install block does.
+    assert summary["fix"] == run_bench.PYTEST_SHAL_FIX
+    assert PYTEST_SHAL_REF in run_bench.PYTEST_SHAL_FIX
+    assert "pip install" in run_bench.PYTEST_SHAL_FIX
+    assert "pytest==9.1.1" in run_bench.PYTEST_SHAL_FIX
+
+
 # ---------------------------------------------------------------------------
 # README install block (issue #345): every `pip install` source must name a
 # pinned git commit or a pinned package version — never a bare, unpinned

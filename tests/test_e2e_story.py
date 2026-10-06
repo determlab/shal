@@ -118,3 +118,14 @@ def test_a_failed_checks_log_starts_with_the_rerun_command():
     result = story.check_virtual_bench_pass(doc, 1, "the exact rerun command")
     assert result["result"] == "fail"
     assert result["log"].startswith("rerun: the exact rerun command\n")
+
+
+def test_story_gets_the_bench_from_the_packaged_sample_not_a_repo_checkout_path():
+    # #384: the virtual bench moved into pyshal's own `virtual-bench` sample, so the
+    # clean-machine story must reach it the same way a buyer would — through the
+    # venv's own `shal docs --sample virtual-bench --to <dir>` — never by assuming a
+    # repo checkout path exists on the clean machine.
+    text = (REPO_ROOT / "dev" / "e2e" / "story.py").read_text(encoding="utf-8")
+    assert "examples/demos/virtual-bench" not in text
+    assert '"demos"' not in text and '"virtual-bench"' in text   # no Path()-built demo path
+    assert "docs --sample virtual-bench" in text or '"--sample", "virtual-bench"' in text
