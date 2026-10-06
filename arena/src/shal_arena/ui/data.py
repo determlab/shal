@@ -65,33 +65,38 @@ def _varies(values: list[float], decimals: int) -> bool:
     return len({round(v, decimals) for v in values}) > 1
 
 
-def _rail_clause(rail: dict[str, Any], values: list[float]) -> str:
+def _rail_clause(rail: dict[str, Any], values: list[float]) -> tuple[str, bool]:
     label, lo, hi = f"the {rail['name']} rail", rail["lo"], rail["hi"]
     if _varies(values, 2):
-        return f"{label} reads {min(values):.2f}-{max(values):.2f} V across reads"
+        return f"{label} reads {min(values):.2f}-{max(values):.2f} V across reads", True
     v = values[-1]
     if lo <= v <= hi:
-        return f"{label} reads {v:.2f} V, inside its {lo:.2f}-{hi:.2f} V window"
+        return f"{label} reads {v:.2f} V, inside its {lo:.2f}-{hi:.2f} V window", False
     side = "below" if v < lo else "above"
     limit = lo if v < lo else hi
-    return f"{label} reads {v:.2f} V, {side} its {limit:.2f} V limit"
+    return f"{label} reads {v:.2f} V, {side} its {limit:.2f} V limit", True
 
 
-def _temp_clause(temp: dict[str, Any], values: list[float]) -> str:
-    label, high = temp["name"], temp["high_c"]
-    if _varies(values, 1):
-        return f"{label} reads {min(values):.1f}-{max(values):.1f} °C across reads"
+def _temp_clause(temp: dict[str, Any], values: list[float]) -> tuple[str, bool]:
+    # issue #432 CMO wording (CTO-approved, exact text): no decimals, no
+    # delta -- "the regulator reads 90 °C, above its 85 °C limit."
+    label, high = f"the {temp['name']}", temp["high_c"]
+    if _varies(values, 0):
+        return f"{label} reads {min(values):.0f}-{max(values):.0f} °C across reads", True
     v = values[-1]
     if v <= high:
-        return f"{label} {v:.1f} °C, within its {high:.1f} °C limit"
-    return f"{label} {v:.1f} °C, {v - high:.1f} °C above its {high:.1f} °C limit"
+        return f"{label} reads {v:.0f} °C, within its {high:.0f} °C limit", False
+    return f"{label} reads {v:.0f} °C, above its {high:.0f} °C limit", True
 
 
 def _measured_clause(name: str, rail: dict[str, Any] | None, temp: dict[str, Any] | None,
-                     readings: list[float], cause: str | None) -> str | None:
+                     readings: list[float], cause: str | None) -> tuple[str, bool] | None:
     """`None` means "say nothing about this instrument" -- no attempt was
     ever logged for it (an old capture made before this ticket with no
-    `reading` line, or an instrument the agent never touched).
+    `reading` line, or an instrument the agent never touched). The `bool`
+    says whether this clause is a FAILING one (out of its window/limit, or
+    a failed read) -- issue #432 CMO wording: the sentence leads with the
+    failing measurement only, when there is one.
 
     issue #432 CTO review: the failed-read cause comes from a `failed`
     sim-log line `take_measurement` itself writes (its own except block,
@@ -104,11 +109,11 @@ def _measured_clause(name: str, rail: dict[str, Any] | None, temp: dict[str, Any
             return _rail_clause(rail, readings)
         if temp is not None:
             return _temp_clause(temp, readings)
-        return f"the {name} reads {readings[-1]:.2f}"
+        return f"the {name} reads {readings[-1]:.2f}", False
     if cause == "driver":
-        return f"the agent's driver failed to read the {name}"
+        return f"the agent's driver failed to read the {name}", True
     if cause == "transport":
-        return f"No answer from the {name}"
+        return f"No answer from the {name}", True
     return None
 
 
@@ -149,13 +154,20 @@ def _answer_sentence(payload: dict[str, Any], rails: list[dict[str, Any]],
         if clause is not None:
             clauses.append(clause)
 
+    # issue #432 CMO wording: lead with the failing measurement only, when
+    # there is one -- an in-spec rail reading is not part of the story
+    # when the regulator is the one that's out of limit. Only when NOTHING
+    # is failing (e.g. the "ok" answer) does every measurement still show.
+    failing = [text for text, is_failing in clauses if is_failing]
+    texts = failing if failing else [text for text, _ in clauses]
+
     # issue #427 CTO review round 2: "destroyed" must not claim "before any
     # reading" when readings were in fact taken (e.g. a fault was measured,
     # then a later scripted 30 V ask destroyed the card).
-    if payload["card"]["destroyed"] and not clauses:
+    if payload["card"]["destroyed"] and not texts:
         measured = "nothing -- the card was destroyed before any reading"
-    elif clauses:
-        measured = ", ".join(clauses)
+    elif texts:
+        measured = ", ".join(texts)
     else:
         measured = None
 
@@ -213,7 +225,15 @@ def run_payload(run_id: str, *, state_dir: str | Path = DEFAULT_STATE_DIR) -> di
         for addr, t in state.tiles.items()
     }
     closed = state.status == "closed"
-    record = _load_json(store.record_path(run_id)) if closed else None
+    # issue #432 CTO review: the record file on disk also carries
+    # `task_path`/`card_path`/`run_id`/`closed_at` -- `task_path`/`card_path`
+    # are local filesystem paths (e.g. this machine's own /tmp), never
+    # meant to reach a page served to someone else. The page needs only
+    # what it actually renders: the agent's own answer, the hidden fault
+    # it is scored against, and whether they matched.
+    full_record = _load_json(store.record_path(run_id)) if closed else None
+    record = ({"given": full_record["given"], "fault_id": full_record["fault_id"],
+               "correct": full_record["correct"]} if full_record is not None else None)
     score = _load_json(store.score_path(run_id)) if closed else None
 
     payload = {

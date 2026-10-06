@@ -52,6 +52,13 @@ _STEP_CAPTIONS = (
 )
 
 
+def test_four_instrument_bench_subtitle_matches_the_exact_cmo_wording() -> None:
+    """issue #432 CMO wording (CTO-approved, exact text)."""
+    html = render_watch_page("run-x", _BASE_PAYLOAD)
+    assert "It switches the card on through the relay, then measures the 3.3 V " in html
+    assert "rail and the regulator temperature." in html
+
+
 def test_all_seven_step_captions_are_verbatim_on_the_page() -> None:
     """issue #427 CTO review round 2: captions 1, 2, 4, 6 and 7 were
     missing. All seven, exact text, from the #406 issue body."""
@@ -482,9 +489,12 @@ def test_failure_cause_old_capture_with_no_reading_has_no_measured_clause(
     assert sentence == "The agent's answer: ok. Wrong: the card has a fault."
 
 
-def test_overheat_sentence_contains_the_delta_in_celsius(tmp_path: Path) -> None:
-    """issue #432: the overheat template must show the delta, e.g. "5.0 °C
-    above its 85.0 °C limit", not just the bare limit."""
+def test_overheat_sentence_matches_the_exact_cmo_wording(tmp_path: Path) -> None:
+    """issue #432 CMO wording (CTO-approved, exact text): "Measured: the
+    regulator reads 90 °C, above its 85 °C limit. The agent's answer:
+    overheat. Correct." -- no decimals, no delta, and the in-spec rail
+    reading is dropped: the sentence leads with the failing measurement
+    only."""
     from shal_arena import fault as fault_mod
     from shal_arena.loader import load_task
 
@@ -492,17 +502,15 @@ def test_overheat_sentence_contains_the_delta_in_celsius(tmp_path: Path) -> None
     seed = next(s for s in range(500)
                if fault_mod.realized_fault(card, s).fault_id == "overheat")
     run_id = start_run(str(RELAY_RAIL_TASK), seed=seed, state_dir=tmp_path)["run_id"]
+    take_measurement(run_id, "dmm0", PASSING_DMM_DRIVER, state_dir=tmp_path)
     take_measurement(run_id, "temp0", PASSING_TEMP_DRIVER, state_dir=tmp_path)
     answer(run_id, "overheat", state_dir=tmp_path)
 
     payload = run_payload(run_id, state_dir=tmp_path)
     sentence = payload["answer_sentence"]
-    import re
-    m = re.search(r"regulator (\d+\.\d) °C, (\d+\.\d) °C above its (\d+\.\d) °C limit",
-                  sentence)
-    assert m, sentence
-    reading, delta, limit = (float(x) for x in m.groups())
-    assert round(reading - limit, 1) == round(delta, 1)
+    assert sentence == (
+        "Measured: the regulator reads 90 °C, above its 85 °C limit. "
+        "The agent's answer: overheat. Correct.")
 
 
 def test_every_screenshot_is_a_genuine_full_page_capture() -> None:
@@ -537,27 +545,27 @@ def test_answer_sentence_on_a_destroyed_card(tmp_path: Path) -> None:
     assert "destroyed" in sentence
 
 
-def test_answer_sentence_on_a_relay_rail_overheat_run_names_both_readings(
+def test_answer_sentence_on_a_relay_rail_ok_run_still_names_both_readings(
         tmp_path: Path) -> None:
-    """CTO blocker: the 4-instrument bench (psu/dmm/relay/temp) must
-    render a full sentence, including the temperature reading and the
-    regulator's own limit, not just the rail."""
+    """issue #432: the "lead with the failing measurement only" rule only
+    applies when something IS failing -- an "ok" answer has no failing
+    measurement, so both the rail and the regulator still show."""
     from shal_arena import fault as fault_mod
     from shal_arena.loader import load_task
 
     card = load_task(str(RELAY_RAIL_TASK)).card
     seed = next(s for s in range(500)
-               if fault_mod.realized_fault(card, s).fault_id == "overheat")
+               if fault_mod.realized_fault(card, s).fault_id == "ok")
     run_id = start_run(str(RELAY_RAIL_TASK), seed=seed, state_dir=tmp_path)["run_id"]
     take_measurement(run_id, "dmm0", PASSING_DMM_DRIVER, state_dir=tmp_path)
     take_measurement(run_id, "temp0", PASSING_TEMP_DRIVER, state_dir=tmp_path)
-    answer(run_id, "overheat", state_dir=tmp_path)
+    answer(run_id, "ok", state_dir=tmp_path)
 
     payload = run_payload(run_id, state_dir=tmp_path)
     sentence = payload["answer_sentence"]
     assert "rail reads" in sentence
-    assert "regulator" in sentence
-    assert "above its" in sentence
+    assert "regulator reads" in sentence
+    assert "within its" in sentence
     assert sentence.endswith("Correct.")
 
 
@@ -598,3 +606,22 @@ def test_export_from_a_capture_with_a_task_path_from_another_machine(tmp_path: P
 
     payload = run_payload(run_id, state_dir=tmp_path)
     assert payload["task_id"] == "rail-3v3"
+
+
+def test_no_local_filesystem_path_reaches_the_record_or_the_export(tmp_path: Path) -> None:
+    """issue #432 CTO review: the record file on disk also carries
+    `task_path`/`card_path` -- local paths on whatever machine ran it
+    (this test's own tmp_path), never meant to reach a page served to
+    someone else. The embedded `record` is only given/fault_id/correct."""
+    run_id = start_run(str(SAMPLE_TASK), seed=1, state_dir=tmp_path)["run_id"]
+    drive_input(run_id, "psu0", 5.0, state_dir=tmp_path)
+    take_measurement(run_id, "dmm0", PASSING_DMM_DRIVER, state_dir=tmp_path)
+    answer(run_id, "ok", state_dir=tmp_path)
+
+    payload = run_payload(run_id, state_dir=tmp_path)
+    assert set(payload["record"]) == {"given", "fault_id", "correct"}
+
+    html = build_export(run_id, state_dir=tmp_path)
+    assert str(tmp_path) not in html
+    assert "task_path" not in html
+    assert "card_path" not in html

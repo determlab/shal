@@ -308,26 +308,30 @@ function renderVerdict(payload) {
 // -- plain text, always visible; the 4-instrument bench caption is the one
 // case with its own wording (CTO 2026-10-07), else the two-instrument one,
 // else a "coming" placeholder for anything else.
+//
+// issue #432 CMO wording: "Bench" (the section label) stays short and
+// uppercase -- the caption-3 sentence, which varies by instrument count,
+// is its own normal plain paragraph underneath, never the label itself.
 function renderPlainLine(payload) {
   const n = payload.instruments.length;
   document.getElementById("plain-line").textContent =
     `${payload.level} level, ${n} instrument${n === 1 ? "" : "s"}, datasheet written by us`;
-  const label = document.getElementById("bench-label");
+  const caption3 = document.getElementById("bench-caption3");
   if (n === 4) {
-    label.textContent = "The bench: power supply, multimeter, relay and temperature "
+    caption3.textContent = "The bench: power supply, multimeter, relay and temperature "
       + "sensor, around one card. Four instruments, three protocols.";
   } else if (n === 2) {
-    label.textContent = "The bench: power supply, multimeter, card.";
+    caption3.textContent = "The bench: power supply, multimeter, card.";
   } else {
-    label.textContent = "A four-instrument run is on its way.";
+    caption3.textContent = "A four-instrument run is on its way.";
   }
   // issue #427 CTO review round 2: caption 4 ("It powers the card and
   // measures the 3.3 V rail.") is the 2-instrument run's own text -- a
   // 4-instrument run says what IT checks instead.
   const caption4 = document.getElementById("bench-caption");
   caption4.textContent = n === 4
-    ? "It powers the card through the relay, measures the 3V3 rail and the "
-      + "regulator temperature."
+    ? "It switches the card on through the relay, then measures the 3.3 V "
+      + "rail and the regulator temperature."
     : "It powers the card and measures the 3.3 V rail.";
 }
 
@@ -512,8 +516,8 @@ function render(payload) {
   renderVerdict(payload);
   renderPlainLine(payload);
   renderBench(payload);
-  renderTimeline(payload);
   renderDriverCode(payload);
+  renderTimeline(payload);
   renderScriptedSection(payload);
   renderResult(payload);
 }
@@ -600,11 +604,12 @@ def _shell(run_id: str, *, banner: str = "") -> str:
   <div class="verdict-bar" id="verdict-bar"></div>
   <div id="plain-line" class="plain-line"></div>
   <div class="section-label" id="bench-label">Bench</div>
+  <p class="plain-line" id="bench-caption3"></p>
   <p class="plain-line" id="bench-caption"></p>
   <div class="bench">{_BENCH_SVG}</div>
+  <div id="driver-code-section"></div>
   <div class="section-label">Timeline</div>
   <div class="timeline" id="timeline-list"></div>
-  <div id="driver-code-section"></div>
   <div id="scripted-section"></div>
   <div id="result-section"></div>
   <footer>{SAFETY_LINE}
