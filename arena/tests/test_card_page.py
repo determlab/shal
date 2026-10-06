@@ -156,7 +156,7 @@ def test_gate_refused_drive_shows_the_stop_sentence_on_the_card(tmp_path: Path) 
     # 6.5 V on psu0 breaches buck-5v-3v3's 6.0 V abs-max (damage); the SHAL
     # gate (issue #330) refuses it before anything is applied.
     refusal = drive_input(run_id, "psu0", 6.5, state_dir=state_dir)
-    assert refusal["sent"] is False and refusal["rejected"] == "approval"
+    assert refusal["sent"] is False and refusal["rejected"] == "limits"
 
     answer(run_id, "ok", state_dir=state_dir)
     card_html = build_result_card(run_id, state_dir=state_dir)

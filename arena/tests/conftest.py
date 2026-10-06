@@ -18,6 +18,7 @@ FAILING_DRIVER = FIXTURES / "drivers" / "failing_psu_driver.py"
 PASSING_DMM_DRIVER = FIXTURES / "drivers" / "passing_dmm_driver.py"
 FAILING_DMM_DRIVER = FIXTURES / "drivers" / "failing_dmm_driver.py"
 SAMPLE_TASK = _ARENA_SRC / "shal_arena" / "tasks" / "rail-3v3.yaml"
+MEDIUM_TASK = _ARENA_SRC / "shal_arena" / "tasks" / "medium.yaml"  # buck-12v-5v, 15.0 V abs max
 
 MINIMAL_CARD = """\
 arena_card: 1

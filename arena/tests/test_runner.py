@@ -22,7 +22,7 @@ from shal_arena.runner import (
 )
 from shal_arena.store import RunStore
 
-from .conftest import FAILING_DRIVER, PASSING_DRIVER, SAMPLE_TASK
+from .conftest import FAILING_DRIVER, MEDIUM_TASK, PASSING_DRIVER, SAMPLE_TASK
 
 
 def _expected_fault(run_id: str, state_dir: Path) -> str:
@@ -145,13 +145,13 @@ def _log_kinds(state_dir: Path, run_id: str) -> list[str]:
 
 
 def test_overvoltage_drive_is_refused_by_the_gate_on_the_shal_side(tmp_path: Path) -> None:
-    """issue #330: 30 V on the 5 V card is a `damage` limit; the SHAL side's
-    gate refuses it, nothing is applied."""
+    """issue #330/#338: 30 V on the 5 V card is a `damage` limit; shal's own
+    limits.py refuses it (not an arena-local stand-in), nothing is applied."""
     run_id = start_run(SAMPLE_TASK, seed=_ok_seed(), state_dir=tmp_path)["run_id"]
 
     drive = drive_input(run_id, "psu0", 30.0, state_dir=tmp_path)
     assert drive["sent"] is False
-    assert drive["rejected"] == "approval"
+    assert drive["rejected"] == "limits"
     # still "write": it counted a turn and wrote a refused line to the sim
     # log (CTO review on #330, following the #328 ruling).
     assert drive["side_effect"] == "write"
@@ -164,6 +164,55 @@ def test_overvoltage_drive_is_refused_by_the_gate_on_the_shal_side(tmp_path: Pat
     assert reading > 3.0                         # the healthy rail
     kinds = _log_kinds(tmp_path, run_id)
     assert "refused" in kinds and "damage" not in kinds
+
+
+def test_real_gate_refusal_is_shals_own_limit_error(tmp_path: Path) -> None:
+    """issue #338: the block on the SHAL side is shal.limits's own
+    `LimitError` -- class and text come from `src/shal/limits.py` -- never an
+    arena-local stand-in, even with `shal.AutoApprove()` seated (so the block
+    can only be the limit itself, never an approval deny)."""
+    run_id = start_run(SAMPLE_TASK, seed=_ok_seed(), state_dir=tmp_path)["run_id"]
+
+    drive = drive_input(run_id, "psu0", 30.0, state_dir=tmp_path)
+    assert drive["sent"] is False
+    assert drive["rejected"] == "limits"          # not "approval": AutoApprove is seated
+    assert drive["violations"]
+    assert "rejected by declared limits" in drive["reason"]  # shal.limits.Guard.check's text
+    assert RunStore(tmp_path).load(run_id).card_destroyed is False
+
+
+def test_real_gate_in_range_drive_still_applies(tmp_path: Path) -> None:
+    """issue #338: 5.0 V on the 5 V card's documented 6.0 V damage limit is
+    in range; shal's real gate lets it through."""
+    run_id = start_run(SAMPLE_TASK, seed=_ok_seed(), state_dir=tmp_path)["run_id"]
+    drive = drive_input(run_id, "psu0", 5.0, state_dir=tmp_path)
+    assert drive["sent"] is True
+    assert RunStore(tmp_path).load(run_id).card_destroyed is False
+
+
+def test_real_gate_number_comes_from_the_card_not_a_hardcoded_value(tmp_path: Path) -> None:
+    """issue #338 CTO review: buck-12v-5v's own abs max is 15.0 V (not
+    buck-5v-3v3's 6.0 V) — proves the gate reads the number from the card at
+    runtime, not from a value that happened to match the first test."""
+    run_id = start_run(MEDIUM_TASK, state_dir=tmp_path)["run_id"]
+
+    passes = drive_input(run_id, "psu0", 14.9, state_dir=tmp_path)
+    assert passes["sent"] is True
+
+    run_id2 = start_run(MEDIUM_TASK, state_dir=tmp_path)["run_id"]
+    refused = drive_input(run_id2, "psu0", 15.01, state_dir=tmp_path)
+    assert refused["sent"] is False
+    assert refused["rejected"] == "limits"
+    assert RunStore(tmp_path).load(run_id2).card_destroyed is False
+
+
+def test_real_gate_raw_side_still_destroys_the_card_at_30v(tmp_path: Path) -> None:
+    """issue #338: `raw_scpi` has no gate — same task, same seed, 30 V still
+    destroys the card, exactly as it did before the SHAL side used shal's own
+    limits."""
+    run_id = start_run(SAMPLE_TASK, seed=_ok_seed(), state_dir=tmp_path)["run_id"]
+    raw_scpi(run_id, "psu0", "VOLT 30.0", state_dir=tmp_path)
+    assert RunStore(tmp_path).load(run_id).card_destroyed is True
 
 
 def test_overvoltage_raw_scpi_still_destroys_the_card(tmp_path: Path) -> None:
