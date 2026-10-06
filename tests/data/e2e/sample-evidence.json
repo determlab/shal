@@ -45,17 +45,17 @@
     {
       "id": "arena_easy_score_file",
       "result": "pass",
-      "log": "{\"score_file_exists\": true, \"score\": {\"task_id\": \"easy\", \"seed\": 2, \"fault_type\": \"ok\", \"faults_total\": 1, \"faults_caught\": 0, \"false_fails\": 0, \"error_fail_correct\": 0, \"duration_s\": 0.0, \"turns\": 0, \"gate_stops\": 0, \"schema_version\": 1, \"game_version\": \"0.4.0\", \"record_sha256\": \"f42cb14a55a38a11dbd8660f7c59db719160dd697056b2d4e33fba1b8ca4ffa0\"}}"
+      "log": "{\"score_file_exists\": true, \"score\": {\"task_id\": \"easy\", \"seed\": 2, \"fault_type\": \"ok\", \"faults_total\": 1, \"faults_caught\": 0, \"false_fails\": 0, \"error_fail_correct\": 0, \"duration_s\": 1.0, \"turns\": 2, \"gate_stops\": 0, \"schema_version\": 1, \"game_version\": \"0.4.0\", \"record_sha256\": \"804724f97c2f33b4564b2fc124e31b72ae334d3aaf878056b438716e7620acac\"}, \"correct\": true, \"disqualified\": false}"
     },
     {
       "id": "arena_medium_score_file",
       "result": "pass",
-      "log": "{\"score_file_exists\": true, \"score\": {\"task_id\": \"medium\", \"seed\": 101, \"fault_type\": \"low_voltage\", \"faults_total\": 1, \"faults_caught\": 0, \"false_fails\": 0, \"error_fail_correct\": 0, \"duration_s\": 0.0, \"turns\": 0, \"gate_stops\": 0, \"schema_version\": 1, \"game_version\": \"0.4.0\", \"record_sha256\": \"a384d6308073ad2a06abdb1ff8c77341daf1c8df82f2c9d26fe07fd4f8899b0a\"}}"
+      "log": "{\"score_file_exists\": true, \"score\": {\"task_id\": \"medium\", \"seed\": 101, \"fault_type\": \"low_voltage\", \"faults_total\": 1, \"faults_caught\": 1, \"false_fails\": 0, \"error_fail_correct\": 0, \"duration_s\": 0.0, \"turns\": 2, \"gate_stops\": 0, \"schema_version\": 1, \"game_version\": \"0.4.0\", \"record_sha256\": \"a2c1d630f9662216f9e1b4ab35662301f2369f1defac939d505578e13b830085\"}, \"correct\": true, \"disqualified\": false}"
     },
     {
       "id": "arena_hard_score_file",
       "result": "pass",
-      "log": "{\"score_file_exists\": true, \"score\": {\"task_id\": \"hard\", \"seed\": 7, \"fault_type\": \"high_voltage\", \"faults_total\": 1, \"faults_caught\": 0, \"false_fails\": 0, \"error_fail_correct\": 0, \"duration_s\": 0.0, \"turns\": 0, \"gate_stops\": 0, \"schema_version\": 1, \"game_version\": \"0.4.0\", \"record_sha256\": \"04a5f1dc7beaad96989d6f7d3a82c55825199c585f76365bf7d2d14ed6f5d68f\"}}"
+      "log": "{\"score_file_exists\": true, \"score\": {\"task_id\": \"hard\", \"seed\": 7, \"fault_type\": \"high_voltage\", \"faults_total\": 1, \"faults_caught\": 1, \"false_fails\": 0, \"error_fail_correct\": 0, \"duration_s\": 1.0, \"turns\": 2, \"gate_stops\": 0, \"schema_version\": 1, \"game_version\": \"0.4.0\", \"record_sha256\": \"0eba2090da1d52cc72b4a70a90a642a4b954c67e6cb585060dbc623ea1221017\"}, \"correct\": true, \"disqualified\": false}"
     },
     {
       "id": "arena_bench_destroyed",

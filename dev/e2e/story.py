@@ -39,6 +39,8 @@ import tempfile
 from pathlib import Path
 from typing import Any
 
+import yaml
+
 REPO_ROOT = Path(__file__).resolve().parents[2]
 ARENA_TASKS_DIR = REPO_ROOT / "arena" / "src" / "shal_arena" / "tasks"
 ARENA_TASK_LEVELS = ["easy", "medium", "hard"]
@@ -47,6 +49,57 @@ ARENA_TASK_LEVELS = ["easy", "medium", "hard"]
 # own vocabulary.
 EXIT_PASS = 0
 EXIT_UNREACHABLE = 4
+
+# The same reference driver `shal_arena.demo`'s own D5 story embeds for the
+# packaged "dmm" ADK case (#403: "measure with the packaged reference driver,
+# as run_story.py does") -- a literal copy, not an import, because this
+# script talks to the clean venv only through `-m shal_arena.cli` subprocess
+# calls (never `import shal_arena` itself: this module is also loaded
+# directly by `tests/test_e2e_story.py` under the dev venv, which may not
+# have shal_arena installed at all).
+_DMM_DRIVER_SOURCE = '''\
+from shal import registry
+from shal.driver import Driver, idempotent, op
+from shal.transport import MessageTransport
+
+
+class BenchDmm1(Driver):
+    compatible = "arena,bench-dmm1"
+    kind = MessageTransport
+    llm_ready = True
+
+    @idempotent
+    @op("Read the measured DC voltage now.", unit="volt", side_effect="none")
+    def measure_voltage(self) -> float:
+        reply = self.bus.exchange(self.addr, {"scpi": "MEAS:VOLT:DC?", "query": True})
+        return float(reply["reply"])
+
+
+registry.register(BenchDmm1, override=True)
+'''
+
+
+def _diagnose(nominal_v: float, tol_pct: float, reading: float | None,
+             allowed: set[str]) -> str:
+    """A guess from the measurement alone (same logic as `shal_arena.demo`'s
+    own `_diagnose`, parametrized on the rail's numbers instead of a `Rail`
+    object this script has no import for): the rail's own documented nominal
+    voltage and tolerance, never the hidden fault. A reading outside
+    tolerance but not clearly low or high falls back to `noise` when the
+    task even offers it."""
+    if reading is None:
+        return "open"
+    band = nominal_v * tol_pct / 100
+    delta = reading - nominal_v
+    if abs(delta) <= band:
+        return "ok"
+    if delta < 0 and "low_voltage" in allowed:
+        return "low_voltage"
+    if delta > 0 and "high_voltage" in allowed:
+        return "high_voltage"
+    if "noise" in allowed:
+        return "noise"
+    return "ok"
 
 _BENCH_POLICY = '''\
 """Scripted #340 story policy: both sides attempt the same 30 V setpoint on
@@ -101,9 +154,24 @@ def check_virtual_bench_unplug_dmm(doc: dict[str, Any], exit_code: int,
 
 def check_arena_score_file(level: str, score_exists: bool, answer_doc: dict[str, Any],
                            rerun: str) -> dict[str, Any]:
-    ok = score_exists and bool(answer_doc.get("score"))
+    """issue #403: a score file existing proves nothing on its own -- the old
+    check passed on `turns: 0, faults_caught: 0` cells because `answer`
+    writes a score file even for a run nothing ever measured. The run must
+    actually have been played: `correct` and not `disqualified` (`answer`'s
+    own verdict), at least one turn logged, and -- only on a task whose
+    realized fault was not `ok` (`score["fault_type"]`, same test
+    `build_score`'s own `caught` uses) -- at least one fault caught."""
+    score = answer_doc.get("score") or {}
+    has_fault = score.get("fault_type") not in (None, "ok")
+    ok = (score_exists and bool(score)
+         and answer_doc.get("correct") is True
+         and answer_doc.get("disqualified") is False
+         and score.get("turns", 0) > 0
+         and (not has_fault or score.get("faults_caught", 0) > 0))
     return _result(f"arena_{level}_score_file", ok, json.dumps(
-        {"score_file_exists": score_exists, "score": answer_doc.get("score")}), rerun)
+        {"score_file_exists": score_exists, "score": score,
+         "correct": answer_doc.get("correct"), "disqualified": answer_doc.get("disqualified")}),
+        rerun)
 
 
 def check_arena_bench_destroyed(doc: dict[str, Any], rerun: str) -> dict[str, Any]:
@@ -191,16 +259,48 @@ def run_virtual_bench_checks(venv_python: str, bench_dir: Path) -> list[dict[str
 
 
 def run_arena_task_score_file(venv_python: str, level: str, state_dir: Path) -> dict[str, Any]:
+    """issue #403: play the task for real -- power the card, take a real
+    measurement with the packaged reference driver, diagnose from that
+    reading (same pattern `shal_arena.demo`'s D5 story already plays, #343/
+    #410) -- instead of answering `ok` blind, which left every cell showing
+    `turns: 0, faults_caught: 0` regardless of whether the real fault was
+    ever found."""
     task_path = ARENA_TASKS_DIR / f"{level}.yaml"
+    task_doc = yaml.safe_load(task_path.read_text(encoding="utf-8"))
+    card_path = (task_path.parent / task_doc["card"]).resolve()
+    card_doc = yaml.safe_load(card_path.read_text(encoding="utf-8"))
+    drives_inst = next(i for i in task_doc["instruments"] if "drives" in i)
+    probe_inst = next(i for i in task_doc["instruments"] if "probe" in i)
+    vin_name = drives_inst["drives"].split(".", 1)[1]
+    vin_nominal_v = card_doc["inputs"][vin_name]["nominal_v"]
+    allowed = set(task_doc["question"]["answer"]["values"])
+
     run_argv = ["-m", "shal_arena.cli", "run", str(task_path),
                "--state-dir", str(state_dir), "--json"]
     run_doc, _ = _run_json(venv_python, run_argv)
     run_id = run_doc["run_id"]
-    answer_argv = ["-m", "shal_arena.cli", "answer", run_id, "ok",
+    rail = run_doc["rails"][0]      # issue #428: nominal_v/tol_pct, right in `run`'s own JSON
+
+    drive_argv = ["-m", "shal_arena.cli", "drive", run_id, str(drives_inst["address"]),
+                 str(vin_nominal_v), "--state-dir", str(state_dir), "--json"]
+    _run_json(venv_python, drive_argv)
+
+    state_dir.mkdir(parents=True, exist_ok=True)
+    driver_path = state_dir / "dmm_driver.py"
+    driver_path.write_text(_DMM_DRIVER_SOURCE, encoding="utf-8")
+    measure_argv = ["-m", "shal_arena.cli", "measure", run_id, str(probe_inst["address"]),
+                   str(driver_path), "--state-dir", str(state_dir), "--json"]
+    measure_doc, measure_ec = _run_json(venv_python, measure_argv)
+    reading = measure_doc.get("reading") if measure_ec == EXIT_PASS else None
+
+    given = _diagnose(rail["nominal_v"], rail["tol_pct"], reading, allowed)
+    answer_argv = ["-m", "shal_arena.cli", "answer", run_id, given,
                   "--state-dir", str(state_dir), "--json"]
     answer_doc, _ = _run_json(venv_python, answer_argv)
     score_path = state_dir / f"{run_id}.score.json"
     rerun = (f"{venv_python} {_argv_str(run_argv)} && "
+            f"{venv_python} {_argv_str(drive_argv)} && "
+            f"{venv_python} {_argv_str(measure_argv)} && "
             f"{venv_python} {_argv_str(answer_argv)}")
     return check_arena_score_file(level, score_path.is_file(), answer_doc, rerun)
 
