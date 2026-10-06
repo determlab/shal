@@ -363,28 +363,11 @@ function renderScriptedSection(payload) {
     + refused.map((e, i) => stepRowHtml(e, i)).join("") + "</div></div>";
 }
 
-// issue #406 body: "the end is an answer about the card, not a score" --
-// built only from this run's own reading and the rail's public spec
-// (never the ground-truth fault_id), e.g. "The 3V3 rail reads 2.9 V,
-// below its 3.20 V limit. This card is faulty: <the agent's own answer>."
-function answerSentence(payload) {
-  const probe = payload.instruments.find(i => i.probe);
-  const rail = payload.rails && payload.rails[0];
-  const reading = probe ? latestReading(payload.timeline, probe.address) : null;
-  const rec = payload.record;
-  if (!probe || !rail || !reading || !rec) return "";
-  const v = reading.detail.value;
-  const given = escapeHtml(rec.given || "");
-  if (v >= rail.lo && v <= rail.hi) {
-    return `The ${rail.label} reads ${v} V, inside its ${rail.nominal_v} V limit. `
-      + `This card answered: ${given}.`;
-  }
-  const side = v < rail.lo ? "below" : "above";
-  const limit = v < rail.lo ? rail.lo.toFixed(2) : rail.hi.toFixed(2);
-  return `The ${rail.label} reads ${v} V, ${side} its ${limit} V limit. `
-    + `This card is faulty: ${given}.`;
-}
-
+// issue #427 CTO review: the sentence itself is built server side (the
+// data module's own `_answer_sentence`), from this run's own reading and
+// the rail/temp spec plus `record.correct` -- never re-derived here. Set with
+// `textContent`, never `innerHTML`, so a reading value can never be
+// interpreted as markup, no matter what a driver's own code returns.
 function renderResult(payload) {
   const section = document.getElementById("result-section");
   if (!payload.closed || !payload.record) { section.innerHTML = ""; return; }
@@ -394,13 +377,14 @@ function renderResult(payload) {
   const bad = destroyed || rec.disqualified || !rec.correct;
   const word = destroyed ? "Wrong" : rec.disqualified ? "Disqualified"
     : rec.correct ? "Correct" : "Wrong";
-  const sentence = answerSentence(payload);
   section.innerHTML = '<div class="section-label">Result</div>'
     + `<div class="result${bad ? " bad" : ""}"><div class="verdict">${word}</div>`
     + `<div class="row">answered <b>${escapeHtml(rec.given || "")}</b> `
     + `&middot; ${score.turns !== undefined ? score.turns : payload.turns} turns `
     + `&middot; ${rec.disqualified ? "disqualified" : "not disqualified"}</div>`
-    + (sentence ? `<div class="row">${sentence}</div>` : "") + "</div>";
+    + '<div class="row" id="answer-sentence"></div></div>';
+  const sentenceEl = document.getElementById("answer-sentence");
+  if (sentenceEl) sentenceEl.textContent = payload.answer_sentence || "";
 }
 
 // issue #406 follow-up: "Drivers written by the agent" -- folded, one line
