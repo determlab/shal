@@ -69,20 +69,21 @@ header .sub { font-size: 13px; color: var(--dim); margin-top: 2px; }
 .bench { margin: 0 16px 16px; padding: 10px; background: var(--panel);
   border: 1px solid var(--line); border-radius: 12px; }
 .bench svg { width: 100%; height: auto; display: block; }
-/* #406 CTO review: the SVG's own font-size is in viewBox units, not CSS
-   px -- a 380-wide viewBox renders ~338px wide inside the 390px .wrap
-   (16px side margins + 10px padding each side), so 13 viewBox units is
-   only ~11.5 actual px. 17 units * (338/380) ~= 15.1 actual px. */
-.bench text { font-size: 17px; fill: var(--dim); font-family: Inter, system-ui, sans-serif; }
+/* #406 CTO review round 4: the SVG's own font-size is in viewBox units,
+   not CSS px -- a 380-wide viewBox renders ~338px wide inside the 390px
+   .wrap (16px side margins + 10px padding each side). 15 units *
+   (338/380) ~= 13.3 actual px -- the boxes were widened (not just the
+   font bumped) so labels like "protection" and "2.9 V" still fit. */
+.bench text { font-size: 15px; fill: var(--dim); font-family: Inter, system-ui, sans-serif; }
 .bench .mono-label { font-family: "JetBrains Mono", ui-monospace, monospace;
-  fill: var(--text); font-size: 17px; font-weight: 700; }
+  fill: var(--text); font-size: 15px; font-weight: 700; }
 /* #406 CTO review: wires must read at >= 3:1 contrast on the #262B33 panel --
    var(--line) alone does not; var(--dim) does. */
 .bench .wire { stroke: var(--dim); stroke-width: 2; fill: none; transition: stroke .25s; }
 .bench .wire.flash { stroke: var(--stop); }
 .bench .rail-line { stroke: var(--dim); stroke-width: 2; }
 .bench .probe-dot { fill: var(--dim); }
-.bench .refused-label { fill: var(--gate); font-size: 17px; font-weight: 700; }
+.bench .refused-label { fill: var(--gate); font-size: 15px; font-weight: 700; }
 .bench .box { fill: #1F242C; stroke: var(--line); stroke-width: 1.5; }
 .bench .card-box.ok { stroke: var(--ok); }
 .bench .card-box.protection { stroke: var(--gate); }
@@ -121,32 +122,37 @@ footer a { color: var(--dim); }
 #: from the task or the fault (DoD: nothing here can leak it).
 SAFETY_LINE = "Simulated instruments only. Nothing here touches real hardware."
 
+#: issue #406 CTO review round 4: wider boxes (not just a bigger font) so
+#: every label clears its own box at a real 390 px width -- "protection"
+#: and "2.9 V" both have to fit the DMM/card boxes, not just the font
+#: floor. "Card health:" is dropped; the word alone ("ok"/"protection"/
+#: "destroyed") is what the border colour already names.
 _BENCH_SVG = """
-<svg viewBox="0 0 380 160" xmlns="http://www.w3.org/2000/svg">
-  <rect class="box" x="8" y="55" width="64" height="40" rx="8"/>
-  <text x="40" y="48" text-anchor="middle">PSU</text>
-  <text x="40" y="79" text-anchor="middle" class="mono-label" id="psu-value">&#8212;</text>
+<svg viewBox="0 0 380 170" xmlns="http://www.w3.org/2000/svg">
+  <rect class="box" x="6" y="58" width="64" height="42" rx="8"/>
+  <text x="38" y="50" text-anchor="middle">PSU</text>
+  <text x="38" y="83" text-anchor="middle" class="mono-label" id="psu-value">&#8212;</text>
 
-  <path class="wire" id="wire-psu-card" d="M72 75 H140"/>
-  <text x="106" y="66" text-anchor="middle" class="refused-label" id="refused-label"></text>
+  <path class="wire" id="wire-psu-card" d="M70 79 H118"/>
+  <text x="94" y="68" text-anchor="middle" class="refused-label" id="refused-label"></text>
 
-  <rect class="box card-box ok" id="card-box" x="140" y="35" width="100" height="80" rx="10"/>
-  <text x="190" y="28" text-anchor="middle">Card</text>
+  <rect class="box card-box ok" id="card-box" x="118" y="32" width="144" height="92" rx="10"/>
+  <text x="190" y="24" text-anchor="middle">Card</text>
   <!-- the rail itself, drawn as a line with its live voltage label (#406 round 3) -->
-  <line class="rail-line" x1="155" y1="62" x2="225" y2="62"/>
-  <text x="190" y="54" text-anchor="middle" id="rail-label">rail</text>
-  <text x="190" y="78" text-anchor="middle" class="mono-label" id="rail-value">&#8212;</text>
-  <text x="190" y="100" text-anchor="middle" id="card-health">Card health: ok</text>
+  <line class="rail-line" x1="138" y1="58" x2="242" y2="58"/>
+  <text x="190" y="50" text-anchor="middle" id="rail-label">rail</text>
+  <text x="190" y="76" text-anchor="middle" class="mono-label" id="rail-value">&#8212;</text>
+  <text x="190" y="100" text-anchor="middle" id="card-health">ok</text>
 
-  <path class="wire" id="wire-card-dmm" d="M240 75 H308"/>
+  <path class="wire" id="wire-card-dmm" d="M262 79 H300"/>
   <!-- the probe sits ON the test point (the rail line's own end, inside the
        card box), #406 CTO review round 3 -- not floating on the wire. -->
-  <line x1="225" y1="62" x2="240" y2="75" class="wire" id="probe-lead"/>
-  <circle cx="225" cy="62" r="4" class="probe-dot" id="probe-dot"/>
+  <line x1="242" y1="58" x2="262" y2="79" class="wire" id="probe-lead"/>
+  <circle cx="242" cy="58" r="4" class="probe-dot" id="probe-dot"/>
 
-  <rect class="box" x="308" y="55" width="64" height="40" rx="8"/>
-  <text x="340" y="48" text-anchor="middle">DMM</text>
-  <text x="340" y="79" text-anchor="middle" class="mono-label" id="dmm-value">&#8212;</text>
+  <rect class="box" x="300" y="58" width="74" height="42" rx="8"/>
+  <text x="337" y="50" text-anchor="middle">DMM</text>
+  <text x="337" y="83" text-anchor="middle" class="mono-label" id="dmm-value">&#8212;</text>
 </svg>
 """
 
@@ -174,7 +180,7 @@ function stepTitle(e) {
   }
   if (e.kind === "protection" || e.kind === "damage") {
     const v = e.detail && e.detail.volts;
-    return `Set ${addr} to ${v} V`;
+    return v === undefined ? `Protection tripped on ${addr}` : `Set ${addr} to ${v} V`;
   }
   return KIND_LABEL[e.kind] || e.kind;
 }
@@ -244,9 +250,12 @@ function renderBench(payload) {
   const cardBox = document.getElementById("card-box");
   const health = document.getElementById("card-health");
   const sawProtection = payload.timeline.some(e => e.kind === "protection");
-  let cls = "ok", label = "Card health: ok";
-  if (payload.card.destroyed) { cls = "destroyed"; label = "Card health: destroyed"; }
-  else if (sawProtection) { cls = "protection"; label = "Card health: protection"; }
+  // #406 CTO review round 4: the word alone -- "Card health:" did not fit
+  // the box even at the wider size, and the border colour already says
+  // which this is.
+  let cls = "ok", label = "ok";
+  if (payload.card.destroyed) { cls = "destroyed"; label = "destroyed"; }
+  else if (sawProtection) { cls = "protection"; label = "protection"; }
   cardBox.setAttribute("class", "box card-box " + cls);
   health.textContent = label;
 
