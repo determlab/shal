@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import logging
+import os
 import re
 from collections.abc import Mapping
 
@@ -361,6 +362,22 @@ def load(source, *, approver=None) -> Hal:
     except BaseException:
         _refuse_load_change(before, raising=False)  # restored + audited, then re-raise
         raise
+    # issue #417: an unknown SHAL_SIM_UNPLUG value matched no node, so
+    # SimFaultMixin._register_fault silently unplugged nothing -- a false
+    # "healthy" pass. load_tree is the one place that sees every node in
+    # the tree, so this is where the check belongs: a value that is not
+    # any node's `id` or `name` (the same match rule `_register_fault`
+    # itself uses) is a LoadError naming the fix, not a silent no-op.
+    unplug_id = os.environ.get("SHAL_SIM_UNPLUG")
+    if unplug_id:
+        known_ids = sorted(ids)
+        known_names = sorted({n.name for root in roots for n in root.walk()})
+        if unplug_id not in known_ids and unplug_id not in known_names:
+            _close_unowned(roots)
+            raise LoadError(
+                f"{label}: SHAL_SIM_UNPLUG={unplug_id!r} matches no node. "
+                f"Valid ids: {', '.join(known_ids)} "
+                f"(path names: {', '.join(known_names)}). Fix: --unplug <id>")
     # Until a Hal exists, the bound tree belongs to no one. ANY error here — a
     # refused policy change (#229), a bad policy.gated, a fill error (#217) —
     # closes it ONCE and re-raises the original exception. A failed Hal stays

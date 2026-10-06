@@ -57,6 +57,25 @@ def main(argv: list[str] | None = None) -> int:
     import shal
     from shal import record as shal_record
 
+    if args.unplug:
+        # issue #417: validate before spawning pytest, with the exact same
+        # check (so the exact same error text) `shal.load()` itself makes --
+        # an id that unplugs nothing must never silently pass. Set the env
+        # var in THIS process only for the one load call, then restore it,
+        # so the later `subprocess.run(..., env=env)` below is unaffected.
+        prev_unplug = os.environ.get("SHAL_SIM_UNPLUG")
+        os.environ["SHAL_SIM_UNPLUG"] = args.unplug
+        try:
+            shal.load(str(HERE / "bench.yaml")).close()
+        except shal.LoadError as e:
+            print(json.dumps({"ok": False, "error": str(e)}))
+            return EXIT_CANNOT_RUN
+        finally:
+            if prev_unplug is None:
+                os.environ.pop("SHAL_SIM_UNPLUG", None)
+            else:
+                os.environ["SHAL_SIM_UNPLUG"] = prev_unplug
+
     try:
         before = {r.record for r in shal_record.read(HERE)}
     except shal.Error as e:
