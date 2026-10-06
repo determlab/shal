@@ -32,7 +32,48 @@ from .errors import LockTimeout, RunClosed, UnknownRun
 #: finite.
 _LOCK_TIMEOUT_S = 10.0
 
+#: issue #436 CTO review round 3: a READER outside the lock (`shal-arena ui`
+#: polling every 1s, `replay`, `bench`) can open the public state file in
+#: the instant between `os.replace` swapping it in and the OS actually
+#: settling the rename -- Windows briefly denies a second open of a file
+#: mid-rename (`PermissionError [WinError 5]`), where POSIX's rename is a
+#: single atomic syscall with no such window. A short retry absorbs it.
+_IO_RETRY_TIMEOUT_S = 2.0
+
 DEFAULT_STATE_DIR = ".shal-arena"
+
+
+def _retry_on_permission_error(fn, *, timeout: float = _IO_RETRY_TIMEOUT_S):
+    deadline = time.monotonic() + timeout
+    while True:
+        try:
+            return fn()
+        except PermissionError:
+            if time.monotonic() >= deadline:
+                raise
+            time.sleep(0.005)
+
+
+def _ensure_lock_byte(lock_path: Path) -> None:
+    """issue #436 CTO review round 3: the lock file needs one real byte for
+    Windows's byte-RANGE `msvcrt.locking` to lock at all (POSIX's `flock`
+    locks the whole file regardless, so this is a no-op need on POSIX, but
+    harmless to always do). Called once, from `RunStore.create`, before
+    any other process could possibly be racing on this run's own lock
+    file -- never lazily from inside the lock's own acquisition, which is
+    exactly where two first-openers used to race each other."""
+    lock_path.parent.mkdir(parents=True, exist_ok=True)
+    try:
+        if lock_path.stat().st_size > 0:
+            return
+    except FileNotFoundError:
+        pass
+    try:
+        with lock_path.open("ab") as f:
+            if f.tell() == 0:
+                f.write(b"0")
+    except PermissionError:
+        pass  # another process is mid-write to the same byte -- fine, it exists either way
 
 
 def new_run_id() -> str:
@@ -88,19 +129,20 @@ def _locked_state_file(public_path: Path, *, timeout: float | None = None):
         timeout = _LOCK_TIMEOUT_S  # read at call time, not def time -- a test can patch it
     public_path.parent.mkdir(parents=True, exist_ok=True)
     lock_path = public_path.with_suffix(public_path.suffix + ".lock")
+    _ensure_lock_byte(lock_path)
     deadline = time.monotonic() + timeout
     with lock_path.open("a+b") as f:
         if sys.platform == "win32":
             import msvcrt
-            # `LK_LOCK` locks a byte RANGE at the current position -- make
-            # sure that byte actually exists (an empty lock file is the
-            # common case right after `mkdir`) and that every opener locks
-            # the SAME byte 0, not wherever "a+b" mode happened to leave
-            # the file pointer.
-            f.seek(0, 2)
-            if f.tell() == 0:
-                f.write(b"0")
-                f.flush()
+            # `LK_LOCK`/`LK_NBLCK` lock a byte RANGE at the current
+            # position -- `_ensure_lock_byte` (called once, from
+            # `RunStore.create`, before any concurrent access of this run
+            # is possible) already guarantees that byte exists; every
+            # opener here just seeks to it. (issue #436 CTO review round
+            # 3: writing that byte lazily, HERE, raced two first-openers
+            # against each other -- Windows denies a write into a byte
+            # range the other side has already locked, so the loser's
+            # `flush()` raised `PermissionError`.)
             f.seek(0)
             while True:
                 try:
@@ -182,6 +224,12 @@ class RunStore:
                          status="open", seed=seed,
                          created_at=time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()))
         self._write_public(state)
+        # issue #436 CTO review round 3: create the lock file's one byte
+        # HERE, before any other process could possibly be racing on this
+        # fresh run_id's own lock -- not lazily inside the lock's own
+        # acquisition, which is exactly where two first-openers raced.
+        public_path = self._public_path(run_id)
+        _ensure_lock_byte(public_path.with_suffix(public_path.suffix + ".lock"))
         return state
 
     def _write_public(self, state: RunState) -> None:
@@ -190,11 +238,23 @@ class RunStore:
         # rename on both POSIX and Windows (unlike a direct
         # `path.write_text`, which a reader could observe mid-write, or
         # which a crash between open and close could leave truncated).
+        #
+        # issue #436 CTO review round 3: a READER outside the lock
+        # (`shal-arena ui` polling every 1s, `replay`, `bench`) can have
+        # the destination open at the exact instant `os.replace` runs --
+        # Windows denies the rename itself while another handle has the
+        # target open (`PermissionError [WinError 5]`); POSIX's rename
+        # has no such window. Retry briefly; clean up the temp file
+        # either way so a run that outlives the retry deadline doesn't
+        # also leak one.
         path = self._public_path(state.run_id)
         doc = asdict(state)
         tmp_path = path.with_suffix(path.suffix + f".{secrets.token_hex(4)}.tmp")
         tmp_path.write_text(json.dumps(doc, indent=2), encoding="utf-8")
-        os.replace(tmp_path, path)
+        try:
+            _retry_on_permission_error(lambda: os.replace(tmp_path, path))
+        finally:
+            tmp_path.unlink(missing_ok=True)
 
     def load(self, run_id: str) -> RunState:
         path = self._public_path(run_id)
@@ -203,7 +263,10 @@ class RunStore:
                 f"no run {run_id!r} in {self.dir}",
                 fix="run `shal-arena run <task.yaml> --json` to start one, and use the "
                     "run_id it returns")
-        doc = json.loads(path.read_text(encoding="utf-8"))
+        # issue #436 CTO review round 3: the same reader-vs-os.replace
+        # window applies to a plain read -- retry it too.
+        text = _retry_on_permission_error(lambda: path.read_text(encoding="utf-8"))
+        doc = json.loads(text)
         tiles = {addr: Tile(**t) for addr, t in doc.pop("tiles", {}).items()}
         return RunState(tiles=tiles, **doc)
 

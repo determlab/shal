@@ -85,6 +85,41 @@ def test_n_parallel_processes_each_get_one_distinct_turn(tmp_path: Path) -> None
     assert store.load(run_id).turns == _N
 
 
+def test_a_reader_polling_outside_the_lock_never_breaks_a_concurrent_write(
+        tmp_path: Path) -> None:
+    """issue #436 CTO review round 3: `shal-arena ui` (and `replay`,
+    `bench`) read the public state file with no lock at all, same as a
+    real player would run it live -- `store.load` must never raise while
+    a writer's `os.replace` lands at the exact same instant, and no
+    write may be lost because of it. 12 concurrent writers, one thread
+    reading in a tight loop throughout."""
+    store = RunStore(tmp_path)
+    state = store.create(task_path="t.yaml", card_path="c.yaml", seed=0)
+    run_id = state.run_id
+
+    n = 12
+    stop = False
+    reader_errors: list[BaseException] = []
+
+    def reader_loop():
+        while not stop:
+            try:
+                store.load(run_id)
+            except BaseException as e:  # noqa: BLE001 - any raise here is the bug
+                reader_errors.append(e)
+
+    with ThreadPoolExecutor(max_workers=n + 1) as pool:
+        reader_future = pool.submit(reader_loop)
+        write_futures = [pool.submit(store.increment_turns, run_id) for _ in range(n)]
+        nonces = [f.result().turns for f in write_futures]
+        stop = True
+        reader_future.result()
+
+    assert not reader_errors, reader_errors
+    assert sorted(nonces) == list(range(1, n + 1))
+    assert store.load(run_id).turns == n
+
+
 def test_lock_timeout_names_the_lock_file_and_the_fix(tmp_path: Path, monkeypatch) -> None:
     """issue #436 CTO review: the lock must not block forever -- a process
     that holds it past a deadline is reported, not hung on silently."""
