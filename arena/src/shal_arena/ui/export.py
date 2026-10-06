@@ -52,13 +52,18 @@ function startExport(fullPayload) {
 """
 
 
-def _label(agent: str | None, date: str) -> str:
+def _label(agent: str | None, date: str, seed: int | None) -> str:
     # issue #406 CTO review: --agent and the record's own closed_at both go
     # into the HTML as text, not data -- html.escape, not safe_json (which
     # only protects a `</script>` breakout, not a bare `<tag>`).
     safe_agent = html.escape(agent or "agent")
     safe_date = html.escape(date)
-    return f"Replay of a recorded run · {safe_agent} · {safe_date} · simulated instruments"
+    # issue #427 CMO review: the replayed-run line names the seed -- the
+    # public part of a run's identity, written to the state file before
+    # the run even closes (never the hidden fault).
+    seed_part = f" · seed {seed}" if seed is not None else ""
+    return (f"Replay of a recorded run · {safe_agent} · {safe_date}{seed_part} "
+            "· simulated instruments")
 
 
 def render_export_page(payload: dict[str, Any], *, agent: str | None = None) -> str:
@@ -67,7 +72,7 @@ def render_export_page(payload: dict[str, Any], *, agent: str | None = None) -> 
     first (`RunNotFinished`), so this never has to re-check."""
     date = (payload.get("record") or {}).get("closed_at", time.strftime(
         "%Y-%m-%dT%H:%M:%SZ", time.gmtime()))[:10]
-    label = _label(agent, date)
+    label = _label(agent, date, payload.get("seed"))
     payload_json = safe_json(payload)
     shell = _shell(payload["run_id"], banner=label)
     script_tag = (

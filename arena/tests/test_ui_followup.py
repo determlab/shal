@@ -35,6 +35,25 @@ def test_problem_lines_are_on_the_static_shell() -> None:
         assert line in html
 
 
+_STEP_CAPTIONS = (
+    "The agent reads each instrument's datasheet.",
+    "It writes a driver for each one and checks it.",
+    "The bench: power supply, multimeter, card.",
+    "It powers the card and measures the 3.3 V rail.",
+    "A scripted step asks for 30 V on purpose. The gate stops it. Nothing was sent.",
+    "A cable is unplugged. The result is error, not fail: the card is not blamed.",
+    "The answer: which measurement failed, against which limit.",
+)
+
+
+def test_all_seven_step_captions_are_verbatim_on_the_page() -> None:
+    """issue #427 CTO review round 2: captions 1, 2, 4, 6 and 7 were
+    missing. All seven, exact text, from the #406 issue body."""
+    html = render_watch_page("run-x", _BASE_PAYLOAD)
+    for caption in _STEP_CAPTIONS:
+        assert caption in html, caption
+
+
 def test_shell_has_the_driver_code_and_scripted_containers() -> None:
     html = render_watch_page("run-x", _BASE_PAYLOAD)
     assert '<div id="driver-code-section">' in html

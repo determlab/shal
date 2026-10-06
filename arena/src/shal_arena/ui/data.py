@@ -171,6 +171,7 @@ def run_payload(run_id: str, *, state_dir: str | Path = DEFAULT_STATE_DIR) -> di
         "title": task.title,
         "question": task.question.text,
         "level": task.level,
+        "seed": state.seed,
         "status": state.status,
         "closed": closed,
         "turns": state.turns,

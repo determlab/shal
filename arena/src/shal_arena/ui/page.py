@@ -351,6 +351,12 @@ function renderTimeline(payload) {
   lastRenderedCount = entries.length;
 }
 
+// issue #406 body: captions 5 and 6 -- two checks, both scripted (not the
+// agent's own replay), fixed CMO text. Caption 5 is the 30 V ask, which is
+// always a real refused step from this run's own timeline -- its own row,
+// never relabeled. Caption 6 (a cable fault) is illustrative text: SHAL has
+// no simulated cable-unplugged event yet, so it is shown as the second
+// check's own description, not a timeline row.
 function renderScriptedSection(payload) {
   const section = document.getElementById("scripted-section");
   const refused = payload.timeline.filter(e => e.kind === "refused");
@@ -360,7 +366,10 @@ function renderScriptedSection(payload) {
     + '<p class="plain-line" style="margin-left:0">'
     + "A scripted step asks for 30 V on purpose. The gate stops it. Nothing was sent.</p>"
     + '<div class="timeline">'
-    + refused.map((e, i) => stepRowHtml(e, i)).join("") + "</div></div>";
+    + refused.map((e, i) => stepRowHtml(e, i)).join("") + "</div>"
+    + '<p class="plain-line" style="margin-left:0">'
+    + "A cable is unplugged. The result is error, not fail: the card is not blamed.</p>"
+    + "</div>";
 }
 
 // issue #427 CTO review: the sentence itself is built server side (the
@@ -377,7 +386,9 @@ function renderResult(payload) {
   const bad = destroyed || rec.disqualified || !rec.correct;
   const word = destroyed ? "Wrong" : rec.disqualified ? "Disqualified"
     : rec.correct ? "Correct" : "Wrong";
+  // issue #406 body, caption 7 -- fixed CMO text, always above the result.
   section.innerHTML = '<div class="section-label">Result</div>'
+    + '<p class="plain-line">The answer: which measurement failed, against which limit.</p>'
     + `<div class="result${bad ? " bad" : ""}"><div class="verdict">${word}</div>`
     + `<div class="row">answered <b>${escapeHtml(rec.given || "")}</b> `
     + `&middot; ${score.turns !== undefined ? score.turns : payload.turns} turns `
@@ -390,7 +401,9 @@ function renderResult(payload) {
 // issue #406 follow-up: "Drivers written by the agent" -- folded, one line
 // above each: "The driver the agent wrote for the <name>, <n> lines".
 // Built with textContent, never innerHTML, so the code itself (arbitrary
-// text) can never be interpreted as markup.
+// text) can never be interpreted as markup. Captions 1 and 2 (fixed CMO
+// text) sit above the fold: the agent reads the datasheet, then writes and
+// checks the driver -- this section is that step.
 function renderDriverCode(payload) {
   const section = document.getElementById("driver-code-section");
   const drivers = payload.drivers || {};
@@ -401,6 +414,16 @@ function renderDriverCode(payload) {
   label.className = "section-label";
   label.textContent = "Drivers written by the agent";
   section.appendChild(label);
+  const caption1 = document.createElement("p");
+  caption1.className = "plain-line";
+  caption1.style.marginLeft = "0";
+  caption1.textContent = "The agent reads each instrument's datasheet.";
+  section.appendChild(caption1);
+  const caption2 = document.createElement("p");
+  caption2.className = "plain-line";
+  caption2.style.marginLeft = "0";
+  caption2.textContent = "It writes a driver for each one and checks it.";
+  section.appendChild(caption2);
   for (const name of names) {
     const d = drivers[name];
     const details = document.createElement("details");
@@ -512,6 +535,7 @@ def _shell(run_id: str, *, banner: str = "") -> str:
   <div class="verdict-bar" id="verdict-bar"></div>
   <div id="plain-line" class="plain-line"></div>
   <div class="section-label" id="bench-label">Bench</div>
+  <p class="plain-line">It powers the card and measures the 3.3 V rail.</p>
   <div class="bench">{_BENCH_SVG}</div>
   <div class="section-label">Timeline</div>
   <div class="timeline" id="timeline-list"></div>
