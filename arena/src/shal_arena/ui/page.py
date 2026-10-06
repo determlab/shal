@@ -158,6 +158,22 @@ _BENCH_SVG = """
   <rect class="box" x="300" y="58" width="74" height="42" rx="8"/>
   <text x="337" y="50" text-anchor="middle">DMM</text>
   <text x="337" y="83" text-anchor="middle" class="mono-label" id="dmm-value">&#8212;</text>
+
+  <!-- issue #427 CTO review: the relay-rail task's own relay0/temp0 -- a
+       second row, hidden (and the viewBox left at its 2-instrument size)
+       unless the run actually has 4 instruments, so a 2-instrument run's
+       layout is unchanged. -->
+  <g id="extra-instruments" style="display:none">
+    <rect class="box" x="6" y="128" width="64" height="36" rx="8"/>
+    <text x="38" y="122" text-anchor="middle">RELAY</text>
+    <text x="38" y="151" text-anchor="middle" class="mono-label" id="relay-value">&#8212;</text>
+    <path class="wire" d="M70 146 H118"/>
+
+    <rect class="box" x="300" y="128" width="74" height="36" rx="8"/>
+    <text x="337" y="122" text-anchor="middle">TEMP</text>
+    <text x="337" y="151" text-anchor="middle" class="mono-label" id="temp-value">&#8212;</text>
+    <path class="wire" d="M262 146 H300"/>
+  </g>
 </svg>
 """
 
@@ -312,6 +328,23 @@ function renderBench(payload) {
   // has settled -- the wire itself is grey, never permanently red.
   const sawRefused = payload.timeline.some(e => e.kind === "refused");
   document.getElementById("refused-dot").style.display = sawRefused ? "" : "none";
+
+  // issue #427 CTO review: the relay-rail task's second row (relay0,
+  // temp0) -- shown only for an actual 4-instrument run, so a
+  // 2-instrument run's bench is pixel-identical to before.
+  const extra = document.getElementById("extra-instruments");
+  const svg = document.querySelector(".bench svg");
+  const n = payload.instruments.length;
+  extra.style.display = n === 4 ? "" : "none";
+  if (svg) svg.setAttribute("viewBox", n === 4 ? "0 0 380 210" : "0 0 380 170");
+  if (n === 4) {
+    document.getElementById("relay-value").textContent =
+      payload.card.power_on === false ? "off" : "on";
+    const temp = payload.instruments.find(i => i.address.startsWith("temp"));
+    const tReading = temp ? latestReading(payload.timeline, temp.address) : null;
+    document.getElementById("temp-value").textContent = tReading
+      ? `${tReading.detail.value}°C` : "—";
+  }
 }
 
 function flash(el) {

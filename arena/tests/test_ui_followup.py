@@ -262,6 +262,27 @@ def test_answer_sentence_on_a_relay_rail_overheat_run_names_both_readings(
     assert sentence.endswith("Correct.")
 
 
+def test_export_of_a_relay_rail_run_builds_and_names_all_four_addresses(tmp_path: Path) -> None:
+    """CTO blocker 5: the morning demo is the relay-rail card -- the export
+    must build end to end for a real 4-instrument run, with every
+    instrument's address reaching the embedded payload."""
+    from shal_arena import fault as fault_mod
+    from shal_arena.loader import load_task
+
+    card = load_task(str(RELAY_RAIL_TASK)).card
+    seed = next(s for s in range(500)
+               if fault_mod.realized_fault(card, s).fault_id == "overheat")
+    run_id = start_run(str(RELAY_RAIL_TASK), seed=seed, state_dir=tmp_path)["run_id"]
+    take_measurement(run_id, "dmm0", PASSING_DMM_DRIVER, state_dir=tmp_path)
+    take_measurement(run_id, "temp0", PASSING_TEMP_DRIVER, state_dir=tmp_path)
+    answer(run_id, "overheat", state_dir=tmp_path)
+
+    html = build_export(run_id, state_dir=tmp_path)
+    for addr in ("psu0", "dmm0", "relay0", "temp0"):
+        assert f'"{addr}"' in html
+    assert "power_on" in html
+
+
 def test_export_from_a_capture_with_a_task_path_from_another_machine(tmp_path: Path) -> None:
     """CTO blocker: a capture made elsewhere carries an absolute
     `task_path` that does not exist on this machine -- the payload must
