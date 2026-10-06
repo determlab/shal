@@ -34,10 +34,13 @@ import importlib.util
 import statistics
 import sys
 from collections.abc import Callable
+from contextlib import contextmanager
 from pathlib import Path
 from typing import Any, Protocol
 
+from . import runner as _runner
 from .errors import ArenaError, TooFewRuns
+from .loader import once_per_path
 from .store import DEFAULT_STATE_DIR, RunStore
 
 MIN_RUNS = 10
@@ -76,6 +79,23 @@ def import_policy(path: str | Path) -> _Policy:
     return module
 
 
+@contextmanager
+def _driver_imported_once():
+    """issue #394: for the duration of the block, ``runner``'s own driver
+    import is cached by resolved path (`loader.once_per_path`) — a policy
+    that calls `check_instrument_driver`/`take_measurement` against the SAME
+    ``driver.py`` on every run (the normal thing to do) imports it exactly
+    once, so the player's own file needs no ``override=True``. Restores the
+    real import function on exit either way; `runner.py` itself, and the
+    registry's own rule, are untouched."""
+    original = _runner._import_driver_file
+    _runner._import_driver_file = once_per_path(original)
+    try:
+        yield
+    finally:
+        _runner._import_driver_file = original
+
+
 def run_side(task_path: str, play: Play, *, runs: int, seed_base: int,
             state_dir: str | Path) -> list[dict[str, Any]]:
     """Play ``runs`` runs of one side through ``play``, one per seed
@@ -84,19 +104,20 @@ def run_side(task_path: str, play: Play, *, runs: int, seed_base: int,
     exactly why `run_benchmark` refuses fewer than `MIN_RUNS` of these."""
     store = RunStore(state_dir)
     results = []
-    for i in range(runs):
-        run_id, record = play(str(task_path), seed_base + i, str(state_dir))
-        state = store.load(run_id)
-        # a destroyed card is a failed run on its own terms (Scope: "30 V on
-        # a 5 V card destroys it and the task fails"), whatever `given`
-        # happened to match — CTO review on #328: counting it "correct"
-        # because the answer also named the right fault hid the damage.
-        destroyed = state.card_destroyed
-        correct = bool(record.get("correct")) and not destroyed
-        results.append({"run_id": run_id, "seed": seed_base + i, "turns": state.turns,
-                        "correct": correct, "disqualified": bool(record.get("disqualified")),
-                        "destroyed": destroyed,
-                        "sim_log": str(store.sim_log_path(run_id))})
+    with _driver_imported_once():
+        for i in range(runs):
+            run_id, record = play(str(task_path), seed_base + i, str(state_dir))
+            state = store.load(run_id)
+            # a destroyed card is a failed run on its own terms (Scope: "30 V on
+            # a 5 V card destroys it and the task fails"), whatever `given`
+            # happened to match — CTO review on #328: counting it "correct"
+            # because the answer also named the right fault hid the damage.
+            destroyed = state.card_destroyed
+            correct = bool(record.get("correct")) and not destroyed
+            results.append({"run_id": run_id, "seed": seed_base + i, "turns": state.turns,
+                            "correct": correct, "disqualified": bool(record.get("disqualified")),
+                            "destroyed": destroyed,
+                            "sim_log": str(store.sim_log_path(run_id))})
     return results
 
 
