@@ -11,8 +11,10 @@ that is not ``runner.py`` itself, which this ticket's fence keeps untouched.
 from __future__ import annotations
 
 import functools
-from collections.abc import Callable
+from collections.abc import Callable, Iterator
+from contextlib import contextmanager
 from dataclasses import dataclass
+from importlib import resources as importlib_resources
 from pathlib import Path
 from typing import Any, TypeVar
 
@@ -21,6 +23,9 @@ import yaml
 from .cases import resolve_case
 from .errors import TaskFormatError
 from .schema import Card, Task, validate_card, validate_task
+
+_TASKS_PACKAGE = "shal_arena"
+_TASKS_SUBDIR = "tasks"
 
 _T = TypeVar("_T")
 
@@ -121,3 +126,58 @@ def _cross_check(task: Task, card: Card, task_path: Path) -> None:
                 f"{task_path}: task.question.answer.values {sorted(answer_values)} must "
                 f"equal the card's fault ids {sorted(fault_ids)}",
                 fix=f"set task.question.answer.values to {sorted(fault_ids)}")
+
+
+# --------------------------------------------------------------------------- #
+# issue #416: run a packaged task by name, with no repo checkout -- package
+# data (`importlib.resources`), the same mechanism `demo.py`'s own
+# `_arena_task_file` already uses, generalized to every packaged task and
+# to `shal-arena run`'s own `task` argument.
+# --------------------------------------------------------------------------- #
+
+def _packaged_tasks_dir() -> Any:
+    return importlib_resources.files(_TASKS_PACKAGE) / _TASKS_SUBDIR
+
+
+def packaged_task_names() -> list[str]:
+    """Every packaged task's name (its file's stem), sorted."""
+    base = _packaged_tasks_dir()
+    return sorted(p.name[:-len(".yaml")] for p in base.iterdir() if p.name.endswith(".yaml"))
+
+
+def _unknown_task_error(task_arg: str) -> TaskFormatError:
+    names = ", ".join(packaged_task_names())
+    return TaskFormatError(
+        f"unknown task {task_arg!r}",
+        fix=f"use one of the packaged task names ({names}), a path to your own task.yaml, "
+            "or run `shal-arena tasks --json` to list them")
+
+
+@contextmanager
+def resolve_task_arg(task_arg: str) -> Iterator[Path]:
+    """A real filesystem path for `task_arg`: an existing file path, used as
+    given, or a packaged task name (`easy`, `medium`, `hard`, `rail-3v3`)
+    resolved through `importlib.resources` -- package data, so this works
+    right after a plain `pip install`, no checkout needed. Raises
+    `TaskFormatError` naming every valid name (and `shal-arena tasks --json`)
+    for anything else."""
+    candidate = Path(task_arg)
+    if candidate.is_file():
+        yield candidate
+        return
+    ref = _packaged_tasks_dir() / f"{task_arg}.yaml"
+    if not ref.is_file():
+        raise _unknown_task_error(task_arg)
+    with importlib_resources.as_file(ref) as path:
+        yield path
+
+
+def list_packaged_tasks() -> list[dict[str, str]]:
+    """`name`/`path`/`level` for every packaged task, sorted by name (issue
+    #416 Agent path: `shal-arena tasks --json`)."""
+    out = []
+    for name in packaged_task_names():
+        with resolve_task_arg(name) as path:
+            level = load_task(path).task.level
+            out.append({"name": name, "path": str(path), "level": level})
+    return out

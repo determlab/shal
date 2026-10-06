@@ -64,8 +64,11 @@ def _report_error(err: ArenaError, as_json: bool) -> int:
 
 
 def _cmd_run(args: argparse.Namespace) -> int:
+    from .loader import resolve_task_arg
+
     try:
-        result = start_run(args.task, seed=args.seed, state_dir=args.state_dir)
+        with resolve_task_arg(args.task) as task_path:
+            result = start_run(str(task_path), seed=args.seed, state_dir=args.state_dir)
     except ArenaError as e:
         return _report_error(e, args.json)
     if args.json:
@@ -76,6 +79,18 @@ def _cmd_run(args: argparse.Namespace) -> int:
         for inst in result["instruments"]:
             wiring = inst.get("drives") or inst.get("probe")
             print(f"  {inst['address']} ({inst['case']}) -> {wiring}")
+    return 0
+
+
+def _cmd_tasks(args: argparse.Namespace) -> int:
+    from .loader import list_packaged_tasks
+
+    tasks = list_packaged_tasks()
+    if args.json:
+        _json_out({"ok": True, "side_effect": "none", "tasks": tasks})
+    else:
+        for t in tasks:
+            print(f"{t['name']} ({t['level']}): {t['path']}")
     return 0
 
 
@@ -229,11 +244,18 @@ def _build_parser() -> argparse.ArgumentParser:
     p_demo.set_defaults(func=_cmd_demo)
 
     p_run = sub.add_parser("run", help="start a run from a task.yaml")
-    p_run.add_argument("task", help="path to the task.yaml")
+    p_run.add_argument("task", help="a packaged task name (easy, medium, hard, rail-3v3; "
+                                    "see `shal-arena tasks --json`) or a path to your own "
+                                    "task.yaml")
     p_run.add_argument("--seed", type=int, default=None,
                        help="override the task's seed (a weekly challenge passes this)")
     add_common(p_run)
     p_run.set_defaults(func=_cmd_run)
+
+    p_tasks = sub.add_parser(
+        "tasks", help="list the packaged arena tasks by name (issue #416 Agent path)")
+    p_tasks.add_argument("--json", action="store_true", help="print one JSON document")
+    p_tasks.set_defaults(func=_cmd_tasks)
 
     p_check = sub.add_parser(
         "check-driver", aliases=["check"],
