@@ -15,9 +15,13 @@ Formatters that render these live in shal.logging (opt-in, app-side).
 """
 from __future__ import annotations
 
+import contextlib
 import contextvars
 import logging
 import uuid
+from collections.abc import Callable
+from dataclasses import dataclass
+from typing import Any
 
 logging.getLogger("shal").addHandler(logging.NullHandler())
 
@@ -59,6 +63,58 @@ def redact_url(value: str) -> str:
             netloc = f"{netloc}:{p.port}"
         return urllib.parse.urlunsplit((p.scheme, netloc, p.path, "", ""))
     return value.rsplit("@", 1)[-1]  # bare host:port — drop any userinfo prefix
+
+
+@dataclass(frozen=True)
+class Exchange:
+    """One real bus exchange, for an opt-in observer (#457) — never invented:
+    a bus builds this from exactly what it sent and got back, in its own
+    protocol's natural shape (SCPI text, a structured message, or bytes for
+    a byte transport). `request`/`response` carry whatever payload the
+    caller is responsible for keeping safe — `redact`/`redact_url` are for
+    the caller to apply to any raw bytes or URL-shaped value before this is
+    built; this dataclass does not sanitize anything itself."""
+
+    bus_family: str
+    path: str
+    address: str
+    request: Any
+    response: Any
+
+
+ExchangeSink = Callable[[Exchange], None]
+
+#: Off by default (#457): a bus checks this itself via `record_exchange` and
+#: costs nothing when no sink is set. The buses also run against real
+#: instruments, where an always-on exchange log would be a standing
+#: liability — this is never turned on except by something that opted in.
+_exchange_sink: contextvars.ContextVar[ExchangeSink | None] = contextvars.ContextVar(
+    "shal_exchange_sink", default=None)
+
+
+@contextlib.contextmanager
+def exchange_sink(sink: ExchangeSink):
+    """Opt-in hook (#457): while this is active, every real bus exchange
+    started in this context calls ``sink(exchange)`` right after it
+    completes — never before, and never for a call that raised. Nested use
+    replaces the sink for its own scope and restores the outer one on exit."""
+    token = _exchange_sink.set(sink)
+    try:
+        yield
+    finally:
+        _exchange_sink.reset(token)
+
+
+def record_exchange(bus_family: str, path: str, address: Any, request: Any,
+                    response: Any) -> None:
+    """A bus calls this right after a real exchange completes, with its own
+    request/response already in the shape it wants logged. No-op unless
+    `exchange_sink` is active — this is the only place a bus needs to
+    touch, and the only thing that changes behaviour when a sink is set."""
+    sink = _exchange_sink.get()
+    if sink is not None:
+        sink(Exchange(bus_family=bus_family, path=path, address=str(address),
+                      request=request, response=response))
 
 
 _RESERVED_KWARGS = frozenset({"exc_info", "stack_info", "stacklevel", "extra"})

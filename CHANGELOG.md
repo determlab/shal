@@ -35,6 +35,21 @@ All notable changes to this project are documented here. The format follows
   other actuator and ask for approval. Sonos reads stay `none`.
 
 ### Added
+- **An opt-in, off-by-default bus exchange hook: `shal.log.exchange_sink`/
+  `record_exchange`** (#457). Every bus (`scpi_raw`, `sim_scpi`, `sim_msg`,
+  `sim.py`'s `sim_i2c`, `i2c_cli`) calls `record_exchange` right after a real
+  exchange completes; it is a no-op unless `exchange_sink` is active, so a
+  plain `shal` run never logs a payload — the buses also run against real
+  instruments, where an always-on log would be a standing liability.
+  SHAL Arena's `SimLog.record_for` turns the hook on for the duration of a
+  check: SCPI keeps its original `query`/`write` kinds, and the other two
+  protocols get one new kind, `exchange`, carrying `bus_family`/`request`/
+  `response` in each protocol's own real shape (Modbus-style structured
+  messages, I2C bytes through `shal.log.redact`) — never invented. The
+  arena Watch page now shows this log for all 3 protocols, each
+  instrument's role straight from the task yaml's own `drives:`/`probe:`
+  (never hand-written), and `drive`'s own row names SHAL's gate, not the
+  agent's driver op.
 - **`record_version` 3 reserves `Step.ops`, `Measurement.instrument_id`/
   `instrument_simulated`/`limit_source` and `Record.repeatability`** (#409,
   `record.md` §2.1). All new keys are always present in a v3 record, `null`

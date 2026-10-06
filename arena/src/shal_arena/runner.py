@@ -891,7 +891,7 @@ def call_op(run_id: str, address: str, driver_path: str | Path, op_name: str,
     topology = _dead_rail_override(topology, loaded, instrument, case, card_sim, state.seed)
     sim_log = SimLog(store.sim_log_path(run_id))
     try:
-        with _load(topology) as hal:
+        with sim_log.record_for(str(address)), _load(topology) as hal:
             node = next((n for root in hal._roots for n in root.walk()
                         if isinstance(n.driver, cls)), None)
             if node is None:
@@ -911,6 +911,10 @@ def call_op(run_id: str, address: str, driver_path: str | Path, op_name: str,
                 # from the store) — seed its channel 0 coil from the last
                 # persisted power state before this call sees it.
                 _seed_card_power(node, card_sim)
+            # issue #457: `record_for` above is what gives this call's real
+            # Modbus exchange ({fc, address, value}) its own `exchange` row
+            # in the sim log -- captured at the bus layer (`sim_msg.py`),
+            # not guessed here.
             result = hal.call_tool(f"{node.id or 'unit'}__{op_name}", kwargs)
             if case.power_switch:
                 _sync_card_power(node, card_sim, store, run_id)
