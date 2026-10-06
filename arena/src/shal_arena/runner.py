@@ -24,8 +24,11 @@ built by hand (`_sim_bus_for_topology`) rather than through `shal.hal.load`
 from __future__ import annotations
 
 import importlib.util
+import inspect
 import re
 import sys
+import typing
+from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
@@ -44,6 +47,8 @@ from .schema import Card, Instrument, Task
 from .score import build_score
 from .simlog import SimLog
 from .store import DEFAULT_STATE_DIR, RunState, RunStore
+
+_AMBIENT_C = 25.0  # a card with no power dissipates none, so it cools to room temperature
 
 
 class NotSupported(ArenaError):
@@ -128,7 +133,146 @@ def _load_card_sim(loaded: LoadedTask, state: RunState, store: RunStore, run_id:
     if state.card_applied:
         card_sim.applied = dict(state.card_applied)
     card_sim.destroyed = state.card_destroyed
+    card_sim.power_on = state.card_power_on
     return card_sim
+
+
+def _make_card_state(card: Card, card_sim: CardSim,
+                     realized: _fault.RealizedFault) -> Callable[[str], float]:
+    """issue relay-rail: the one live-value function every probing sim can be
+    bound to (`_bind_card_state`), card-yaml driven so it needs no per-case
+    knowledge of what kind of sensor is reading it. A rail's test point
+    reads `CardSim.rail_voltage` (already relay/protection/damage aware); a
+    temperature point reads the card's own nominal plus this run's realized
+    fault shift, if the realized fault targets it -- unless the card's
+    power is off (CTO review on PR #426), in which case nothing on it is
+    dissipating any power any more and it reads room temperature instead,
+    whatever fault is realized."""
+    def card_state(point: str) -> float:
+        rail = next((r for r in card.rails if r.test_point == point), None)
+        if rail is not None:
+            return card_sim.rail_voltage(rail.name)
+        temp = next((t for t in card.temp_points if t.test_point == point), None)
+        if temp is not None:
+            if not card_sim.power_on:
+                return _AMBIENT_C
+            value = temp.nominal_c
+            target = _fault.temp_point_for_fault(card, realized)
+            if target is not None and target.test_point == point:
+                value += realized.extra.get("shift_c", 0.0)
+            return value
+        known = sorted(r.test_point for r in card.rails) + \
+            sorted(t.test_point for t in card.temp_points)
+        raise ArenaError(f"no such card point {point!r}",
+                         fix=f"probe one of this card's test points: {known}")
+    return card_state
+
+
+def _bind_card_state(node: Node, point: str, card_state: Callable[[str], float]) -> None:
+    """issue relay-rail: bind this probe's live value, as a zero-argument
+    callback, onto the sim model behind ``node`` — one bind step for any bus
+    kind (``shal,sim-scpi``, ``shal,sim-i2c``, ``shal,sim-msg`` all expose
+    ``model_for``), added HERE because shal core's sim-i2c bus has no
+    ``bind_sim`` hook of its own (only sim-scpi does — this is the "bind
+    step for sim-i2c" the CTO ruling asks the arena harness to add, not shal
+    core). A model that defines no ``bind_card_state`` is left untouched."""
+    bus = getattr(node.driver, "bus", None)
+    model_for = getattr(bus, "model_for", None)
+    if model_for is None:
+        return
+    try:
+        model = model_for(node.address)
+    except Exception:  # noqa: BLE001 - best-effort; a real read raises properly on its own
+        return
+    bind = getattr(model, "bind_card_state", None)
+    if bind is not None:
+        bind(lambda: card_state(point))
+
+
+def _seed_card_power(node: Node, card_sim: CardSim) -> None:
+    """issue relay-rail: the counterpart of `_sync_card_power` — a fresh
+    `shal.load` builds a fresh relay model every call (channel 0 starting
+    energized), so before the call reaches it, seed that channel from
+    `CardSim.power_on` (itself restored from the store by `_load_card_sim`)
+    so a `read_relay` after an earlier call's `set_relay` sees what was
+    actually last set, not the model's own default."""
+    bus = getattr(node.driver, "bus", None)
+    model_for = getattr(bus, "model_for", None)
+    if model_for is None:
+        return
+    model = model_for(node.address)
+    coils = getattr(model, "coils", None)
+    if coils is not None:
+        coils[0] = card_sim.power_on
+
+
+def _sync_card_power(node: Node, card_sim: CardSim, store: RunStore, run_id: str) -> None:
+    """issue relay-rail: after any `call` on a `power_switch` case's
+    instrument (`cases.CaseSpec.power_switch`), keep `CardSim.power_on` in
+    sync with that instrument's own real state (e.g. the relay's channel 0
+    coil) and persist it (`RunStore.set_card_power`) the same way
+    `drive_input` persists `card_applied` (issue #313) — so a later call on
+    a different address, in a later CLI invocation, sees the same card."""
+    bus = getattr(node.driver, "bus", None)
+    model_for = getattr(bus, "model_for", None)
+    if model_for is None:
+        return
+    model = model_for(node.address)
+    coils = getattr(model, "coils", None)
+    if coils is None:
+        return
+    power_on = bool(coils.get(0, True))
+    card_sim.set_power(power_on)
+    store.set_card_power(run_id, power_on)
+
+
+_BOOL_TRUE = {"true", "1", "yes", "on"}
+_BOOL_FALSE = {"false", "0", "no", "off"}
+
+
+def _coerce_one(raw: str, annotation: Any) -> Any:
+    if annotation is bool:
+        low = raw.strip().lower()
+        if low in _BOOL_TRUE:
+            return True
+        if low in _BOOL_FALSE:
+            return False
+        raise CheckCouldNotRun(f"{raw!r} is not a boolean",
+                               fix="pass true/false (or 1/0/yes/no/on/off)")
+    if annotation is int:
+        try:
+            return int(raw)
+        except ValueError:
+            raise CheckCouldNotRun(f"{raw!r} is not an integer",
+                                   fix="pass a whole number") from None
+    if annotation is float:
+        try:
+            return float(raw)
+        except ValueError:
+            raise CheckCouldNotRun(f"{raw!r} is not a number", fix="pass a number") from None
+    return raw
+
+
+def _coerce_args(fn: Callable, args: list[str]) -> dict[str, Any]:
+    """issue relay-rail: positional string CLI args -> a kwargs dict for
+    ``op``'s own signature, coerced by its parameter annotations (bool/int/
+    float; anything else passes through as `str`) — the generic `call`
+    path works for any op of any driver without the CLI knowing its shape
+    ahead of time. ``get_type_hints`` (not the raw ``Parameter.annotation``)
+    because every packaged/example driver has ``from __future__ import
+    annotations``, which makes annotations plain strings at runtime."""
+    sig = inspect.signature(fn)
+    params = [p for p in sig.parameters if p != "self"]
+    if len(args) > len(params):
+        raise CheckCouldNotRun(
+            f"{fn.__name__} takes at most {len(params)} argument(s) {params}, got {len(args)}",
+            fix=f"pass at most {len(params)} argument(s): {params}")
+    try:
+        hints = typing.get_type_hints(fn)
+    except Exception:  # noqa: BLE001 - a hint that can't resolve just passes through as str
+        hints = {}
+    return {name: _coerce_one(raw, hints.get(name, sig.parameters[name].annotation))
+           for name, raw in zip(params, args, strict=False)}
 
 
 def _shal_damage_gate(card_sim: CardSim, input_name: str,
@@ -222,6 +366,16 @@ def drive_input(run_id: str, address: str, volts: float, *,
         raise CheckCouldNotRun(
             f"{address}: this instrument probes the card, it does not drive an input",
             fix="drive the address whose task.instruments entry has 'drives', not 'probe'")
+    case = resolve_case(instrument.case)
+    if case.power_switch:
+        # CTO review (PR #426): a relay is not a voltage source -- `drive`
+        # is CardSim.apply_input's own gate (_shal_damage_gate below), which
+        # a power switch has no business reaching; its one real action
+        # (energize/de-energize) goes only through `call`'s own gate.
+        raise CheckCouldNotRun(
+            f"{address}: this is a power switch, not a voltage source",
+            fix=f"use `shal-arena call <run> {address} <driver.py> set_relay "
+                "<channel> <true|false>` instead of drive")
     input_name = instrument.drives.removeprefix("card.")
 
     card_sim = _load_card_sim(loaded, state, store, run_id)
@@ -545,6 +699,11 @@ def take_measurement(run_id: str, address: str, driver_path: str | Path, *,
                     f"{case.name}: its own harness binds no node to {case.compatible!r}",
                     fix="this is a packaged case's harness, not your driver.py — "
                         "if you see this, file a shal-arena issue")
+            if instrument.probe is not None:
+                point = instrument.probe.removeprefix("card.")
+                realized = _fault.realized_fault(loaded.card, state.seed)
+                card_state = _make_card_state(loaded.card, card_sim, realized)
+                _bind_card_state(node, point, card_state)
             sim_log.mark_measured(str(address))
             reading = getattr(node.driver, read_op)()
             op_fn = cls.capability_ops()[read_op]
@@ -617,3 +776,106 @@ def answer(run_id: str, value: str, *, state_dir: str | Path = DEFAULT_STATE_DIR
     store.write_score(run_id, score)
     return {"ok": True, "side_effect": "write", **record,
             "disqualified": disqualified, "score": score, "sim_log": str(sim_log.path)}
+
+
+def call_op(run_id: str, address: str, driver_path: str | Path, op_name: str,
+           args: list[str] | None = None, *,
+           state_dir: str | Path = DEFAULT_STATE_DIR) -> dict[str, Any]:
+    """``shal-arena call`` (issue relay-rail): run ANY op of the player's own
+    driver through SHAL's normal dispatch — `hal.call_tool`'s gate, limits
+    and approval (AGENTS.md), exactly as `shal call` enforces them, not a
+    second arena-local mechanism — rather than the fixed probe/drives pair
+    `measure`/`drive` cover. This is how `relay0`'s coil ops are played:
+    `call <run> relay0 <driver.py> set_relay 0 false`, `call <run> relay0
+    <driver.py> read_relay 0`.
+
+    One call is one turn, counted before anything runs, same place as
+    check/measure/drive (issue #325); the exchange lands in this run's own
+    sim log (`SimLog.append`), and a probe instrument called this way also
+    gets the same `measure` marker `take_measurement` writes, so answering
+    about it is never disqualified just because the reading came through
+    this path instead of `measure`."""
+    from shal import registry
+    from shal.driver import inferred_side_effect
+    from shal.hal import load as _load
+
+    args = list(args or [])
+    store = RunStore(state_dir)
+    state = store.increment_turns(run_id)
+    loaded = load_task(state.task_path)
+    instrument = next((i for i in loaded.task.instruments
+                       if str(i.address) == str(address)), None)
+    if instrument is None:
+        known = ", ".join(str(i.address) for i in loaded.task.instruments)
+        raise CheckCouldNotRun(f"no instrument at address {address!r} on run {run_id!r}",
+                               fix=f"use one of this run's addresses: {known}")
+    case = resolve_case(instrument.case)
+    _import_driver_file(driver_path)
+    try:
+        cls = registry.resolve(case.compatible)
+    except Exception as e:  # noqa: BLE001 - a bad/missing registration is a named failure
+        raise CheckCouldNotRun(
+            f"driver.py does not register {case.compatible!r}: {type(e).__name__}: {e}",
+            fix=f"make sure your driver.py sets compatible = {case.compatible!r} and "
+                "calls registry.register(...)") from e
+    ops = cls.capability_ops()
+    if op_name not in ops:
+        known = ", ".join(sorted(ops)) or "(none)"
+        raise CheckCouldNotRun(f"{case.compatible} has no op {op_name!r}",
+                               fix=f"call one of this driver's ops: {known}")
+    kwargs = _coerce_args(ops[op_name], args)
+    side_effect = inferred_side_effect(ops[op_name])
+    if instrument.drives is not None and not case.power_switch and side_effect != "none":
+        # CTO review (PR #426): a `drives` instrument's own output change is
+        # `CardSim.apply_input`'s gate to make (`drive_input`'s
+        # `_shal_damage_gate`, the card's documented abs-max) -- `call`
+        # reaching the bare sim model directly would let a player set an
+        # output `drive` would have refused, with no damage check at all.
+        # A power switch has no such gate to bypass (it never touches
+        # `apply_input`), so it is exempt -- `call` is its only path.
+        raise CheckCouldNotRun(
+            f"{address}: {op_name} changes this instrument's own output; only "
+            "`shal-arena drive` carries the card's damage gate for a 'drives' "
+            "instrument",
+            fix=f"use `shal-arena drive <run> {address} <volts>` instead of call")
+
+    topology = _topology_for_instrument(loaded.task, loaded.card, instrument, state.seed, case)
+    card_sim = _load_card_sim(loaded, state, store, run_id)
+    topology = _dead_rail_override(topology, loaded, instrument, case, card_sim, state.seed)
+    sim_log = SimLog(store.sim_log_path(run_id))
+    try:
+        with _load(topology) as hal:
+            node = next((n for root in hal._roots for n in root.walk()
+                        if isinstance(n.driver, cls)), None)
+            if node is None:
+                raise CheckCouldNotRun(
+                    f"{case.name}: its own harness binds no node to {case.compatible!r}",
+                    fix="this is a packaged case's harness, not your driver.py — "
+                        "if you see this, file a shal-arena issue")
+            if instrument.probe is not None:
+                point = instrument.probe.removeprefix("card.")
+                realized = _fault.realized_fault(loaded.card, state.seed)
+                card_state = _make_card_state(loaded.card, card_sim, realized)
+                _bind_card_state(node, point, card_state)
+                sim_log.mark_measured(str(address))
+            if case.power_switch:
+                # a fresh `shal.load` means a fresh relay model every call
+                # (same reason `_load_card_sim` restores `CardSim.applied`
+                # from the store) — seed its channel 0 coil from the last
+                # persisted power state before this call sees it.
+                _seed_card_power(node, card_sim)
+            result = hal.call_tool(f"{node.id or 'unit'}__{op_name}", kwargs)
+            if case.power_switch:
+                _sync_card_power(node, card_sim, store, run_id)
+    except CheckCouldNotRun:
+        raise
+    except Exception as e:  # noqa: BLE001 - a live answer to THIS call, never persisted
+        raise MeasurementFailed(
+            f"{op_name} raised {type(e).__name__}: {e}",
+            fix="the call failed — check your driver.py's handling of this op") from e
+
+    sim_log.append(str(address), "call", op=op_name, args=args, ok=bool(result.get("ok")))
+    out = {"ok": bool(result.get("ok")), "side_effect": side_effect, "run_id": run_id,
+          "address": instrument.address, "op": op_name, "args": args}
+    out.update({k: v for k, v in result.items() if k != "ok"})
+    return out

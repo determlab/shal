@@ -41,11 +41,15 @@ class CaseSpec:
     compatible: str          # the `driver:`/`compatible` string the player's driver.py registers
     docs_dir: Path            # given to the player
     harness_topology: Path    # NOT given to the player; passed to conformance.check_driver
+    # issue relay-rail: this case's own instrument is the card's power switch
+    # (e.g. a relay in series with an input) — `runner.call_op` keeps
+    # `CardSim.power_on` in sync with it after any call on such an instrument.
+    power_switch: bool = False
 
 
-def _case(name: str, compatible: str) -> CaseSpec:
+def _case(name: str, compatible: str, *, power_switch: bool = False) -> CaseSpec:
     root = _CASES_DIR / name
-    return CaseSpec(name=name, compatible=compatible,
+    return CaseSpec(name=name, compatible=compatible, power_switch=power_switch,
                      docs_dir=root / "docs", harness_topology=root / "harness" / "topology.yaml")
 
 
@@ -77,6 +81,8 @@ def _ensure_sim_model_imported(case: CaseSpec) -> None:
 CASES: dict[str, CaseSpec] = {
     "scpi-psu": _case("scpi-psu", "arena,bench-psu1"),
     "dmm": _case("dmm", "arena,bench-dmm1"),
+    "relay-modbus": _case("relay-modbus", "arena,bench-relay1", power_switch=True),
+    "sht31": _case("sht31", "arena,bench-temp1"),
 }
 
 

@@ -115,10 +115,30 @@ class SimLog:
         (`take_measurement`'s own docstring: a failure is "never written to
         the sim log ... beyond that one neutral marker"), so this entry's
         mere presence already tells a reader the read succeeded, without
-        needing to say anything about why one might be missing."""
+        needing to say anything about why one might be missing.
+
+        CTO review on #427: `value` is coerced to `float` here, not trusted
+        from the caller -- a driver an agent wrote returns whatever its own
+        code computes, and this is the one place that decides what counts
+        as "a reading" at all. Anything that is not a bare number (e.g. an
+        HTML string smuggled in to run in the page later) raises instead of
+        being logged."""
         self.path.parent.mkdir(parents=True, exist_ok=True)
         entry = {"ts": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
-                 "address": address, "kind": "reading", "value": value, "unit": unit}
+                 "address": address, "kind": "reading", "value": float(value), "unit": unit}
+        with self.path.open("a", encoding="utf-8") as f:
+            f.write(json.dumps(entry) + "\n")
+
+    def append(self, address: str, kind: str, **extra: Any) -> None:
+        """A free-form entry, same JSON-lines shape as every other line in
+        this file (issue relay-rail: `runner.call_op`'s own record of a
+        generic `call` — the bus-log capture `record_for` attaches only
+        covers `shal,sim-scpi`, so a `shal,sim-msg`/`shal,sim-i2c` exchange
+        needs its own line written directly, the same way `mark_measured`
+        and `CardSim._log` already do)."""
+        self.path.parent.mkdir(parents=True, exist_ok=True)
+        entry = {"ts": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+                 "address": str(address), "kind": kind, **extra}
         with self.path.open("a", encoding="utf-8") as f:
             f.write(json.dumps(entry) + "\n")
 

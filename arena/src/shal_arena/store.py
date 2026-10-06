@@ -53,6 +53,8 @@ class RunState:
     # just the voltages the player has driven and whether the card is dead.
     card_applied: dict[str, float] = field(default_factory=dict)
     card_destroyed: bool = False
+    # issue relay-rail: whether the card's own power relay is energized.
+    card_power_on: bool = True
     # issue #325: addresses of DMMs whose current-input fuse has burned.
     fuses_blown: list[str] = field(default_factory=list)
 
@@ -143,6 +145,15 @@ class RunStore:
         state = self.load_open(run_id)
         state.card_applied = dict(applied)
         state.card_destroyed = destroyed
+        self._write_public(state)
+        return state
+
+    def set_card_power(self, run_id: str, power_on: bool) -> RunState:
+        """issue relay-rail: persist the card's own relay state between
+        separate CLI invocations of `call`, the same way `set_card_state`
+        persists `CardSim.applied`/`destroyed` after a `drive` call."""
+        state = self.load_open(run_id)
+        state.card_power_on = bool(power_on)
         self._write_public(state)
         return state
 

@@ -1,0 +1,12 @@
+# Harness for the "relay-modbus" ADK case: one node of driver:
+# "arena,bench-relay1" on the sim message bus. The runner imports the
+# player's driver.py (which registers that compatible) before loading this
+# file.
+shal_version: 1
+root:
+  bus:
+    id: bus
+    driver: shal,sim-msg
+    address: sim0
+    children:
+      unit: {id: unit, driver: "arena,bench-relay1", address: 1}
