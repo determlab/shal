@@ -22,6 +22,18 @@ on:
   schedule:
     - cron: "23 13 * * *"   # 13:23 UTC daily — off the hour, off midnight
   workflow_dispatch:
+  pull_request:
+    # CTO review on #340: the 6-cell run must happen ON THE PR, before merge
+    # — not only after, on a schedule. Path-filtered so an unrelated PR
+    # doesn't pay for 6 cells.
+    paths:
+      - ".github/workflows/e2e-clean-machine.yml"
+      - "dev/e2e/**"
+      - "tests/test_e2e_story.py"
+      - "tests/data/e2e/**"
+      - "examples/demos/virtual-bench/**"
+      - "arena/**"
+      - "pyproject.toml"
 
 jobs:
   story:
@@ -45,16 +57,29 @@ jobs:
           pip install build
           sha7="${GITHUB_SHA:0:7}"
 
-          stamp() {  # $1 = pyproject.toml path
-            sed -i.bak "0,/^version = \"/s/^version = \"\\([^\"]*\\)\"/version = \"\\1+rc.${sha7}\"/" "$1"
+          # Portable version stamp: macOS ships BSD sed, not GNU sed, and the
+          # two disagree on `-i` (CTO review on #340) -- Python's re module
+          # behaves identically on all three OSes, so use that instead.
+          stamp() {  # $1 = pyproject.toml path, $2 = sha7
+          python - "$1" "$2" <<'PY'
+          import re, sys
+          path, sha7 = sys.argv[1], sys.argv[2]
+          text = open(path, encoding="utf-8").read()
+          new_text, n = re.subn(r'(?m)^version = "([^"]*)"',
+                                lambda m: f'version = "{m.group(1)}+rc.{sha7}"', text, count=1)
+          assert n == 1, f"no version line found in {path}"
+          open(path, "w", encoding="utf-8").write(new_text)
+          PY
           }
-          stamp pyproject.toml
+          cp pyproject.toml pyproject.toml.orig
+          stamp pyproject.toml "$sha7"
           python -m build --wheel --outdir rc .
-          mv pyproject.toml.bak pyproject.toml
+          mv pyproject.toml.orig pyproject.toml
 
-          stamp arena/pyproject.toml
+          cp arena/pyproject.toml arena/pyproject.toml.orig
+          stamp arena/pyproject.toml "$sha7"
           python -m build --wheel --outdir rc arena
-          mv arena/pyproject.toml.bak arena/pyproject.toml
+          mv arena/pyproject.toml.orig arena/pyproject.toml
 
       - name: Gather pytest-shal and bricks-engine's own RC wheels
         shell: bash
@@ -62,16 +87,39 @@ jobs:
           set -eu
           mkdir -p rc dev/e2e/scratch
 
+          # Same portable stamp as the step above (a separate `run:` is a
+          # separate shell, so this can't just call that one's function).
+          stamp() {  # $1 = pyproject.toml path, $2 = sha7
+          python - "$1" "$2" <<'PY'
+          import re, sys
+          path, sha7 = sys.argv[1], sys.argv[2]
+          text = open(path, encoding="utf-8").read()
+          new_text, n = re.subn(r'(?m)^version = "([^"]*)"',
+                                lambda m: f'version = "{m.group(1)}+rc.{sha7}"', text, count=1)
+          assert n == 1, f"no version line found in {path}"
+          open(path, "w", encoding="utf-8").write(new_text)
+          PY
+          }
+
           gather() {  # $1 = package name (pyshal naming), $2 = artifact name, $3 = repo, $4 = clone subdir ("" for repo root)
             if gh run download --repo "determlab/$3" -n "$2" -D "rc-dl-$1" 2>/dev/null \
                 && [ -n "$(ls -A "rc-dl-$1" 2>/dev/null)" ]; then
-              cp "rc-dl-$1"/*.whl rc/
+              wheel=$(ls "rc-dl-$1"/*.whl)
+              # CTO review on #340: a corrupted or mismatched download must fail
+              # the job, not quietly ship whatever bytes actually arrived.
+              manifest_sha256=$(python -c "import json; print(json.load(open('rc-dl-$1/rc-manifest.json'))['sha256'])")
+              actual_sha256=$(python -c "import hashlib,sys; print(hashlib.sha256(open(sys.argv[1],'rb').read()).hexdigest())" "$wheel")
+              if [ "$manifest_sha256" != "$actual_sha256" ]; then
+                echo "FATAL: $1 wheel sha256 mismatch: manifest=$manifest_sha256 actual=$actual_sha256" >&2
+                exit 1
+              fi
+              cp "$wheel" rc/
               # the downloaded rc-manifest.json's own sha, NOT this job's $GITHUB_SHA
               # (that's shal's commit, not determlab/$3's) — versions.json below reads
               # every package's sha from one of these files, so this one must exist too.
               python -c "import json; print(json.load(open('rc-dl-$1/rc-manifest.json'))['sha'])" \
                 > "dev/e2e/scratch/$1.sha"
-              echo "$1: downloaded from determlab/$3's own rc-wheels run"
+              echo "$1: downloaded from determlab/$3's own rc-wheels run, sha256 verified"
               return
             fi
             echo "$1: cross-repo artifact download unavailable (expected under the default"
@@ -85,7 +133,7 @@ jobs:
             git -C "$clone_dir" checkout -q FETCH_HEAD
             sha7="${sha:0:7}"
             target="$clone_dir${4:+/$4}"
-            sed -i.bak "0,/^version = \"/s/^version = \"\\([^\"]*\\)\"/version = \"\\1+rc.${sha7}\"/" "$target/pyproject.toml"
+            stamp "$target/pyproject.toml" "$sha7"
             python -m build --wheel --outdir rc "$target"
             echo "$sha" > "dev/e2e/scratch/$1.sha"
           }

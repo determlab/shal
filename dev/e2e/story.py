@@ -191,17 +191,34 @@ def main(argv: list[str] | None = None) -> int:
     versions = json.loads(Path(args.versions).read_text(encoding="utf-8"))
     state_dir = (Path(args.state_dir) if args.state_dir
                 else Path(tempfile.mkdtemp(prefix="e2e-arena-")))
+    out_path = Path(args.out)
 
     checks: list[dict[str, Any]] = []
-    checks += run_virtual_bench_checks(args.venv_python)
-    for level in ARENA_TASK_LEVELS:
-        checks.append(run_arena_task_score_file(args.venv_python, level, state_dir / level))
-    checks.append(run_arena_bench_destroyed(args.venv_python, state_dir / "bench-story"))
-    checks.append(run_bricks_wheel_check(args.venv_python))
 
-    evidence = {"os": args.os_label, "python": args.python_label, "versions": versions,
-               "checks": checks}
-    Path(args.out).write_text(json.dumps(evidence, indent=2), encoding="utf-8")
+    def run_step(step_label: str, fn, *fargs: Any) -> None:
+        # CTO review on #340: one crash must not lose every OTHER check's
+        # evidence. A step that raises is recorded as its own failed check
+        # (never silently dropped), and evidence.json is rewritten after
+        # EVERY step -- so even a hard crash partway through this function
+        # leaves the file holding everything decided up to that point, for
+        # the workflow's `if: always()` upload to pick up.
+        try:
+            result = fn(*fargs)
+        except Exception as e:  # noqa: BLE001 - must not lose the other steps' evidence
+            checks.append(_result(step_label, False, f"{type(e).__name__}: {e}"))
+        else:
+            checks.extend(result) if isinstance(result, list) else checks.append(result)
+        evidence = {"os": args.os_label, "python": args.python_label, "versions": versions,
+                   "checks": checks}
+        out_path.write_text(json.dumps(evidence, indent=2), encoding="utf-8")
+
+    run_step("virtual_bench", run_virtual_bench_checks, args.venv_python)
+    for level in ARENA_TASK_LEVELS:
+        run_step(f"arena_{level}_score_file", run_arena_task_score_file,
+                 args.venv_python, level, state_dir / level)
+    run_step("arena_bench_destroyed", run_arena_bench_destroyed,
+             args.venv_python, state_dir / "bench-story")
+    run_step("wheel_installed_bricks-engine", run_bricks_wheel_check, args.venv_python)
 
     failed = [c["id"] for c in checks if c["result"] != "pass"]
     if failed:
