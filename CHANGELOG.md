@@ -35,6 +35,15 @@ All notable changes to this project are documented here. The format follows
   other actuator and ask for approval. Sonos reads stay `none`.
 
 ### Added
+- **The idempotent reconnect-and-retry is visible on the call result and the
+  audit line, not only a log line** (#348). `Hal.call_tool`'s dict (what
+  `--json` serializes) and the `shal.audit` record both gain `retries` (0
+  when the op was not retried, 1 after the one retry `driver.py`'s `call`
+  already made) and, when a retry fired, `dropped` (the hop that dropped
+  the connection) — additive fields only; the retry itself is unchanged,
+  still exactly `delivered == "no"`, idempotent, and unrouted. `retries`
+  uses the same meaning as record v3's `ops[].retries` (`record.md` §2.1,
+  #409), so a later filler can copy it straight across.
 - **`record_version` 3 reserves `Step.ops`, `Measurement.instrument_id`/
   `instrument_simulated`/`limit_source` and `Record.repeatability`** (#409,
   `record.md` §2.1). All new keys are always present in a v3 record, `null`

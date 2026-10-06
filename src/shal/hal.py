@@ -22,6 +22,18 @@ _audit = logging.getLogger("shal.audit")
 _NAME_SAFE = re.compile(r"[^a-zA-Z0-9_-]")
 
 
+def _retry_fields() -> dict:
+    """issue #348: `retries` (0 when the op was not retried) and, when a
+    retry fired, `dropped` (the hop that dropped) — read right after the
+    call via the contextvars `driver.call`'s own closure sets, the same
+    pattern `last_via` already uses to thread per-call detail out of it."""
+    out = {"retries": _driver.last_retries.get()}
+    dropped = _driver.last_dropped.get()
+    if dropped is not None:
+        out["dropped"] = dropped
+    return out
+
+
 class Hal:
     def __init__(self, roots: list[Node], ids: dict[str, Node], *,
                  declared_gated: frozenset[str] | None = None,
@@ -172,40 +184,47 @@ class Hal:
         method = getattr(node.driver, opname)
         routed = isinstance(getattr(node.driver, "bus", None), RouteSet)
         token = last_via.set(None)
+        retries_token = _driver.last_retries.set(0)
+        dropped_token = _driver.last_dropped.set(None)
         try:
             result = method(**(arguments or {}))
         except LimitError as e:
             # structured refusal: nothing was sent (no `delivered` key on purpose) —
             # the violations let an agent self-correct in one step (issue #10)
             return {"ok": False, "error": str(e), "rejected": "limits",
-                    "violations": e.violations}
+                    "violations": e.violations, **_retry_fields()}
         except ApprovalDenied as e:
             # human-in-the-loop refusal: pre-I/O, nothing sent (no `delivered`
             # key) — distinct from a limit rejection so an agent can tell why
             # it was stopped and route to a human (issue #14). `reason` is
             # "no-approver" when no one could be asked, else None (#186)
             return {"ok": False, "error": str(e), "rejected": "approval",
-                    "op": e.op, "device": node.id or node.path, "reason": e.reason}
+                    "op": e.op, "device": node.id or node.path, "reason": e.reason,
+                    **_retry_fields()}
         except HopError as e:
             if not routed:
-                return {"ok": False, "error": str(e), "delivered": e.delivered}
+                return {"ok": False, "error": str(e), "delivered": e.delivered,
+                        **_retry_fields()}
             # every route failed (3e): the RFC text "<path>: no route delivered — …";
             # else the route that failed is in the text. The fix has its own key
             error = f"{e.path}: {e._msg}" if e.via is None else e._text(with_fix=False)
             return {"ok": False, "error": error, "delivered": e.delivered,
-                    "via": e.via, "fix": e.fix}
+                    "via": e.via, "fix": e.fix, **_retry_fields()}
         except Error as e:
             pin = (arguments or {}).get("via")
             if routed and pin is not None and pin not in route_names(node):
                 # an unknown route name (#237): the valid names, for the next call
                 return {"ok": False, "error": str(e), "routes": route_names(node)}
-            return {"ok": False, "error": str(e)}
+            return {"ok": False, "error": str(e), **_retry_fields()}
         finally:
             via = last_via.get()
             last_via.reset(token)
+            retry_fields = _retry_fields()
+            _driver.last_retries.reset(retries_token)
+            _driver.last_dropped.reset(dropped_token)
         if routed:
-            return {"ok": True, "result": result, "via": via}
-        return {"ok": True, "result": result}
+            return {"ok": True, "result": result, "via": via, **retry_fields}
+        return {"ok": True, "result": result, **retry_fields}
 
     def _by_path(self, path: str) -> Node | None:
         parts = [p for p in path.split("/") if p]

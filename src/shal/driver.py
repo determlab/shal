@@ -39,6 +39,21 @@ if TYPE_CHECKING:
 
 _audit = logging.getLogger("shal.audit")
 
+#: issue #348: the LAST call's retry count and the hop that dropped, if any —
+#: read by `Hal.call_tool` (`hal.py`) right after the call, same pattern
+#: `last_via` (`routes.py`) already uses to thread per-call detail out of this
+#: closure. Reset to 0/None at the start of every call, so a later call that
+#: never retries never inherits a previous one's leftover value.
+last_retries: ContextVar[int] = ContextVar("shal_last_retries", default=0)
+last_dropped: ContextVar[str | None] = ContextVar("shal_last_dropped", default=None)
+
+
+def _dropped_field(dropped: dict) -> dict:
+    """issue #348: an explicit `dropped` audit key (the hop that dropped),
+    alongside the existing `hop` key `**dropped` already spreads (additive
+    only — `hop` is unchanged, so no existing assertion on it breaks)."""
+    return {"dropped": dropped["hop"]} if dropped else {}
+
 
 def idempotent(fn: Callable) -> Callable:
     """Mark a capability op as safe to auto-retry across transient drops."""
@@ -566,6 +581,14 @@ class Driver:
             t0 = time.perf_counter()
             attempt = 1  # 2 once the idempotent reconnect-and-retry fires
             dropped: dict = {}  # {"hop": <hop that dropped>} once the retry fires
+            # issue #348: visible on the call result/--json output/audit line,
+            # not only a WARNING log line. Set here (no token/reset -- same
+            # as `_last_via.set(...)` below: `call_tool`, the caller, owns
+            # the token/reset around its own `method(...)` call, the same
+            # pattern it already uses for `last_via`), so a previous call's
+            # retry never leaks into this one.
+            last_retries.set(0)
+            last_dropped.set(None)
             before = op_token = route_token = None
             in_body = False  # True once the driver body runs (after limits + approval)
             # a pin is not an op argument: take it off before limits see the call
@@ -636,6 +659,8 @@ class Driver:
                         # same key and meaning as this WARNING line (#194)
                         attempt = 2
                         dropped = {"hop": e.hop}
+                        last_retries.set(attempt - 1)
+                        last_dropped.set(e.hop)
                         self.log.warning("reconnect-and-retry after drop (1/1)",
                                          event="retry", op=op, attempt=2, hop=e.hop)
                         self.bus.close()
@@ -654,7 +679,8 @@ class Driver:
                                 extra={"event": "audit", "id": self.node.id or "",
                                        "path": self.node.path, "op": op,
                                        "outcome": "ok", "duration_ms": duration,
-                                       "attempt": attempt, **dropped, **route,
+                                       "attempt": attempt, "retries": attempt - 1,
+                                       **dropped, **_dropped_field(dropped), **route,
                                        "txn": _log.current_txn.get()})
                 return result
             except HopError as e:
@@ -674,7 +700,8 @@ class Driver:
                                        "path": self.node.path, "op": op,
                                        "outcome": "error", "delivered": e.delivered,
                                        "duration_ms": duration, "attempt": attempt,
-                                       **dropped, **route,
+                                       "retries": attempt - 1,
+                                       **dropped, **_dropped_field(dropped), **route,
                                        "txn": _log.current_txn.get()})
                 raise
             except _ShalError as e:
@@ -694,7 +721,8 @@ class Driver:
                                        "path": self.node.path, "op": op,
                                        "outcome": "device-error",
                                        "duration_ms": duration, "attempt": attempt,
-                                       **dropped, **route,
+                                       "retries": attempt - 1,
+                                       **dropped, **_dropped_field(dropped), **route,
                                        "txn": _log.current_txn.get()})
                 raise
             finally:
