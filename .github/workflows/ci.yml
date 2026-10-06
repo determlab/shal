@@ -88,6 +88,8 @@ jobs:
         run: ruff check arena/src arena/tests
       - name: Test
         run: python -m pytest arena/tests -q
+      - name: README examples run as written (issue #396)
+        run: python -m pytest arena/tests/test_readme_examples.py -q
 
   packaging:
     # Checks the *built wheel's* metadata, not the source that declares it

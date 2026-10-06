@@ -120,6 +120,45 @@ shal-arena measure <run-id> psu0 examples/reference_driver/driver.py --json
 }
 ```
 
+### Write your driver
+
+Every instrument a task names — `scpi-psu` or `dmm` today — needs one small
+`driver.py` so SHAL can talk to it, exactly like the reference one above.
+This is the whole deliverable per instrument; nothing else in this package
+is yours to change.
+
+1. **Start from the matching minimal example.**
+   [`examples/minimal_psu_driver.py`](examples/minimal_psu_driver.py) for an
+   instrument that `drives` a card input (a setpoint write plus a readback);
+   [`examples/minimal_dmm_driver.py`](examples/minimal_dmm_driver.py) for one
+   that `probe`s a test point (one read). The `run`'s own JSON above names
+   each instrument's `case` and gives you its datasheet — that is the one
+   source of truth for the SCPI text, never this package's internals.
+2. **Declare it.** A driver class sets `compatible` to the exact string your
+   instrument's case uses (`arena,bench-psu1` for `scpi-psu`,
+   `arena,bench-dmm1` for `dmm` — both examples already have the right one),
+   `kind = MessageTransport`, and `llm_ready = True`. Each op is a plain
+   method decorated with `@op("one-line description", unit=..., side_effect=...)`
+   — `side_effect="none"` for a read, `"actuator"` for anything that drives
+   the instrument now (SHAL gates those; see the main `AGENTS.md`).
+   `@idempotent` marks a read, or a write that is safe to resend (an
+   absolute setpoint, like `set_voltage` below).
+3. **Check it, then play it** — one instrument at a time, no `override=True`
+   (arena#394 fixed the need for that in a `bench` run; checking and then
+   measuring the SAME instrument's driver in one sitting outside `bench`
+   still needs it, same reason — one more re-import of the same file):
+
+   ```bash
+   shal-arena check-driver <run-id> psu0 examples/minimal_psu_driver.py --json
+   shal-arena measure <run-id> dmm0 examples/minimal_dmm_driver.py --json
+   ```
+
+   or run a whole batch with `shal-arena bench` once you have a `--policy`
+   file (see "Scope" below, issue #314).
+
+`arena/tests/test_readme_examples.py` runs both minimal examples this same
+way, in CI, so copying them keeps working.
+
 Answer and close the run. `ok` below is a placeholder answer to show the
 command's shape — the real method for picking a value is reading the
 instruments, not the one this walkthrough happens to pass:
