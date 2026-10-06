@@ -15,9 +15,14 @@ Formatters that render these live in shal.logging (opt-in, app-side).
 """
 from __future__ import annotations
 
+import contextlib
 import contextvars
 import logging
+import re
 import uuid
+from collections.abc import Callable, Sequence
+from dataclasses import dataclass
+from typing import Any
 
 logging.getLogger("shal").addHandler(logging.NullHandler())
 
@@ -59,6 +64,125 @@ def redact_url(value: str) -> str:
             netloc = f"{netloc}:{p.port}"
         return urllib.parse.urlunsplit((p.scheme, netloc, p.path, "", ""))
     return value.rsplit("@", 1)[-1]  # bare host:port — drop any userinfo prefix
+
+
+# #457/#460: the text rule and the key-based secret rule, shared by the bus
+# exchange hook (#457) and the CLI call log (#460) -- built once here so
+# both callers redact the same way, rather than drifting apart the way the
+# per-bus redaction calls #457 first shipped with did (CTO review).
+_SECRET_KEY_RE = re.compile(r"token|password|passwd|secret|api_key|apikey|auth",
+                            re.IGNORECASE)
+
+
+def redact_secret_args(argv: Sequence[str]) -> list[str]:
+    """A CLI argv with any ``--flag value`` or ``--flag=value`` whose flag
+    name contains a secret keyword (token/password/passwd/secret/api_key/
+    apikey/auth, case-insensitive) replaced with ``***``. Normal flags and
+    values are returned unchanged (#460)."""
+    out = list(argv)
+    i = 0
+    while i < len(out):
+        arg = out[i]
+        if arg.startswith("-"):
+            flag, sep, _value = arg.partition("=")
+            if _SECRET_KEY_RE.search(flag):
+                if sep:
+                    out[i] = f"{flag}=***"
+                elif i + 1 < len(out):
+                    out[i + 1] = "***"
+        i += 1
+    return out
+
+
+def redact_structured(value: Any) -> Any:
+    """Recursively applies the text rule (`redact_url`) to every string, and
+    masks any dict value whose key contains a secret keyword (same list as
+    `redact_secret_args`) with ``***`` -- for JSON-like data (dict/list/str/
+    number/bool/None). Shared by the bus exchange hook (#457, a structured
+    message's string values) and the CLI call log (#460, its `json`/`text`)."""
+    if isinstance(value, str):
+        return redact_url(value)
+    if isinstance(value, dict):
+        return {k: ("***" if _SECRET_KEY_RE.search(k) else redact_structured(v))
+               for k, v in value.items()}
+    if isinstance(value, list):
+        return [redact_structured(v) for v in value]
+    return value
+
+
+@dataclass(frozen=True)
+class Exchange:
+    """One real bus exchange, for an opt-in observer (#457) — never invented:
+    built from exactly what a bus sent and got back, in its own protocol's
+    natural shape (SCPI text, a structured message, or bytes for a byte
+    transport), already sanitized by `record_exchange` before this is built
+    — raw bytes through `redact`, every string (loose or inside a
+    structured message) through the shared text/secret rule
+    (`redact_structured`), `address` through `redact_url`."""
+
+    bus_family: str
+    path: str
+    address: str
+    request: Any
+    response: Any
+
+
+def _clean_payload(value: Any) -> Any:
+    """CTO review on #457: the policy belongs here, the one place every bus
+    already calls, not copied into each bus (where 2 of 5 redacted and 3 did
+    not). `bytes` (I2C et al.) through `redact`; a raw `Op` sequence (a byte
+    transport's own request, unjoined -- joining is deferred to here, so a
+    bus with no sink active never does it) joins its `Write` data first,
+    then the same way; everything else through the shared structured text/
+    secret rule."""
+    from .transport import Op, Write
+    if isinstance(value, bytes):
+        return redact(value)
+    if isinstance(value, Sequence) and all(isinstance(o, Op) for o in value):
+        return redact(b"".join(o.data for o in value if isinstance(o, Write)))
+    return redact_structured(value)
+
+
+ExchangeSink = Callable[[Exchange], None]
+
+#: Off by default (#457): a bus checks this itself via `record_exchange` and
+#: costs nothing when no sink is set. The buses also run against real
+#: instruments, where an always-on exchange log would be a standing
+#: liability — this is never turned on except by something that opted in.
+_exchange_sink: contextvars.ContextVar[ExchangeSink | None] = contextvars.ContextVar(
+    "shal_exchange_sink", default=None)
+
+
+@contextlib.contextmanager
+def exchange_sink(sink: ExchangeSink):
+    """Opt-in hook (#457): while this is active, every real bus exchange
+    started in this context calls ``sink(exchange)`` right after it
+    completes — never before, and never for a call that raised. Nested use
+    replaces the sink for its own scope and restores the outer one on exit."""
+    token = _exchange_sink.set(sink)
+    try:
+        yield
+    finally:
+        _exchange_sink.reset(token)
+
+
+def record_exchange(bus_family: str, path: str, address: Any, request: Any,
+                    response: Any) -> None:
+    """A bus calls this right after a real exchange completes, with its own
+    RAW request/response (bytes, text, or a structured message) — never
+    pre-redacted by the caller. No-op unless `exchange_sink` is active,
+    checked FIRST so a bus pays nothing for this hot path when it is off
+    (CTO review on #457: redaction work must not run before that check).
+    Sanitizing is done here, once, so every bus gets it for free and
+    cannot forget it, the way 2 of 5 did when each bus redacted for
+    itself: `address` through `redact_url` (it is `${ENV}`-resolved, same
+    as every other log line these buses already clean), `request`/
+    `response` through `_clean_payload`."""
+    sink = _exchange_sink.get()
+    if sink is None:
+        return
+    sink(Exchange(bus_family=bus_family, path=path, address=redact_url(str(address)),
+                 request=_clean_payload(request), response=_clean_payload(response)))
 
 
 _RESERVED_KWARGS = frozenset({"exc_info", "stack_info", "stacklevel", "extra"})

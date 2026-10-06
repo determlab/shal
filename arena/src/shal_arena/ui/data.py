@@ -205,7 +205,10 @@ def run_payload(run_id: str, *, state_dir: str | Path = DEFAULT_STATE_DIR) -> di
     task = loaded.task
 
     instruments = [
-        {"address": str(i.address), "case": i.case, "drives": i.drives, "probe": i.probe}
+        {"address": str(i.address), "case": i.case, "drives": i.drives, "probe": i.probe,
+         # issue #457: the instrument's role, straight from the task yaml's
+         # own `drives:`/`probe:` field -- never hand-written text.
+         "role": f"drives {i.drives}" if i.drives is not None else f"probes {i.probe}"}
         for i in task.instruments
     ]
     # issue #406 follow-up: the rail's/temp point's own documented spec --

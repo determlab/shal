@@ -17,7 +17,7 @@ from typing import Any
 from .. import registry
 from ..driver import Driver
 from ..errors import HopError, LoadError
-from ..log import bus_logger, current_txn, redact_url
+from ..log import bus_logger, current_txn, record_exchange, redact_url
 from ..node import Node
 from ..transport import MessageTransport, Transport
 
@@ -98,6 +98,7 @@ class ScpiRawBus(Driver, Transport, MessageTransport):
                                delivered="no") from e
             if not query:                       # a write has no response
                 self.log.debug("write %r", cmd, event="exchange", addr=str(addr))
+                record_exchange("scpi_raw", self.host.path, addr, cmd, "")
                 return {"reply": ""}
             try:
                 reply = self._file.readline()
@@ -112,4 +113,6 @@ class ScpiRawBus(Driver, Transport, MessageTransport):
                                hop="scpi-raw", txn=current_txn.get(),
                                delivered="unknown")
             self.log.debug("query %r", cmd, event="exchange", addr=str(addr))
-            return {"reply": reply.decode("utf-8", errors="replace").strip()}
+            text = reply.decode("utf-8", errors="replace").strip()
+            record_exchange("scpi_raw", self.host.path, addr, cmd, text)
+            return {"reply": text}

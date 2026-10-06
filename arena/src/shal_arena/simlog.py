@@ -1,14 +1,27 @@
-"""The sim log (issue #312 Scope): every SCPI command the sim bus received
-during a run, with its time, in the same JSON-lines format no matter whether
-the exchange was driven from the `shal-arena`/`shal` CLI, MCP, or Python.
+"""The sim log (issue #312 Scope): every real exchange a run's buses made,
+with its time, in the same JSON-lines format no matter whether the exchange
+was driven from the `shal-arena`/`shal` CLI, MCP, or Python.
 
-It is captured at the bus's own structured record — ``shal,sim-scpi`` already
-logs every exchange as ``event="exchange"`` on the ``shal.bus.sim_scpi``
-logger (issue #10) — by attaching a `logging.Handler` only while a check is
-in flight, rather than threading a logger through each call site by hand.
-That is also why the format is uniform across modes: it is captured below
-the player's surface, not inside it, so nothing the player does (CLI flag,
-MCP host, raw Python) can change its shape.
+Captured at the bus layer itself (issue #457), not re-built or guessed in the
+UI: `record_for` turns on `shal.log.exchange_sink` -- the opt-in hook every
+bus checks after a real exchange completes -- only while a check is in
+flight, rather than threading a logger through each call site by hand. That
+is also why the format is uniform across modes: it is captured below the
+player's surface, not inside it, so nothing the player does (CLI flag, MCP
+host, raw Python) can change its shape. Off by default outside this `with`
+block, same as the hook itself (#457): a plain `shal` run never logs a
+payload.
+
+A SCPI exchange (`sim_scpi`/`scpi_raw`) keeps its original two kinds,
+``query``/``write`` (issue #10), told apart the same way `runner.raw_scpi`
+already does -- a command ending in ``?`` is a query -- now also carrying
+``reply`` (issue #457 round 2: a row with the command but not its answer
+missed the DoD's own "command AND answer"). Every other protocol
+(Modbus-shaped messages on `sim_msg`, bytes on `sim_i2c`/`i2c_cli`) is one
+kind, ``exchange``, carrying `bus_family`/`request`/`response` in its own
+natural shape: never invented, only what the bus really sent and got back,
+and already sanitized by `record_exchange` itself before it ever reaches
+this file -- nothing here redacts a second time.
 
 "An answer with no matching measurement in the log is disqualified"
 (`runner.answer`) reads this log back for a ``measure`` entry at a probe
@@ -22,14 +35,13 @@ earlier version disqualified on a missing ``query`` instead, which meant the
 measured, so a correctly-reasoned `open` answer was always disqualified).
 
 The bus's own structured record is still captured on top of that, the same
-way it always has (``query``/``write`` on a successful exchange, nothing on
-a failed one — issue #10's own logging, not anything built for this file):
-useful detail, but no longer what disqualification itself checks.
+way it always has (on a successful exchange, nothing on a failed one --
+the hook only ever fires right before a bus returns): useful detail, but
+no longer what disqualification itself checks.
 """
 from __future__ import annotations
 
 import json
-import logging
 import math
 import time
 from collections.abc import Iterator
@@ -37,32 +49,10 @@ from contextlib import contextmanager
 from pathlib import Path
 from typing import Any
 
-_LOGGER_NAME = "shal.bus.sim_scpi"
+from shal.log import Exchange
+from shal.log import exchange_sink as _exchange_sink
 
-
-class _JsonLinesHandler(logging.Handler):
-    """Appends one line per ``exchange`` record, tagged with the task-level
-    instrument ``address`` the caller is checking right now (not the sim
-    bus's own child address, which is internal to the harness and meaningless
-    to the player)."""
-
-    def __init__(self, path: Path, address: str) -> None:
-        super().__init__(level=logging.DEBUG)
-        self._path = path
-        self._address = address
-
-    def emit(self, record: logging.LogRecord) -> None:
-        if getattr(record, "event", None) != "exchange":
-            return
-        kind, cmd = record.args  # ("query"|"write", the scpi command text)
-        entry = {
-            "ts": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(record.created)),
-            "address": self._address,
-            "kind": kind,
-            "cmd": cmd,
-        }
-        with self._path.open("a", encoding="utf-8") as f:
-            f.write(json.dumps(entry) + "\n")
+_SCPI_FAMILIES = frozenset({"sim_scpi", "scpi_raw"})
 
 
 class SimLog:
@@ -74,25 +64,36 @@ class SimLog:
 
     @contextmanager
     def record_for(self, address: str) -> Iterator[None]:
-        """Attach the recorder for the duration of one `with` block — every
-        SCPI exchange the sim bus handles while it is open is appended,
-        tagged with ``address``. Touches the file on entry (issue #314: an
-        attempt that reaches no exchange at all — an unreachable instrument
-        refuses before the bus logs anything — must still leave a real log
-        path behind, not a path that only sometimes exists depending on how
-        the attempt went)."""
+        """Turn on the bus layer's opt-in exchange hook (`shal.log.
+        exchange_sink`, issue #457) for the duration of one `with` block —
+        every real exchange any bus makes while it is open is appended,
+        tagged with ``address`` (the task-level instrument address the
+        caller is checking right now, not the sim bus's own child address,
+        which is internal to the harness and meaningless to the player).
+        Touches the file on entry (issue #314: an attempt that reaches no
+        exchange at all — an unreachable instrument refuses before the bus
+        logs anything — must still leave a real log path behind, not a path
+        that only sometimes exists depending on how the attempt went)."""
         self.path.parent.mkdir(parents=True, exist_ok=True)
         self.path.touch(exist_ok=True)
-        logger = logging.getLogger(_LOGGER_NAME)
-        prev_level = logger.level
-        handler = _JsonLinesHandler(self.path, address)
-        logger.setLevel(logging.DEBUG)
-        logger.addHandler(handler)
-        try:
+
+        def _sink(exc: Exchange) -> None:
+            if exc.bus_family in _SCPI_FAMILIES:
+                # issue #10's original two kinds, kept: a command ending in
+                # "?" is a query, the same rule `runner.raw_scpi` already
+                # uses -- never guessed from whether the reply is empty.
+                # CTO review on #457 round 2: a write's `reply` is always
+                # "", but a query's real answer belongs on this row too --
+                # the DoD asks for command AND answer, and a reader
+                # comparing bus-layer rows to the UI must see it here.
+                kind = "query" if str(exc.request).strip().endswith("?") else "write"
+                self.append(address, kind, cmd=exc.request, reply=exc.response)
+            else:
+                self.append(address, "exchange", bus_family=exc.bus_family,
+                           request=exc.request, response=exc.response)
+
+        with _exchange_sink(_sink):
             yield
-        finally:
-            logger.removeHandler(handler)
-            logger.setLevel(prev_level)
 
     def mark_measured(self, address: str) -> None:
         """A neutral marker that a measurement was attempted at ``address``

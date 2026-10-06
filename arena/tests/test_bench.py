@@ -211,7 +211,8 @@ def test_both_sides_produce_a_sim_log_in_the_same_format(tmp_path: Path) -> None
 
     with_query = next(ln for ln in with_lines if ln["kind"] == "query")
     without_query = next(ln for ln in without_lines if ln["kind"] == "query")
-    assert set(with_query) == set(without_query) == {"ts", "address", "kind", "cmd"}
+    # issue #457: a query's own reply, alongside the command
+    assert set(with_query) == set(without_query) == {"ts", "address", "kind", "cmd", "reply"}
     assert with_query["cmd"] == without_query["cmd"] == "MEAS:VOLT:DC?"
     assert with_query["address"] == without_query["address"] == "dmm0"
 
