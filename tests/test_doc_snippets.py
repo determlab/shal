@@ -266,3 +266,24 @@ def test_a_bad_install_line_fails_naming_the_block_and_its_line_number(
     with pytest.raises(StepFailed, match=r"line 3: `pip install nonexistent-pkg-xyz` "
                                          r"exited 1, expected 0"):
         run_doc_steps(steps, tmp_path / "venv", tmp_path)
+
+
+# --- #384: the virtual-bench sample's agent path is named on both docs' first
+# screen, not buried where a cold agent reading only the top of either file would
+# miss it. README's Quick Start starts at line ~194 (the issue's own anchor) so "its
+# first screen" here is the doc-test runner's own notion of one (title through the
+# heading right after Quick Start, `first_screen_end`); AGENTS.md has no such
+# section to anchor to, and the mention sits before "## First success" (line ~15-40),
+# comfortably inside a literal first 60 lines.
+
+def test_readme_first_screen_names_the_virtual_bench_sample_and_the_arena_install():
+    text = README.read_text(encoding="utf-8")
+    first_screen = "\n".join(text.splitlines()[:first_screen_end(text)])
+    assert "shal docs --sample virtual-bench --to" in first_screen
+    assert "pip install shal-arena" in first_screen
+
+
+def test_agents_md_first_60_lines_name_the_virtual_bench_sample_and_the_arena_install():
+    first_60 = "\n".join(AGENTS.read_text(encoding="utf-8").splitlines()[:60])
+    assert "shal docs --sample virtual-bench --to" in first_60
+    assert "pip install shal-arena" in first_60

@@ -305,6 +305,12 @@ gate stops it. Run it in a terminal and it asks *you* for permission. Every
 sample runs in CI on Linux and Windows from a clean install, so what you read
 here is what runs.
 
+**The fuller bench.** A simulated PSU and DMM, scored by
+[pytest-shal](https://github.com/determlab/pytest-shal):
+`shal docs --sample virtual-bench --to bench` **(main only, not in the PyPI release yet)**
+writes it out, then `python bench/run_bench.py` runs it and prints one line of JSON.
+For scored, agent-driven practice on top of it: `pip install shal-arena`.
+
 `shal docs` prints the authoring guide that ships inside the package — how to
 add your own device, with no network and nothing to clone.
 

@@ -10,9 +10,11 @@ instead (the "no index during the story" rule holds by construction, not by
 watching a log).
 
 This script then plays the same two demos a buyer would — the virtual bench
-(``examples/demos/virtual-bench``) and SHAL Arena (``arena/``) — entirely
-through that venv's own ``python``, and writes one ``evidence.json``: which
-OS, which Python, which commit of each repo, and pass/fail for every check.
+(the ``virtual-bench`` sample packaged inside pyshal, written out with ``shal
+docs --sample virtual-bench --to <dir>``, #384) and SHAL Arena (``arena/``) —
+entirely through that venv's own ``python`` (and its own ``shal``), and writes
+one ``evidence.json``: which OS, which Python, which commit of each repo, and
+pass/fail for every check.
 
 Two kinds of function live here:
 
@@ -30,6 +32,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -37,12 +40,11 @@ from pathlib import Path
 from typing import Any
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
-VIRTUAL_BENCH_DIR = REPO_ROOT / "examples" / "demos" / "virtual-bench"
 ARENA_TASKS_DIR = REPO_ROOT / "arena" / "src" / "shal_arena" / "tasks"
 ARENA_TASK_LEVELS = ["easy", "medium", "hard"]
 
-# shal#300's Unreachable exit code; run_bench.py's own vocabulary
-# (examples/demos/virtual-bench/run_bench.py).
+# shal#300's Unreachable exit code; the virtual-bench sample's run_bench.py's
+# own vocabulary.
 EXIT_PASS = 0
 EXIT_UNREACHABLE = 4
 
@@ -136,22 +138,42 @@ def _argv_str(argv: list[str]) -> str:
     return " ".join(argv)
 
 
-def run_virtual_bench_checks(venv_python: str) -> list[dict[str, Any]]:
+def _venv_shal(venv_python: str) -> str:
+    """The `shal` console script next to `venv_python` — the clean venv's own
+    install, never one found elsewhere on PATH."""
+    bindir = Path(venv_python).resolve().parent
+    shal = shutil.which("shal", path=str(bindir))
+    if shal is None:
+        raise RuntimeError(f"no `shal` next to {venv_python} in {bindir}")
+    return shal
+
+
+def run_virtual_bench_checks(venv_python: str, bench_dir: Path) -> list[dict[str, Any]]:
+    """Writes the `virtual-bench` sample out with the venv's own `shal` (#384 — no
+    repo checkout path involved), then plays it exactly as a buyer would."""
+    shal = _venv_shal(venv_python)
+    write_argv = [shal, "docs", "--sample", "virtual-bench", "--to", str(bench_dir)]
+    w = subprocess.run(write_argv, stdin=subprocess.DEVNULL, capture_output=True,
+                       text=True, timeout=60)
+    if w.returncode != 0:
+        raise RuntimeError(f"{_argv_str(write_argv)} exited {w.returncode}: {w.stderr.strip()}")
+
     pass_argv = [venv_python, "run_bench.py"]
-    doc, ec = _run_json(venv_python, ["run_bench.py"], cwd=VIRTUAL_BENCH_DIR)
+    doc, ec = _run_json(venv_python, ["run_bench.py"], cwd=bench_dir)
     checks = [check_virtual_bench_pass(
-        doc, ec, f"cd {VIRTUAL_BENCH_DIR} && {_argv_str(pass_argv)}")]
+        doc, ec, f"{_argv_str(write_argv)} && cd {bench_dir} && {_argv_str(pass_argv)}")]
 
     unplug_argv = [venv_python, "run_bench.py", "--unplug", "dmm"]
     env = dict(os.environ, SHAL_SIM_UNPLUG="dmm")
-    proc = subprocess.run(unplug_argv, cwd=VIRTUAL_BENCH_DIR, env=env,
+    proc = subprocess.run(unplug_argv, cwd=bench_dir, env=env,
                           capture_output=True, text=True, timeout=120)
     try:
         doc2 = json.loads(proc.stdout)
     except json.JSONDecodeError:
         doc2 = {"ok": False, "error": f"not JSON: stdout={proc.stdout!r} stderr={proc.stderr!r}"}
     checks.append(check_virtual_bench_unplug_dmm(
-        doc2, proc.returncode, f"cd {VIRTUAL_BENCH_DIR} && {_argv_str(unplug_argv)}"))
+        doc2, proc.returncode,
+        f"{_argv_str(write_argv)} && cd {bench_dir} && {_argv_str(unplug_argv)}"))
     return checks
 
 
@@ -232,8 +254,11 @@ def main(argv: list[str] | None = None) -> int:
         out_path.write_text(json.dumps(evidence, indent=2), encoding="utf-8")
 
     venv_py = args.venv_python
-    run_step("virtual_bench", f"cd {VIRTUAL_BENCH_DIR} && {venv_py} run_bench.py",
-             run_virtual_bench_checks, venv_py)
+    bench_dir = state_dir / "virtual-bench"
+    run_step("virtual_bench",
+             f"shal docs --sample virtual-bench --to {bench_dir} && "
+             f"cd {bench_dir} && {venv_py} run_bench.py",
+             run_virtual_bench_checks, venv_py, bench_dir)
     for level in ARENA_TASK_LEVELS:
         run_step(f"arena_{level}_score_file",
                  f"{venv_py} -m shal_arena.cli run {ARENA_TASKS_DIR / (level + '.yaml')} "

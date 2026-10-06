@@ -35,6 +35,19 @@ All notable changes to this project are documented here. The format follows
   other actuator and ask for approval. Sonos reads stay `none`.
 
 ### Added
+- **The virtual bench ships as a sample: `shal docs --sample virtual-bench --to DIR`
+  (#384).** `examples/demos/virtual-bench` is in no wheel, so a cold agent with only
+  the installed package couldn't find it; it's now also `src/shal/samples/virtual-bench/`
+  (kept byte-identical to the demo by a test), reached the same way as `hello`/`jig`/
+  `limits`. A sample's entry file is `run.py` if present, else the one `run_*.py` in
+  its folder (`run_bench.py` here, never renamed), so `--samples --json`'s `files`
+  and the printed run command both lead with it. `dev/e2e/story.py`'s D2 story now
+  writes the bench out with the venv's own `shal` instead of a repo checkout path.
+  `dev/samples/run_samples.py` gained an `expect.json` key, `needs_import`: a sample
+  needing more than the wheel itself (`virtual-bench` needs the separate, not-yet-
+  on-PyPI `pytest-shal` plugin) is skipped, not failed, when that import isn't in the
+  target venv. README's Quick Start and AGENTS.md's first screen both link to it,
+  alongside `pip install shal-arena`.
 - **`RC_WHEELS` also runs the main-only doc blocks (#361).** The doc tests
   (#342) skip a fenced block whose prose carries `<!-- doc-test: skip REASON
   -->`; one such block is README's `shal docs --samples` / `--sample`, marked
