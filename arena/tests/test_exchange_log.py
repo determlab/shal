@@ -158,10 +158,35 @@ def test_each_instrument_shows_its_role_from_the_task_yaml(tmp_path: Path) -> No
     run_id = start_run(str(RELAY_RAIL_TASK), seed=1, state_dir=tmp_path)["run_id"]
     payload = run_payload(run_id, state_dir=tmp_path)
     by_addr = {i["address"]: i["role"] for i in payload["instruments"]}
+    # the agent-facing JSON (the raw drives:/probe: fields, and this role
+    # string built from them) is unchanged by the scope add below.
     assert by_addr["psu0"] == "drives card.vin"
     assert by_addr["dmm0"] == "probes card.tp_3v3"
     assert by_addr["relay0"] == "drives card.vin"
     assert by_addr["temp0"] == "probes card.tp_reg_temp"
+
+
+def test_role_text_data_matches_the_pages_plain_words_rule(tmp_path: Path) -> None:
+    """issue #457 scope add: the page renders the role as plain words --
+    "powers VIN", "measures the 3V3 rail", "measures the regulator
+    temperature" -- built client-side from `drives`/`probe` plus
+    `payload.rails`/`payload.temp_points`. No JS engine here, so this
+    proves the DATA the JS's own rule (checked below, in `_SCRIPT`) needs
+    is present and correct: the rail's `name` is already uppercase
+    ("3V3"), the temp point's `name` is "regulator", and both `test_point`
+    values match what `probe` names."""
+    from shal_arena.ui.page import _SCRIPT
+
+    run_id = start_run(str(RELAY_RAIL_TASK), seed=1, state_dir=tmp_path)["run_id"]
+    payload = run_payload(run_id, state_dir=tmp_path)
+    rail = next(r for r in payload["rails"] if r["test_point"] == "tp_3v3")
+    assert rail["name"] == "3V3"
+    temp = next(t for t in payload["temp_points"] if t["test_point"] == "tp_reg_temp")
+    assert temp["name"] == "regulator"
+
+    assert "powers ${name.toUpperCase()}" in _SCRIPT
+    assert "measures the ${rail.name} rail" in _SCRIPT
+    assert "measures the ${temp.name} temperature" in _SCRIPT
 
 
 # --------------------------------------------------------------------------- #

@@ -432,15 +432,34 @@ function stepRowHtml(e, i) {
 // moved out of its own timeline into this section or relabeled as one of
 // these two. Everything the agent actually did stays in the timeline, in
 // its own order, in full.
-// issue #457: each instrument's role, straight from the task yaml's own
-// `drives:`/`probe:` field (`payload.instruments[].role`, built server
-// side) -- never hand-written text, and no diagram change (the card,
-// visual and layout stay with #447).
+// issue #457 (scope added): the page shows each instrument's role as
+// plain words BUILT from the task yaml's own `drives:`/`probe:` field and
+// the rail/temp-point data already in the payload -- "powers VIN",
+// "measures the 3V3 rail", "measures the regulator temperature" -- never
+// hand-written text. The agent-facing JSON (`payload.instruments[].role`,
+// `drives`/`probe` themselves) is untouched; this is display only, and no
+// diagram change (the card, visual and layout stay with #447).
+function instrumentRoleText(payload, inst) {
+  if (inst.drives) {
+    const name = inst.drives.split(".")[1] || inst.drives;
+    return `powers ${name.toUpperCase()}`;
+  }
+  if (inst.probe) {
+    const tp = inst.probe.split(".")[1] || inst.probe;
+    const rail = (payload.rails || []).find(r => r.test_point === tp);
+    if (rail) return `measures the ${rail.name} rail`;
+    const temp = (payload.temp_points || []).find(t => t.test_point === tp);
+    if (temp) return `measures the ${temp.name} temperature`;
+  }
+  return inst.role;   // fallback: the raw server-built text, never blank
+}
+
 function renderRoles(payload) {
   const section = document.getElementById("roles-section");
   const rows = payload.instruments.map(i =>
     `<p class="plain-line" style="margin-left:0">`
-    + `<span class="mono">${escapeHtml(i.address)}</span> ${escapeHtml(i.role)}</p>`
+    + `<span class="mono">${escapeHtml(i.address)}</span> `
+    + `${escapeHtml(instrumentRoleText(payload, i))}</p>`
   ).join("");
   section.innerHTML = rows;
 }
