@@ -2,8 +2,10 @@
 
 A person watches the whole story run once: a virtual bench pass, an
 unplugged DMM giving an error, a 30 V request blocked by the PSU's own
-declared limit, the three SHAL Arena tasks (easy, medium, hard), then the
-rail benchmark run ten times with the gate on and with the gate off.
+declared limit, the three SHAL Arena tasks (easy, medium, hard — each one
+measured for real and answered from that reading, not a blind guess), a
+result card for the hard run, then the rail benchmark run ten times with
+the gate on and with the gate off.
 
 ## Install
 
@@ -13,9 +15,15 @@ Two wheels, nothing else — this script never touches `pytest-shal`:
 pip install pyshal shal-arena
 ```
 
-(Until both are on PyPI, use the release-candidate build instead:
-`pip install git+https://github.com/determlab/shal` and the matching
-`shal-arena` checkout — see the repo root `AGENTS.md`.)
+**(main only, not in the PyPI release yet)** — PyPI's `pyshal` is still
+0.3.0 and has no `shal-arena` release at all. Until both are released, use
+the release-candidate wheels instead (`.github/workflows/rc-wheels.yml`
+builds `rc-pyshal` and `rc-shal-arena` from `main` on every push):
+
+```bash
+pip install "pyshal @ git+https://github.com/determlab/shal" \
+            "shal-arena @ git+https://github.com/determlab/shal#subdirectory=arena"
+```
 
 ## Run it
 
@@ -25,7 +33,9 @@ python run_story.py
 
 A short pause and one plain line precede each step, then a one-word (or
 short) outcome. No claim about speed or score — a step either did what it
-was there to show, or it did not.
+was there to show, or it did not; the arena steps report `correct`,
+`wrong` or `disqualified`, read from the answer itself, never a bare "it
+ran".
 
 ```
 Simulated instruments only. Nothing here touches real hardware.
@@ -34,7 +44,17 @@ Setting the bench power supply to 3.3 volts and reading it back on the simulated
 Unplugging the simulated multimeter and reading it again.
   -> error
 ...
+Running the easy arena task: measuring the rail and answering from it.
+  -> correct (ok)
+...
+Writing the result card for the hard run.
+  -> wrote /tmp/shal-story-xxxxxxxx/cards/run-....card.html
 ```
+
+The script writes its run state (including that result card) under a
+directory of its own in the OS temp location, printed at the end of a
+plain-mode run — it is not deleted when the script exits, so the card is
+still there to open afterward.
 
 ## Agent path
 
@@ -43,14 +63,18 @@ python run_story.py --pause 0 --json
 ```
 
 prints one JSON document on stdout, right after that same fixed first line:
-`{"ok": <bool>, "steps": [{"step", "line", "result"}, ...]}`, in order.
+`{"ok": <bool>, "state_dir": <path>, "steps": [{"step", "line", "result"}, ...]}`,
+in order.
 
 ## What's here
 
 | File | Role |
 |---|---|
-| `run_story.py` | the one script: no install of its own, reuses `examples/demos/virtual-bench/`'s topology through `shal`'s own Python API (not `run_bench.py`, which needs the unpublished `pytest-shal`) and SHAL Arena's `shal_arena` package |
-| `story.gif` | one real run, recorded |
+| `run_story.py` | the one script: no install of its own, embeds the `examples/demos/virtual-bench/bench.yaml` device tree (that example ships in no wheel yet — issue #384) and reads SHAL Arena's tasks/cards from the installed `shal-arena` package itself (`importlib.resources`, never a checkout path), so running this proves the wheel, not the source tree |
+| `story.gif` | one real run, recorded: `python run_story.py --pause 1.2`'s real stdout, captured with its real per-line timing and rendered verbatim into the GIF (durations clamped to stay watchable; no line's text was altered) |
 
 `tests/test_story_script.py` (repo root) runs this script with
-`--pause 0 --json` and checks every step's shape.
+`--pause 0 --json`, checks every step's shape, and separately unit-tests
+each pure `check_*` function (a step whose JSON disagrees with what it
+claims must flip the script's exit code to 1 — the arena steps' own
+`correct`/`disqualified` fields included).
