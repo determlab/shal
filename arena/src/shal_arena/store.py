@@ -24,7 +24,7 @@ from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import Any
 
-from .errors import LockTimeout, RunClosed, UnknownRun
+from .errors import FileBusy, LockTimeout, RunClosed, UnknownRun
 
 #: issue #436 CTO review: a lock that never gives up can hang a whole run on
 #: one stuck process (crashed mid-write, a debugger attached to it) --
@@ -43,14 +43,20 @@ _IO_RETRY_TIMEOUT_S = 2.0
 DEFAULT_STATE_DIR = ".shal-arena"
 
 
-def _retry_on_permission_error(fn, *, timeout: float = _IO_RETRY_TIMEOUT_S):
+def _retry_on_permission_error(fn, *, path: Path, timeout: float = _IO_RETRY_TIMEOUT_S):
+    """issue #449: past the deadline, a raw `PermissionError` would reach the
+    CLI as a traceback with no fix. Wrap it in `FileBusy`, naming `path` and
+    what to do, keeping the original as `__cause__` (`raise ... from err`)."""
     deadline = time.monotonic() + timeout
     while True:
         try:
             return fn()
-        except PermissionError:
+        except PermissionError as err:
             if time.monotonic() >= deadline:
-                raise
+                raise FileBusy(
+                    f"{path}: another program has the run file open; close it and retry",
+                    fix="close whatever program has the run file open, then run the "
+                        "command again") from err
             time.sleep(0.005)
 
 
@@ -269,7 +275,7 @@ class RunStore:
         tmp_path = path.with_suffix(path.suffix + f".{secrets.token_hex(4)}.tmp")
         tmp_path.write_text(json.dumps(doc, indent=2), encoding="utf-8")
         try:
-            _retry_on_permission_error(lambda: os.replace(tmp_path, path))
+            _retry_on_permission_error(lambda: os.replace(tmp_path, path), path=path)
         finally:
             tmp_path.unlink(missing_ok=True)
 
@@ -282,7 +288,7 @@ class RunStore:
                     "run_id it returns")
         # issue #436 CTO review round 3: the same reader-vs-os.replace
         # window applies to a plain read -- retry it too.
-        text = _retry_on_permission_error(lambda: path.read_text(encoding="utf-8"))
+        text = _retry_on_permission_error(lambda: path.read_text(encoding="utf-8"), path=path)
         doc = json.loads(text)
         tiles = {addr: Tile(**t) for addr, t in doc.pop("tiles", {}).items()}
         return RunState(tiles=tiles, **doc)
