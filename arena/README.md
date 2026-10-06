@@ -362,6 +362,13 @@ Issue #312 adds the rest of what it takes to actually score a run:
   fault into the sim: `low_voltage`/`noise` shift or add ripple to the
   reading, `open` sets `fault: unplugged` (the same sim-only mechanism
   `shal` core ships for issue #304) so the instrument is simply unreachable.
+  `noise`'s own ripple sample is seeded from the run's own seed mixed with
+  the run's own `turns` count at the moment of that call (issue #431) — so
+  a replay of a `noise` run depends on the FULL call order, not just which
+  calls were measurements: `check-driver` and `drive` also add a turn
+  (issue #436), and reordering any of them changes every `noise` reading
+  from that point on, even though only `measure`/`call` write to the sim
+  log at all.
 - **`measure` — the player's own reading.** `check-driver` only validates
   your driver (every player runs it, pass or fail, to light the tile); it
   never touches the sim log. `shal-arena measure` is the deliberate act of
