@@ -1,5 +1,5 @@
 """Result card & replay (issue #315 Scope): one local HTML file, made at the
-end of a run, reading only the run record (`<run_id>.record.json`) and score
+end of a run, reading only the run record (`<run_id>.arena-record.json`) and score
 file (`<run_id>.score.json`) — the same two files the issue's Agent path
 tells an agent to read directly with `--json`, never a third source and
 never anything added. Works offline: no outside fonts or scripts, and the
@@ -7,7 +7,7 @@ only network reference anywhere in the page is the `github.com/determlab/shal`
 link `_card_html` renders (`test_card_page.py` greps for exactly that).
 
 DoD 4 ("no hint of the fault before the run ends") holds structurally here,
-not by a redaction pass: `load_card_data` reads `<run_id>.record.json` and
+not by a redaction pass: `load_card_data` reads `<run_id>.arena-record.json` and
 `<run_id>.score.json`, and neither file exists until `shal-arena answer`
 closes the run and writes them (`runner.answer`, `store.answer`) — so there
 is no "early" card this module could ever build with the fault in it. Call
@@ -87,7 +87,7 @@ def _timeline(run_id: str, store: RunStore) -> list[dict[str, Any]]:
 
 def load_card_data(run_id: str, *, state_dir: str | Path = DEFAULT_STATE_DIR) -> CardData:
     """Read exactly the two files issue #315's Agent path names
-    (`<run_id>.record.json`, `<run_id>.score.json`), plus the sim log and the
+    (`<run_id>.arena-record.json`, `<run_id>.score.json`), plus the sim log and the
     public run state only to reconstruct the replay timeline — never
     anything that could carry the fault before this run closed."""
     store = RunStore(state_dir)

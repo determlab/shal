@@ -2,7 +2,7 @@
 #406). Reads only this run's own files: the public state (`<id>.json`), the
 sim log (`<id>.simlog.jsonl`), and -- only once the run is closed -- the
 record and score files. That last rule is structural, the same way
-`replay/card.py` already holds it: `record.json`/`score.json` are read only
+`replay/card.py` already holds it: `arena-record.json`/`score.json` are read only
 when `state.status == "closed"`, and nothing before that point ever touches
 them, so there is no path through this module that could leak the fault
 before the run ends.

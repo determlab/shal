@@ -325,7 +325,7 @@ bench (PSU → card → DMM, the rail drawn with its live value), a timeline of
 every call, and a verdict bar the moment the run closes. It polls
 `GET /api/run/<run-id>` (the same JSON the page itself renders from) once a
 second; `--port 0` picks a free port and prints the URL. Nothing about the
-hidden fault is ever in either response before the run closes — `record.json`
+hidden fault is ever in either response before the run closes — `arena-record.json`
 and `score.json` are only read once `status` is `closed`, same discipline
 `replay/card.py` already holds.
 
@@ -385,7 +385,7 @@ Issue #312 adds the rest of what it takes to actually score a run:
   `faults_caught`, `false_fails`, `error_fail_correct`, `duration_s`,
   `turns`, `gate_stops`, `schema_version`, `game_version`,
   `record_sha256`), validated against `shal_arena.score.SCORE_SCHEMA`;
-  `record_sha256` is the sha256 of `<run_id>.record.json`'s own bytes.
+  `record_sha256` is the sha256 of `<run_id>.arena-record.json`'s own bytes.
 
 Issue #313 ships the damage model and the generic card simulator
 (`card_sim`), and `shal-arena drive` (the Agent path to it).
