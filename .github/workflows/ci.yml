@@ -68,7 +68,15 @@ jobs:
     # without this job CI would be green on an arena regression. Installs pyshal
     # from this checkout (editable) first so shal-arena's `pyshal>=0.4.0,<0.5`
     # dependency resolves to this commit, not a PyPI release.
-    runs-on: ubuntu-latest
+    #
+    # issue #437: ubuntu-only let a Windows-only regression (the #436 file
+    # lock, path-separator handling, ...) go green here and only fail for a
+    # player on their own machine.
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
