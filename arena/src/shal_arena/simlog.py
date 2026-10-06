@@ -108,6 +108,20 @@ class SimLog:
         with self.path.open("a", encoding="utf-8") as f:
             f.write(json.dumps(entry) + "\n")
 
+    def mark_reading(self, address: str, value: float, unit: str | None) -> None:
+        """issue #406 follow-up (the demo page): the actual number a
+        successful read returned, logged AFTER `mark_measured`'s neutral
+        marker and only on success -- never written for a failed read
+        (`take_measurement`'s own docstring: a failure is "never written to
+        the sim log ... beyond that one neutral marker"), so this entry's
+        mere presence already tells a reader the read succeeded, without
+        needing to say anything about why one might be missing."""
+        self.path.parent.mkdir(parents=True, exist_ok=True)
+        entry = {"ts": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+                 "address": address, "kind": "reading", "value": value, "unit": unit}
+        with self.path.open("a", encoding="utf-8") as f:
+            f.write(json.dumps(entry) + "\n")
+
     def entries(self) -> list[dict[str, Any]]:
         if not self.path.is_file():
             return []

@@ -17,14 +17,7 @@ from typing import Any
 from ..errors import ArenaError
 from ..store import DEFAULT_STATE_DIR
 from .data import run_payload
-from .page import (  # noqa: F401 - reused verbatim
-    _BENCH_SVG,
-    _SCRIPT,
-    _STYLE,
-    REPO_URL,
-    SAFETY_LINE,
-    safe_json,
-)
+from .page import _SCRIPT, _shell, safe_json
 
 
 class RunNotFinished(ArenaError):
@@ -76,51 +69,22 @@ def render_export_page(payload: dict[str, Any], *, agent: str | None = None) -> 
         "%Y-%m-%dT%H:%M:%SZ", time.gmtime()))[:10]
     label = _label(agent, date)
     payload_json = safe_json(payload)
-    body = f"""<!doctype html>
-<html lang="en">
-<head>
-<meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
-<title>shal-arena &middot; Watch replay</title>
-<style>{_STYLE}
-.export-label {{ background: var(--panel); color: var(--text); font-size: 13px;
-  font-weight: 700; text-align: center; padding: 10px 16px; border-bottom: 1px solid var(--line); }}
-</style>
-</head>
-<body>
-<div class="export-label">{label}</div>
-<div class="wrap">
-  <div class="badge-row" id="badge-row"><span class="dot"></span> Replay of a recorded run</div>
-  <header>
-    <div class="title" id="title"></div>
-    <div class="sub" id="sub"></div>
-  </header>
-  <div class="verdict-bar" id="verdict-bar"></div>
-  <div class="section-label">Bench</div>
-  <div class="bench">{_BENCH_SVG}</div>
-  <div class="section-label">Timeline</div>
-  <div class="timeline" id="timeline-list"></div>
-  <div id="result-section"></div>
-  <footer>{SAFETY_LINE}
-    &middot; <span class="run-id mono" id="run-id"></span>
-    &middot; <a href="{REPO_URL}">github.com/determlab/shal</a>
-  </footer>
-</div>
-<script id="run-data" type="application/json">{payload_json}</script>
-<script>{_SCRIPT}
-{_EXPORT_SCRIPT}
-startExport(JSON.parse(document.getElementById('run-data').textContent));</script>
-</body>
-</html>
-"""
-    return body
+    shell = _shell(payload["run_id"], banner=label)
+    script_tag = (
+        f'<script id="run-data" type="application/json">{payload_json}</script>\n'
+        f"<script>{_SCRIPT}\n{_EXPORT_SCRIPT}\n"
+        f"startExport(JSON.parse(document.getElementById('run-data').textContent));</script>\n"
+    )
+    return shell.replace("</body>", script_tag + "</body>")
 
 
 def build_export(run_id: str, *, state_dir: str | Path = DEFAULT_STATE_DIR,
-                 agent: str | None = None) -> str:
+                 agent: str | None = None,
+                 drivers: dict[str, dict[str, Any]] | None = None) -> str:
     payload = run_payload(run_id, state_dir=state_dir)
     if not payload["closed"]:
         raise RunNotFinished(
             f"run {run_id!r} is not finished yet; export plays back a closed run only",
             fix=f"close it first: shal-arena answer {run_id} <value> --json")
+    payload["drivers"] = drivers or {}
     return render_export_page(payload, agent=agent)

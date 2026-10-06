@@ -15,6 +15,7 @@ payload, played back as an animation instead of live-polled.
 """
 from __future__ import annotations
 
+import html
 import json
 from typing import Any
 
@@ -165,13 +166,13 @@ function escapeHtml(s) {
 
 const KIND_LABEL = {
   check: "Checked driver", measure: "Measured", query: "Read", write: "Wrote",
-  refused: "Tried to set", protection: "Set", damage: "Set",
+  refused: "Tried to set", protection: "Set", damage: "Set", reading: "Measured",
 };
 
 function stepTitle(e) {
   const addr = e.address || "";
   if (e.kind === "check") return `Checked driver on ${addr}`;
-  if (e.kind === "measure") return `Measured ${addr}`;
+  if (e.kind === "reading" || e.kind === "measure") return `Measured ${addr}`;
   if (e.kind === "query") return `Read ${addr}`;
   if (e.kind === "write") return `Wrote ${addr}`;
   if (e.kind === "refused") {
@@ -190,8 +191,30 @@ function stepDetail(e) {
   if (e.kind === "refused") return "nothing was sent — this would damage the card";
   if (e.kind === "protection") return "protection tripped";
   if (e.kind === "damage") return "card destroyed";
+  if (e.kind === "reading") {
+    const unit = e.detail.unit ? ` ${e.detail.unit}` : "";
+    return `${e.detail.value}${unit}`;
+  }
   if (e.kind === "measure") return "attempted";
   return "";
+}
+
+// a bare "measure" marker paired with a later "reading" at the same
+// address is one real step, told by the reading's own row -- not two.
+function hasPairedReading(entries, i) {
+  // "measure" (the neutral marker) and "query" (the raw bus exchange) are
+  // both the SAME real read a "reading" entry already names with its
+  // actual value -- one row, not three.
+  const e = entries[i];
+  if (e.kind !== "measure" && e.kind !== "query") return false;
+  return entries.some(o => o.kind === "reading" && o.address === e.address);
+}
+
+function latestReading(entries, address) {
+  for (let i = entries.length - 1; i >= 0; i--) {
+    if (entries[i].kind === "reading" && entries[i].address === address) return entries[i];
+  }
+  return null;
 }
 
 function renderBadge(payload) {
@@ -233,6 +256,25 @@ function renderVerdict(payload) {
     + `<span class="reason">${reason}</span></div>`;
 }
 
+// issue #406 body: "<level> level, N instruments, datasheet written by us"
+// -- plain text, always visible; the 4-instrument bench caption is the one
+// case with its own wording (CTO 2026-10-07), else the two-instrument one,
+// else a "coming" placeholder for anything else.
+function renderPlainLine(payload) {
+  const n = payload.instruments.length;
+  document.getElementById("plain-line").textContent =
+    `${payload.level} level, ${n} instrument${n === 1 ? "" : "s"}, datasheet written by us`;
+  const label = document.getElementById("bench-label");
+  if (n === 4) {
+    label.textContent = "The bench: power supply, multimeter, relay and temperature "
+      + "sensor, around one card. Four instruments, three protocols.";
+  } else if (n === 2) {
+    label.textContent = "The bench: power supply, multimeter, card.";
+  } else {
+    label.textContent = "A four-instrument run is on its way.";
+  }
+}
+
 function renderBench(payload) {
   const drives = payload.instruments.find(i => i.drives);
   const probe = payload.instruments.find(i => i.probe);
@@ -240,12 +282,15 @@ function renderBench(payload) {
   document.getElementById("psu-value").textContent =
     psuVal === undefined || psuVal === null ? "—" : `${psuVal} V`;
 
-  const measured = payload.timeline.some(e =>
+  const reading = probe ? latestReading(payload.timeline, probe.address) : null;
+  const attempted = payload.timeline.some(e =>
     probe && e.address === probe.address && (e.kind === "measure" || e.kind === "query"));
-  document.getElementById("dmm-value").textContent = measured ? "measured" : "—";
+  const valueText = reading ? `${reading.detail.value}${reading.detail.unit ?
+    " " + reading.detail.unit : ""}` : (attempted ? "measured" : "—");
+  document.getElementById("dmm-value").textContent = valueText;
   document.getElementById("rail-label").textContent =
     probe ? probe.probe.replace("card.", "") : "rail";
-  document.getElementById("rail-value").textContent = measured ? "measured" : "—";
+  document.getElementById("rail-value").textContent = valueText;
 
   const cardBox = document.getElementById("card-box");
   const health = document.getElementById("card-health");
@@ -272,31 +317,68 @@ function flash(el) {
 
 let lastRenderedCount = 0;
 
+function stepRowHtml(e, i) {
+  const n = i + 1;
+  const title = escapeHtml(stepTitle(e));
+  const detail = escapeHtml(stepDetail(e));
+  const pill = e.kind === "refused" ? '<div class="pill refused">refused</div>'
+    : (e.kind === "protection" || e.kind === "damage")
+      ? '<div class="pill sent">sent</div>' : "";
+  return `<div class="step" data-i="${i}">`
+    + `<div class="n">${n}</div><div class="body"><div class="what">${title}</div>`
+    + `<div class="detail">${detail}</div></div>${pill}</div>`;
+}
+
+// issue #406 body layout: a scripted 30 V ask (always refused by the gate)
+// never belongs to the agent's own replay -- it goes in the separate "Two
+// more checks, scripted" section at the end, caption 5. Everything else
+// the agent actually did stays in the timeline, in order.
 function renderTimeline(payload) {
   const list = document.getElementById("timeline-list");
   const entries = payload.timeline;
-  list.innerHTML = entries.map((e, i) => {
-    const n = i + 1;
-    const title = escapeHtml(stepTitle(e));
-    const detail = escapeHtml(stepDetail(e));
-    const isStop = e.kind === "refused";
-    const pill = e.kind === "refused" ? '<div class="pill refused">refused</div>'
-      : (e.kind === "protection" || e.kind === "damage")
-        ? '<div class="pill sent">sent</div>' : "";
-    return `<div class="step${isStop ? " step-stop" : ""}" data-i="${i}">`
-      + `<div class="n">${n}</div><div class="body"><div class="what">${title}</div>`
-      + `<div class="detail">${detail}</div></div>${pill}</div>`;
-  }).join("");
+  const agentSteps = entries.filter((e, i) =>
+    e.kind !== "refused" && !hasPairedReading(entries, i));
+  list.innerHTML = agentSteps.map((e, i) => stepRowHtml(e, i)).join("");
 
   if (entries.length > lastRenderedCount) {
     const newest = entries[entries.length - 1];
-    if (newest.kind === "refused") {
-      const row = list.querySelector(`[data-i="${entries.length - 1}"]`);
-      if (row) flash(row);
-      flash(document.getElementById("wire-psu-card"));
-    }
+    if (newest.kind === "refused") flash(document.getElementById("wire-psu-card"));
   }
   lastRenderedCount = entries.length;
+}
+
+function renderScriptedSection(payload) {
+  const section = document.getElementById("scripted-section");
+  const refused = payload.timeline.filter(e => e.kind === "refused");
+  if (refused.length === 0) { section.innerHTML = ""; return; }
+  section.innerHTML = '<div class="end-section"><div class="section-label">'
+    + "Two more checks, scripted</div>"
+    + '<p class="plain-line" style="margin-left:0">'
+    + "A scripted step asks for 30 V on purpose. The gate stops it. Nothing was sent.</p>"
+    + '<div class="timeline">'
+    + refused.map((e, i) => stepRowHtml(e, i)).join("") + "</div></div>";
+}
+
+// issue #406 body: "the end is an answer about the card, not a score" --
+// built only from this run's own reading and the rail's public spec
+// (never the ground-truth fault_id), e.g. "The 3V3 rail reads 2.9 V,
+// below its 3.20 V limit. This card is faulty: <the agent's own answer>."
+function answerSentence(payload) {
+  const probe = payload.instruments.find(i => i.probe);
+  const rail = payload.rails && payload.rails[0];
+  const reading = probe ? latestReading(payload.timeline, probe.address) : null;
+  const rec = payload.record;
+  if (!probe || !rail || !reading || !rec) return "";
+  const v = reading.detail.value;
+  const given = escapeHtml(rec.given || "");
+  if (v >= rail.lo && v <= rail.hi) {
+    return `The ${rail.label} reads ${v} V, inside its ${rail.nominal_v} V limit. `
+      + `This card answered: ${given}.`;
+  }
+  const side = v < rail.lo ? "below" : "above";
+  const limit = v < rail.lo ? rail.lo.toFixed(2) : rail.hi.toFixed(2);
+  return `The ${rail.label} reads ${v} V, ${side} its ${limit} V limit. `
+    + `This card is faulty: ${given}.`;
 }
 
 function renderResult(payload) {
@@ -308,11 +390,13 @@ function renderResult(payload) {
   const bad = destroyed || rec.disqualified || !rec.correct;
   const word = destroyed ? "Wrong" : rec.disqualified ? "Disqualified"
     : rec.correct ? "Correct" : "Wrong";
+  const sentence = answerSentence(payload);
   section.innerHTML = '<div class="section-label">Result</div>'
     + `<div class="result${bad ? " bad" : ""}"><div class="verdict">${word}</div>`
     + `<div class="row">answered <b>${escapeHtml(rec.given || "")}</b> `
     + `&middot; ${score.turns !== undefined ? score.turns : payload.turns} turns `
-    + `&middot; ${rec.disqualified ? "disqualified" : "not disqualified"}</div></div>`;
+    + `&middot; ${rec.disqualified ? "disqualified" : "not disqualified"}</div>`
+    + (sentence ? `<div class="row">${sentence}</div>` : "") + "</div>";
 }
 
 function render(payload) {
@@ -322,8 +406,10 @@ function render(payload) {
   document.getElementById("run-id").textContent = payload.run_id;
   renderBadge(payload);
   renderVerdict(payload);
+  renderPlainLine(payload);
   renderBench(payload);
   renderTimeline(payload);
+  renderScriptedSection(payload);
   renderResult(payload);
 }
 
@@ -348,30 +434,72 @@ function start(runId, initial) {
 """
 
 
-def _shell(run_id: str) -> str:
+#: issue #406 body (CMO text, source ops/projects/shal/game-proposal.md
+#: s15) -- the problem this page solves, verbatim, above the bench, on
+#: both the live page and the export. Never the fault, never a number from
+#: a benchmark run.
+PROBLEM_LINES = (
+    "A good unit fails on the line. The line stops. Two hours later it "
+    "turns out to be a cable.",
+    "An agent driving real instruments can destroy a card with one wrong "
+    "command, like 30 V on a 5 V rail.",
+    "SHAL tells a cable fault (error) from a bad unit (fail), and stops a "
+    "dangerous command before it is sent.",
+)
+
+
+def _banner_html(extra: str) -> str:
+    return f'<div class="export-label">{extra}</div>' if extra else ""
+
+
+def _shell(run_id: str, *, banner: str = "") -> str:
     """The static document both the live page and the export embed their
     data into -- same markup, same ids, so `render`/`renderBench`/etc. work
-    unchanged in both."""
+    unchanged in both. `banner` is the export's own replay label (empty on
+    the live page, which has no equivalent static line -- `renderBadge`
+    covers it)."""
+    problem_html = "".join(f"<p>{html.escape(line)}</p>" for line in PROBLEM_LINES)
     return f"""<!doctype html>
 <html lang="en">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>shal-arena &middot; Watch</title>
-<style>{_STYLE}</style>
+<style>{_STYLE}
+.export-label {{ background: var(--panel); color: var(--text); font-size: 13px;
+  font-weight: 700; text-align: center; padding: 10px 16px; border-bottom: 1px solid var(--line); }}
+.problem {{ margin: 0 16px 14px; padding: 12px 14px; border-radius: 12px;
+  background: var(--panel); border: 1px solid var(--line); }}
+.problem p {{ margin: 0 0 6px; font-size: 14px; }}
+.problem p:last-child {{ margin-bottom: 0; }}
+.end-section {{ margin: 20px 16px 0; padding-top: 14px; border-top: 1px solid var(--line); }}
+.end-section .section-label {{ margin-left: 0; }}
+.driver-code {{ margin: 0 16px 14px; }}
+.driver-code summary {{ font-size: 14px; cursor: pointer; padding: 10px 12px;
+  background: var(--panel); border: 1px solid var(--line); border-radius: 10px; }}
+.driver-code pre {{ font-size: 13px; line-height: 1.4; background: #15181D;
+  border: 1px solid var(--line); border-top: none; border-radius: 0 0 10px 10px;
+  padding: 10px 12px; overflow-x: auto; margin: 0; }}
+.plain-line {{ margin: 0 16px 10px; font-size: 13px; color: var(--dim); }}
+</style>
 </head>
 <body>
+{_banner_html(banner)}
 <div class="wrap">
   <div class="badge-row" id="badge-row"><span class="dot"></span> Replay of a recorded run</div>
   <header>
     <div class="title" id="title"></div>
     <div class="sub" id="sub"></div>
   </header>
+  <div class="problem">{problem_html}</div>
   <div class="verdict-bar" id="verdict-bar"></div>
-  <div class="section-label">Bench</div>
+  <div id="plain-line" class="plain-line"></div>
+  <div class="section-label" id="bench-label">Bench</div>
   <div class="bench">{_BENCH_SVG}</div>
   <div class="section-label">Timeline</div>
   <div class="timeline" id="timeline-list"></div>
+  <div id="driver-code-section"></div>
+  <div id="scripted-section"></div>
   <div id="result-section"></div>
   <footer>{SAFETY_LINE}
     &middot; <span class="run-id mono" id="run-id"></span>

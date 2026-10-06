@@ -337,6 +337,11 @@ def raw_scpi(run_id: str, address: str, cmd: str, *,
             sim_log.mark_measured(str(address))
             bus, child_addr = _sim_bus_for_topology(topology)
             reply = bus.exchange(child_addr, {"scpi": cmd, "query": is_query})
+            if is_query:
+                try:
+                    sim_log.mark_reading(str(address), float(reply["reply"]), None)
+                except (TypeError, ValueError):
+                    pass  # not a bare number -- nothing to show as a reading
     except Exception as e:  # noqa: BLE001 - a live answer to THIS call, never persisted
         raise MeasurementFailed(
             f"{cmd!r} raised {type(e).__name__}: {e}",
@@ -542,6 +547,9 @@ def take_measurement(run_id: str, address: str, driver_path: str | Path, *,
                         "if you see this, file a shal-arena issue")
             sim_log.mark_measured(str(address))
             reading = getattr(node.driver, read_op)()
+            op_fn = cls.capability_ops()[read_op]
+            unit = (getattr(op_fn, "__shal_op__", {}) or {}).get("unit")
+            sim_log.mark_reading(str(address), reading, unit)
     except CheckCouldNotRun:
         raise
     except Exception as e:  # noqa: BLE001 - a live answer to THIS call, never persisted

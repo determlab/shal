@@ -21,7 +21,8 @@ from .page import render_watch_page
 HOST = "127.0.0.1"
 
 
-def _make_handler(run_id: str, state_dir: str | Path) -> type[BaseHTTPRequestHandler]:
+def _make_handler(run_id: str, state_dir: str | Path,
+                  drivers: dict[str, dict[str, Any]] | None) -> type[BaseHTTPRequestHandler]:
     class Handler(BaseHTTPRequestHandler):
         protocol_version = "HTTP/1.1"
 
@@ -37,7 +38,9 @@ def _make_handler(run_id: str, state_dir: str | Path) -> type[BaseHTTPRequestHan
 
         def _payload_or_error(self) -> dict[str, Any] | None:
             try:
-                return run_payload(run_id, state_dir=state_dir)
+                payload = run_payload(run_id, state_dir=state_dir)
+                payload["drivers"] = drivers or {}
+                return payload
             except ArenaError as e:
                 self._send(404, json.dumps(e.to_dict()).encode("utf-8"),
                           "application/json; charset=utf-8")
@@ -65,14 +68,15 @@ def _make_handler(run_id: str, state_dir: str | Path) -> type[BaseHTTPRequestHan
 
 
 def serve(run_id: str, *, state_dir: str | Path = DEFAULT_STATE_DIR, port: int = 0,
-         open_browser: bool = True) -> ThreadingHTTPServer:
+         open_browser: bool = True,
+         drivers: dict[str, dict[str, Any]] | None = None) -> ThreadingHTTPServer:
     """Bind on `HOST` and the given `port` (0 picks a free one) and return
     the live server -- the caller runs `serve_forever()` (or, in a test,
     polls it directly and shuts it down itself). Fails fast, before binding
     anything, if `run_id` does not exist (same named-fix error every other
     command raises for an unknown run)."""
     run_payload(run_id, state_dir=state_dir)  # ArenaError, unknown run -- fail before bind
-    handler = _make_handler(run_id, state_dir)
+    handler = _make_handler(run_id, state_dir, drivers)
     httpd = ThreadingHTTPServer((HOST, port), handler)
     url = f"http://{HOST}:{httpd.server_address[1]}/"
     print(f"shal-arena ui: watching {run_id} at {url}")

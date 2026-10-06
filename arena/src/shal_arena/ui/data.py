@@ -37,6 +37,15 @@ def run_payload(run_id: str, *, state_dir: str | Path = DEFAULT_STATE_DIR) -> di
         {"address": str(i.address), "case": i.case, "drives": i.drives, "probe": i.probe}
         for i in task.instruments
     ]
+    # issue #406 follow-up: the rail's own documented spec -- public (the
+    # card.yaml, not the hidden fault), same values bench.py's own
+    # _answer_from_reading already reads -- so the page can state "reads
+    # X V, below its Y V limit" without ever touching the fault itself.
+    rails = [
+        {"label": r.test_point, "nominal_v": r.nominal_v, "tol_pct": r.tol_pct,
+         "lo": r.nominal_v * (1 - r.tol_pct / 100), "hi": r.nominal_v * (1 + r.tol_pct / 100)}
+        for r in loaded.card.rails
+    ]
     tiles = {
         addr: {"case": t.case, "passed": t.passed, "checked_at": t.checked_at}
         for addr, t in state.tiles.items()
@@ -50,10 +59,12 @@ def run_payload(run_id: str, *, state_dir: str | Path = DEFAULT_STATE_DIR) -> di
         "task_id": task.id,
         "title": task.title,
         "question": task.question.text,
+        "level": task.level,
         "status": state.status,
         "closed": closed,
         "turns": state.turns,
         "instruments": instruments,
+        "rails": rails,
         "tiles": tiles,
         "card": {"applied": dict(state.card_applied), "destroyed": state.card_destroyed},
         "timeline": _timeline(run_id, store),
