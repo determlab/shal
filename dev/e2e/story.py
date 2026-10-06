@@ -39,6 +39,8 @@ import tempfile
 from pathlib import Path
 from typing import Any
 
+import yaml
+
 REPO_ROOT = Path(__file__).resolve().parents[2]
 ARENA_TASKS_DIR = REPO_ROOT / "arena" / "src" / "shal_arena" / "tasks"
 ARENA_TASK_LEVELS = ["easy", "medium", "hard"]
@@ -47,6 +49,61 @@ ARENA_TASK_LEVELS = ["easy", "medium", "hard"]
 # own vocabulary.
 EXIT_PASS = 0
 EXIT_UNREACHABLE = 4
+
+def _reference_dmm_driver_path():
+    """The same packaged reference driver `shal_arena.bench`'s own default
+    policy uses (`arena/src/shal_arena/_default_dmm_driver.py`) -- resolved
+    through the venv that is actually running this call, not a literal copy
+    kept in sync by hand (CTO review on #403 round 2). Imported lazily,
+    inside this function only: this module is also loaded directly by
+    `tests/test_e2e_story.py` under the dev venv at plain import time, which
+    may not have shal_arena installed at all, so the top level never imports
+    it."""
+    import importlib.resources as importlib_resources
+
+    ref = importlib_resources.files("shal_arena") / "_default_dmm_driver.py"
+    return importlib_resources.as_file(ref)
+
+
+#: issue #403 CTO review round 2: a single reading cannot tell `noise` from
+#: `ok` -- the sim gives a DIFFERENT reading each call (#433), so one read
+#: can easily land inside the tolerance band by chance (CTO: 17 of 17 noise
+#: seeds across easy/medium/hard failed with a single read). Several reads,
+#: and the SPREAD across them, is what noise actually looks like.
+#: CTO review round 3: 5 reads passed 90/90 seeds but with a thin margin on
+#: `hard` (band 0.066 V, smallest observed noise spread 0.0748 V) -- 8 widens
+#: that margin without exposing the fault's own ripple_vpp (which the run
+#: JSON must never leak).
+_N_READS = 8
+
+
+def _diagnose(nominal_v: float, tol_pct: float, readings: list[float],
+             allowed: set[str]) -> str:
+    """A guess from the measurements alone (same logic as `shal_arena.demo`'s
+    own `_diagnose`, parametrized on the rail's numbers instead of a `Rail`
+    object this script has no import for, and on several readings instead of
+    one): the rail's own documented nominal voltage and tolerance, never the
+    hidden fault. `readings` empty means every measure call failed (the
+    `open` fault). A spread across readings wider than the tolerance band is
+    `noise`, checked before anything else -- a single one of those readings
+    can still land inside the band by chance. Otherwise, the last reading
+    outside the band but not clearly low or high falls back to `noise` when
+    the task even offers it."""
+    if not readings:
+        return "open"
+    band = nominal_v * tol_pct / 100
+    if max(readings) - min(readings) > band and "noise" in allowed:
+        return "noise"
+    delta = readings[-1] - nominal_v
+    if abs(delta) <= band:
+        return "ok"
+    if delta < 0 and "low_voltage" in allowed:
+        return "low_voltage"
+    if delta > 0 and "high_voltage" in allowed:
+        return "high_voltage"
+    if "noise" in allowed:
+        return "noise"
+    return "ok"
 
 _BENCH_POLICY = '''\
 """Scripted #340 story policy: both sides attempt the same 30 V setpoint on
@@ -101,9 +158,24 @@ def check_virtual_bench_unplug_dmm(doc: dict[str, Any], exit_code: int,
 
 def check_arena_score_file(level: str, score_exists: bool, answer_doc: dict[str, Any],
                            rerun: str) -> dict[str, Any]:
-    ok = score_exists and bool(answer_doc.get("score"))
+    """issue #403: a score file existing proves nothing on its own -- the old
+    check passed on `turns: 0, faults_caught: 0` cells because `answer`
+    writes a score file even for a run nothing ever measured. The run must
+    actually have been played: `correct` and not `disqualified` (`answer`'s
+    own verdict), at least one turn logged, and -- only on a task whose
+    realized fault was not `ok` (`score["fault_type"]`, same test
+    `build_score`'s own `caught` uses) -- at least one fault caught."""
+    score = answer_doc.get("score") or {}
+    has_fault = score.get("fault_type") not in (None, "ok")
+    ok = (score_exists and bool(score)
+         and answer_doc.get("correct") is True
+         and answer_doc.get("disqualified") is False
+         and score.get("turns", 0) > 0
+         and (not has_fault or score.get("faults_caught", 0) > 0))
     return _result(f"arena_{level}_score_file", ok, json.dumps(
-        {"score_file_exists": score_exists, "score": answer_doc.get("score")}), rerun)
+        {"score_file_exists": score_exists, "score": score,
+         "correct": answer_doc.get("correct"), "disqualified": answer_doc.get("disqualified")}),
+        rerun)
 
 
 def check_arena_bench_destroyed(doc: dict[str, Any], rerun: str) -> dict[str, Any]:
@@ -190,17 +262,67 @@ def run_virtual_bench_checks(venv_python: str, bench_dir: Path) -> list[dict[str
     return checks
 
 
-def run_arena_task_score_file(venv_python: str, level: str, state_dir: Path) -> dict[str, Any]:
+def run_arena_task_score_file(venv_python: str, level: str, state_dir: Path, *,
+                              seed: int | None = None) -> dict[str, Any]:
+    """issue #403: play the task for real -- power the card, take several
+    real measurements with the packaged reference driver, diagnose from
+    those readings (same pattern `shal_arena.demo`'s D5 story already
+    plays, #343/#410, extended to multiple reads so `noise` is actually
+    detectable, CTO review round 2) -- instead of answering `ok` blind,
+    which left every cell showing `turns: 0, faults_caught: 0` regardless
+    of whether the real fault was ever found. `seed` overrides the task's
+    own default (used by the seed-sweep test below)."""
     task_path = ARENA_TASKS_DIR / f"{level}.yaml"
+    task_doc = yaml.safe_load(task_path.read_text(encoding="utf-8"))
+    card_path = (task_path.parent / task_doc["card"]).resolve()
+    card_doc = yaml.safe_load(card_path.read_text(encoding="utf-8"))
+    drives_inst = next(i for i in task_doc["instruments"] if "drives" in i)
+    probe_inst = next(i for i in task_doc["instruments"] if "probe" in i)
+    vin_name = drives_inst["drives"].split(".", 1)[1]
+    vin_nominal_v = card_doc["inputs"][vin_name]["nominal_v"]
+    allowed = set(task_doc["question"]["answer"]["values"])
+
     run_argv = ["-m", "shal_arena.cli", "run", str(task_path),
                "--state-dir", str(state_dir), "--json"]
+    if seed is not None:
+        run_argv = [*run_argv, "--seed", str(seed)]
     run_doc, _ = _run_json(venv_python, run_argv)
     run_id = run_doc["run_id"]
-    answer_argv = ["-m", "shal_arena.cli", "answer", run_id, "ok",
+    rail = run_doc["rails"][0]      # issue #428: nominal_v/tol_pct, right in `run`'s own JSON
+
+    drive_argv = ["-m", "shal_arena.cli", "drive", run_id, str(drives_inst["address"]),
+                 str(vin_nominal_v), "--state-dir", str(state_dir), "--json"]
+    drive_doc, drive_ec = _run_json(venv_python, drive_argv)
+    # CTO review on #403 round 2: driving at the card's OWN documented
+    # nominal input voltage must never be refused by SHAL's gate -- if it
+    # is, the card is unpowered for every later measurement, and silently
+    # continuing would misdiagnose that as a reading rather than a setup
+    # failure.
+    if drive_ec != EXIT_PASS:
+        raise RuntimeError(
+            f"driving {drives_inst['address']} to the card's own nominal {vin_nominal_v} V "
+            f"failed (exit {drive_ec}): {drive_doc}")
+
+    state_dir.mkdir(parents=True, exist_ok=True)
+    with _reference_dmm_driver_path() as driver_path:
+        measure_argv = ["-m", "shal_arena.cli", "measure", run_id, str(probe_inst["address"]),
+                       str(driver_path), "--state-dir", str(state_dir), "--json"]
+        readings: list[float] = []
+        for _ in range(_N_READS):
+            measure_doc, measure_ec = _run_json(venv_python, measure_argv)
+            if measure_ec != EXIT_PASS:
+                readings = []   # the `open` fault: every read fails, consistently
+                break
+            readings.append(measure_doc["reading"])
+
+    given = _diagnose(rail["nominal_v"], rail["tol_pct"], readings, allowed)
+    answer_argv = ["-m", "shal_arena.cli", "answer", run_id, given,
                   "--state-dir", str(state_dir), "--json"]
     answer_doc, _ = _run_json(venv_python, answer_argv)
     score_path = state_dir / f"{run_id}.score.json"
     rerun = (f"{venv_python} {_argv_str(run_argv)} && "
+            f"{venv_python} {_argv_str(drive_argv)} && "
+            f"{venv_python} {_argv_str(measure_argv)} && "
             f"{venv_python} {_argv_str(answer_argv)}")
     return check_arena_score_file(level, score_path.is_file(), answer_doc, rerun)
 
