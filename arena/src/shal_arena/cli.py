@@ -3,13 +3,14 @@
 ``drive`` is #313's; ``bench`` is #314's).
 
     shal-arena demo --json
-    shal-arena run tasks/rail-3v3.yaml --json
+    shal-arena tasks --json
+    shal-arena run rail-3v3 --json
     shal-arena check-driver <run-id> psu0 ./driver.py --json
     shal-arena measure <run-id> dmm0 ./driver.py --json
     shal-arena drive <run-id> psu0 6.5 --json
     shal-arena answer <run-id> low_voltage --json
     shal-arena bench --runs 10 --json
-    shal-arena bench tasks/rail-3v3.yaml --runs 10 --policy ./policy.py --json
+    shal-arena bench rail-3v3 --runs 10 --policy ./policy.py --json
 
 Non-interactive by design: no prompt ever blocks a command, so an agent can
 drive the whole challenge headlessly. Every command prints one JSON document
@@ -33,6 +34,7 @@ from .bench import (
     run_benchmark,
 )
 from .errors import ArenaError
+from .loader import list_tasks, resolve_task
 from .replay.card import build_result_card
 from .replay.rack import build_setup_yaml, render_rack_page
 from .runner import answer as _answer
@@ -63,9 +65,19 @@ def _report_error(err: ArenaError, as_json: bool) -> int:
     return err.exit_code
 
 
+def _cmd_tasks(args: argparse.Namespace) -> int:
+    tasks = list_tasks()
+    if args.json:
+        _json_out({"ok": True, "side_effect": "none", "tasks": tasks})
+    else:
+        for t in tasks:
+            print(f"{t['name']}  ({t['level']})  {t['path']}")
+    return 0
+
+
 def _cmd_run(args: argparse.Namespace) -> int:
     try:
-        result = start_run(args.task, seed=args.seed, state_dir=args.state_dir)
+        result = start_run(str(resolve_task(args.task)), seed=args.seed, state_dir=args.state_dir)
     except ArenaError as e:
         return _report_error(e, args.json)
     if args.json:
@@ -140,7 +152,7 @@ def _cmd_answer(args: argparse.Namespace) -> int:
 
 def _cmd_bench(args: argparse.Namespace) -> int:
     try:
-        task = args.task or str(DEFAULT_TASK)
+        task = str(resolve_task(args.task)) if args.task else str(DEFAULT_TASK)
         if args.policy:
             policy = import_policy(args.policy)
             result = run_benchmark(task, play_with_shal=policy.play_with_shal,
@@ -228,8 +240,14 @@ def _build_parser() -> argparse.ArgumentParser:
                         help="print one JSON document on stdout instead of narrating")
     p_demo.set_defaults(func=_cmd_demo)
 
-    p_run = sub.add_parser("run", help="start a run from a task.yaml")
-    p_run.add_argument("task", help="path to the task.yaml")
+    p_tasks = sub.add_parser(
+        "tasks", help="list the packaged tasks (name, path, level) that `run` takes by name")
+    p_tasks.add_argument("--json", action="store_true", help="print one JSON document")
+    p_tasks.set_defaults(func=_cmd_tasks)
+
+    p_run = sub.add_parser("run", help="start a run from a packaged task name or a task.yaml")
+    p_run.add_argument("task", help="a packaged task name (see `shal-arena tasks --json`: "
+                                    "easy, medium, hard, rail-3v3) or a path to a task.yaml")
     p_run.add_argument("--seed", type=int, default=None,
                        help="override the task's seed (a weekly challenge passes this)")
     add_common(p_run)
@@ -273,8 +291,9 @@ def _build_parser() -> argparse.ArgumentParser:
         "bench",
         help="benchmark mode: the same task with SHAL and without it (issue #314 Agent path)")
     p_bench.add_argument("task", nargs="?", default=None,
-                         help="path to the task.yaml (default: the built-in sample task, "
-                              "tasks/rail-3v3.yaml — only meaningful without --policy too)")
+                         help="a packaged task name or a path to a task.yaml (default: "
+                              "the built-in sample task, rail-3v3 — only meaningful "
+                              "without --policy too)")
     p_bench.add_argument("--runs", type=int, default=10,
                          help="runs per side, >= 10 (default: 10)")
     p_bench.add_argument("--seed", type=int, default=0,

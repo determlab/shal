@@ -90,6 +90,10 @@ jobs:
         run: python -m pytest arena/tests -q
       - name: README examples run as written (issue #396)
         run: python -m pytest arena/tests/test_readme_examples.py -q
+      - name: README commands from an installed wheel, clean venv (issue #416 D3)
+        env:
+          SHAL_ARENA_TEST_WHEEL: "1"
+        run: python -m pytest arena/tests/test_readme_examples.py arena/tests/test_cli_names.py -q
 
   packaging:
     # Checks the *built wheel's* metadata, not the source that declares it
