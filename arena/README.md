@@ -435,3 +435,18 @@ real, worked example of `replay`, `rack` and `setup-yaml`. The turn count
 the card shows is `score["turns"]` — the field that already counts
 `check`+`measure`+`drive` turns the CTO's ruling on #314 fixed (a `drive`
 that refuses or otherwise fails still costs its turn; `answer` never does).
+
+The `relay-rail` task adds a fourth instrument on a third protocol: `psu0`
+and `dmm0` as above, plus `relay0` (a Modbus-framed relay switching the
+card's own power, over `shal,sim-msg`, request/reply as plain dicts — no
+`pymodbus`, no TCP) and `temp0` (an `sht31`-style temperature sensor on
+`shal,sim-i2c`, probing the regulator) — with a fourth fault, `overheat`
+(the regulator runs hot while the 3V3 rail still reads nominal, so only an
+agent that reads all four instruments gets it right). `relay0`'s coil ops
+play through one generic path, `shal-arena call <run-id> <address>
+./driver.py <op> [args...] --json`, which runs any op of your own driver
+through SHAL's normal gate/limits/approval (AGENTS.md) instead of a
+fixed probe/drives pair — e.g. `call <run-id> relay0 ./driver.py set_relay
+0 false --json` and `call <run-id> relay0 ./driver.py read_relay 0
+--json`; `measure`/`check-driver` are unchanged and still cover the probe
+instruments, `dmm0` and `temp0`.

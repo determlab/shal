@@ -8,6 +8,7 @@
     shal-arena check-driver <run-id> psu0 ./driver.py --json
     shal-arena measure <run-id> dmm0 ./driver.py --json
     shal-arena drive <run-id> psu0 6.5 --json
+    shal-arena call <run-id> relay0 ./driver.py set_relay 0 false --json
     shal-arena answer <run-id> low_voltage --json
     shal-arena bench --runs 10 --json
     shal-arena bench rail-3v3 --runs 10 --policy ./policy.py --json
@@ -38,7 +39,7 @@ from .loader import list_tasks, resolve_task
 from .replay.card import build_result_card
 from .replay.rack import build_setup_yaml, render_rack_page
 from .runner import answer as _answer
-from .runner import check_instrument_driver, drive_input, start_run, take_measurement
+from .runner import call_op, check_instrument_driver, drive_input, start_run, take_measurement
 
 
 def _cmd_demo(args: argparse.Namespace) -> int:
@@ -159,6 +160,22 @@ def _cmd_drive(args: argparse.Namespace) -> int:
         if result.get("rejected"):
             print(f"  rejected: {result['rejected']}")
     return 0
+
+
+def _cmd_call(args: argparse.Namespace) -> int:
+    try:
+        result = call_op(args.run_id, args.instrument, args.manifest, args.op, args.args,
+                         state_dir=args.state_dir)
+    except ArenaError as e:
+        return _report_error(e, args.json)
+    if args.json:
+        _json_out(result)
+    else:
+        print(f"{args.instrument}: {args.op}({', '.join(args.args)}) -> "
+              f"{result.get('result')!r}")
+        if result.get("rejected"):
+            print(f"  rejected: {result['rejected']}")
+    return 0 if result["ok"] else (2 if result.get("rejected") else 1)
 
 
 def _cmd_answer(args: argparse.Namespace) -> int:
@@ -290,7 +307,8 @@ def _build_parser() -> argparse.ArgumentParser:
 
     p_run = sub.add_parser("run", help="start a run from a packaged task name or a task.yaml")
     p_run.add_argument("task", help="a packaged task name (see `shal-arena tasks --json`: "
-                                    "easy, medium, hard, rail-3v3) or a path to a task.yaml")
+                                    "easy, medium, hard, rail-3v3, relay-rail) or a path to "
+                                    "a task.yaml")
     p_run.add_argument("--seed", type=int, default=None,
                        help="override the task's seed (a weekly challenge passes this)")
     add_common(p_run)
@@ -323,6 +341,18 @@ def _build_parser() -> argparse.ArgumentParser:
     p_drive.add_argument("volts", type=float)
     add_common(p_drive)
     p_drive.set_defaults(func=_cmd_drive)
+
+    p_call = sub.add_parser(
+        "call",
+        help="run any op of your own driver through SHAL (gate, limits and approval "
+             "as usual; issue relay-rail Agent path) -- e.g. a relay's coil ops")
+    p_call.add_argument("run_id")
+    p_call.add_argument("instrument", help="the instrument address from `run`'s output")
+    p_call.add_argument("manifest", help="path to your driver.py")
+    p_call.add_argument("op", help="the op name on your driver, e.g. set_relay")
+    p_call.add_argument("args", nargs="*", help="positional arguments for the op, e.g. 0 false")
+    add_common(p_call)
+    p_call.set_defaults(func=_cmd_call)
 
     p_answer = sub.add_parser("answer", help="answer the question and close the run")
     p_answer.add_argument("run_id")

@@ -1,0 +1,11 @@
+# Harness for the "sht31" ADK case: one node of driver: "arena,bench-temp1"
+# on the sim I2C bus. The runner imports the player's driver.py (which
+# registers that compatible) before loading this file.
+shal_version: 1
+root:
+  bus:
+    id: bus
+    driver: shal,sim-i2c
+    address: sim0
+    children:
+      unit: {id: unit, driver: "arena,bench-temp1", address: 0x44}

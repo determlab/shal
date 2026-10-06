@@ -249,8 +249,8 @@ def test_card_template_source_has_no_fault_vocabulary() -> None:
 def test_rack_tiles_cover_the_packaged_cases() -> None:
     tiles = rack_tiles()
     names = {t.case for t in tiles}
-    assert names == {"scpi-psu", "dmm"}
-    assert all(t.has_driver for t in tiles)  # both packaged cases ship a sim
+    assert names == {"scpi-psu", "dmm", "relay-modbus", "sht31"}
+    assert all(t.has_driver for t in tiles)  # every packaged case ships a sim
 
 
 def test_generated_setup_yaml_loads_in_shal_and_validates() -> None:

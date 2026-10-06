@@ -237,6 +237,15 @@ class Rail:
 
 
 @dataclass(frozen=True)
+class TempPoint:
+    name: str
+    nominal_c: float
+    test_point: str
+    high_c: float | None = None
+    tol_source: str | None = None
+
+
+@dataclass(frozen=True)
 class Damage:
     input: str
     above_v: float
@@ -259,12 +268,13 @@ class Card:
     rails: tuple[Rail, ...]
     damage: tuple[Damage, ...]
     faults: tuple[Fault, ...]
+    temp_points: tuple[TempPoint, ...] = ()
 
 
 def validate_card(doc: Any) -> Card:
     _require_dict(doc, "card")
     _require_keys(doc, required={"arena_card", "id", "description", "inputs", "rails",
-                                  "damage", "faults"}, optional=set(), where="card")
+                                  "damage", "faults"}, optional={"temp_points"}, where="card")
     version = doc.get("arena_card")
     if version != CARD_VERSION:
         _fail(f"card.arena_card: this shal-arena supports version {CARD_VERSION}, "
@@ -276,10 +286,12 @@ def validate_card(doc: Any) -> Card:
     inputs = _validate_inputs(doc.get("inputs"))
     input_names = {i.name for i in inputs}
     rails = _validate_rails(doc.get("rails"), input_names)
+    rail_test_points = {r.test_point: f"card.rails.{r.name}" for r in rails}
+    temp_points = _validate_temp_points(doc.get("temp_points"), rail_test_points)
     damage = _validate_damage(doc.get("damage"), input_names)
     faults = _validate_faults(doc.get("faults"))
     return Card(id=card_id, description=description, inputs=inputs, rails=rails,
-                damage=damage, faults=faults)
+                damage=damage, faults=faults, temp_points=temp_points)
 
 
 def _validate_inputs(value: Any) -> tuple[Input, ...]:
@@ -323,6 +335,32 @@ def _validate_rails(value: Any, input_names: set[str]) -> tuple[Rail, ...]:
                         test_point=test_point,
                         min_input_v=_require_number(entry, "min_input_v", where),
                         tol_source=tol_source))
+    return tuple(out)
+
+
+def _validate_temp_points(value: Any, reserved_test_points: dict[str, str]
+                          ) -> tuple[TempPoint, ...]:
+    """``card.temp_points`` (optional, default none): a non-voltage sensing
+    point on the card — e.g. a regulator's own temperature — read the same
+    way a rail's ``test_point`` is, but with no input/tolerance/damage
+    semantics of its own (those stay on ``card.rails``)."""
+    d = _require_dict(value if value is not None else {}, "card.temp_points")
+    out = []
+    seen = dict(reserved_test_points)
+    for name, entry in d.items():
+        where = f"card.temp_points.{name}"
+        _require_dict(entry, where)
+        _require_keys(entry, required={"nominal_c", "test_point"},
+                      optional={"high_c", "tol_source"}, where=where)
+        test_point = _require_str(entry, "test_point", where)
+        if test_point in seen:
+            _fail(f"{where}.test_point: {test_point!r} is already used by {seen[test_point]}",
+                  f"give {where}.test_point a name unique across card.rails/card.temp_points")
+        seen[test_point] = where
+        high_c = _require_number(entry, "high_c", where) if "high_c" in entry else None
+        tol_source = _require_str(entry, "tol_source", where) if "tol_source" in entry else None
+        out.append(TempPoint(name=name, nominal_c=_require_number(entry, "nominal_c", where),
+                             test_point=test_point, high_c=high_c, tol_source=tol_source))
     return tuple(out)
 
 

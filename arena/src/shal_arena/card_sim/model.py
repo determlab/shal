@@ -126,6 +126,10 @@ class CardSim:
         self.log_path = Path(log_path) if log_path else None
         self.applied: dict[str, float] = dict(self.inputs)
         self.destroyed = False
+        # issue relay-rail: a relay in series with the card's own input can
+        # cut it off entirely, independent of any input-driven protection/
+        # damage above — `set_power` is the one place that changes it.
+        self.power_on = True
 
     # -- introspection -------------------------------------------------- #
     @property
@@ -145,12 +149,18 @@ class CardSim:
     # -- measurements --------------------------------------------------- #
     def rail_voltage(self, rail: str) -> float:
         spec = self.rails[rail]
-        if self.destroyed:
+        if self.destroyed or not self.power_on:
             return 0.0
         # a breach drops only the rails fed by the input it breached
         if any(lim.input == spec.from_input for lim in self._breaches(self.applied)):
             return 0.0
         return spec.nominal_v
+
+    def set_power(self, on: bool) -> None:
+        """issue relay-rail: a relay switching this card's own power — off
+        means every rail reads 0 V, same effect as `destroyed` but fully
+        reversible (switching back on restores normal readings)."""
+        self.power_on = bool(on)
 
     def test_point_voltage(self, test_point: str) -> float:
         # a plain next() with no default raises StopIteration on a miss, which

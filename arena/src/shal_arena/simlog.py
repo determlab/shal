@@ -108,6 +108,19 @@ class SimLog:
         with self.path.open("a", encoding="utf-8") as f:
             f.write(json.dumps(entry) + "\n")
 
+    def append(self, address: str, kind: str, **extra: Any) -> None:
+        """A free-form entry, same JSON-lines shape as every other line in
+        this file (issue relay-rail: `runner.call_op`'s own record of a
+        generic `call` — the bus-log capture `record_for` attaches only
+        covers `shal,sim-scpi`, so a `shal,sim-msg`/`shal,sim-i2c` exchange
+        needs its own line written directly, the same way `mark_measured`
+        and `CardSim._log` already do)."""
+        self.path.parent.mkdir(parents=True, exist_ok=True)
+        entry = {"ts": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+                 "address": str(address), "kind": kind, **extra}
+        with self.path.open("a", encoding="utf-8") as f:
+            f.write(json.dumps(entry) + "\n")
+
     def entries(self) -> list[dict[str, Any]]:
         if not self.path.is_file():
             return []
