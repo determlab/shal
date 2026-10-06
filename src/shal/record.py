@@ -7,8 +7,8 @@ them invents a shape of its own (`record.md` §3, §6 R1).
 
 Invariants this file enforces — they are the contract, and the tests check them:
 
-1.  **Every field of `record.md` §2 is required except `firmware`, `abort` and
-    `calls`.** A bench run is `unit="bench"`, never blank.
+1.  **Every field of `record.md` §2 is required except `firmware`, `abort`,
+    `calls` and `repeatability`.** A bench run is `unit="bench"`, never blank.
 2.  **`verdict` is derived, never set by hand** — `aborted` if the run was stopped
     early, else `error` if a step raised, else `fail` if a step failed, else
     `pass`. It is a read-only property, so it cannot be constructed wrong; a
@@ -35,6 +35,14 @@ Invariants this file enforces — they are the contract, and the tests check the
     the explicit opt-in that returns the readable records **and** the list of
     `(id, record_version)` it skipped — loud, never silent, never the default
     (#227).
+7.  **The `record_version` 3 additions are always present, `null` when unknown**
+    (`record.md` §2.1, #409) — the one exception to "optional fields are
+    omitted when unset" above. `Step.ops`, `Measurement.instrument_id`/
+    `instrument_simulated`/`limit_source` and `Record.repeatability` are
+    written on every v3 record so an agent sees every key without reading
+    docs; a record built with an explicit older `record_version` (a v1/v2
+    file, or a test reconstructing one) omits them, since that version never
+    had them to write.
 
 Determinism: `started`/`ended` are ISO-8601 UTC **strings**, not `datetime` —
 PyYAML would parse a bare timestamp back into a `datetime` while JSON would hand
@@ -63,9 +71,12 @@ import yaml
 
 from .errors import Error, HopError
 
-# `record.md` §7 — the first field, so a reader knows what it holds. 2 since
-# #218 made `calls` optional, which a version-1 reader cannot read (#223).
-RECORD_VERSION = 2
+# `record.md` §7 — the first field, so a reader knows what it holds. 3 since
+# #409 reserved `Step.ops`, `Measurement.instrument_id`/`instrument_simulated`/
+# `limit_source` and `Record.repeatability` — all optional, so a v2 reader's
+# required keys are untouched, but the version still moves so a reader knows
+# these new keys may be present.
+RECORD_VERSION = 3
 
 #: File layout under a store directory (`record.md` §4).
 DB_NAME = "records.db"
@@ -80,12 +91,18 @@ StepVerdict = Literal["pass", "fail", "error"]
 Runner = Literal["pytest", "bricks", "script"]
 AbortBy = Literal["predictor", "human"]
 Cause = Literal["transport"]
+# `record.md` §2.1 (#409) — an op call's outcome: `blocked` is SHAL's one gate
+# (AGENTS.md D4) refusing it, never sent; `error` is a raised exception.
+OpResult = Literal["ok", "error", "blocked"]
+BlockedReason = Literal["limits", "approval"]
 
 _VERDICTS = frozenset(("pass", "fail", "error", "aborted"))
 _STEP_VERDICTS = frozenset(("pass", "fail", "error"))
 _RUNNERS = frozenset(("pytest", "bricks", "script"))
 _ABORT_BY = frozenset(("predictor", "human"))
 _CAUSES = frozenset(("transport",))
+_OP_RESULTS = frozenset(("ok", "error", "blocked"))
+_BLOCKED_REASONS = frozenset(("limits", "approval"))
 
 # A record id becomes a file name (`records/<id>.yaml`), so it may not be able to
 # name anything but itself. Matches the spec's `rec-20260909T143022-8f1a2c`.
@@ -137,12 +154,28 @@ class Limits:
 
 
 @dataclass(frozen=True, kw_only=True)
+class LimitSource:
+    """Where an enforced limit came from (`record.md` §2.1, #409): the document
+    and the revision of it that was current when the limit was copied in."""
+
+    document: str
+    revision: str
+
+
+@dataclass(frozen=True, kw_only=True)
 class Measurement:
     """One measured value with the limits it was judged against.
 
     `passed` is serialised under the spec's key **`pass`** — `pass` is a Python
     keyword and cannot be an attribute name. The wire key is the spec's; only the
     Python attribute differs.
+
+    `instrument_id` and `limit_source` (`record.md` §2.1, #409) are reserved by
+    this ticket: which physical instrument took the reading (its `*IDN?` string,
+    or the node id on a sim), and where the enforced limit came from. Unlike
+    every other optional field in this module, a v3 record writes both keys
+    even when unknown (`null`, never omitted) — an agent sees every key without
+    reading docs. Neither is filled here — a later ticket does that.
     """
 
     name: str
@@ -150,6 +183,86 @@ class Measurement:
     unit: str
     limits: Limits
     passed: bool
+    instrument_id: str | None = None
+    # true = a SHAL simulator took it; false = real hardware; never inferred
+    # from `instrument_id` (CPSO challenge: a mixed bench, real PSU + sim DMM,
+    # is a real case, so each measurement says so as its own key).
+    instrument_simulated: bool | None = None
+    limit_source: LimitSource | None = None
+
+
+@dataclass(frozen=True, kw_only=True)
+class OpError:
+    """Why an op call errored (`Op.result == "error"`, `record.md` §2.1)."""
+
+    message: str
+    address: str
+
+
+@dataclass(frozen=True, kw_only=True)
+class OpBlocked:
+    """Why an op call never ran (`Op.result == "blocked"`, `record.md` §2.1) —
+    refused by SHAL's one gate (AGENTS.md D4), nothing sent: `limits` (the value
+    was outside the op's own schema) or `approval` (a gated op with no approver).
+    """
+
+    reason: BlockedReason
+    message: str
+
+    def __post_init__(self) -> None:
+        # CTO review on #409 (PR #452): `BlockedReason`/`OpResult` are
+        # `Literal`s, which Python never enforces at runtime -- without this,
+        # `Op(..., blocked=OpBlocked(reason="bogus", ...))` would construct
+        # cleanly, `write()` would store it, and only the NEXT `read()` would
+        # ever catch it (`_enum` in `_op_from_mapping`). The writer must
+        # refuse it before it reaches disk, same as every other invariant
+        # here.
+        if self.reason not in _BLOCKED_REASONS:
+            raise RecordError(
+                f"blocked.reason must be one of {', '.join(sorted(_BLOCKED_REASONS))} "
+                f"— got {self.reason!r}")
+
+
+@dataclass(frozen=True, kw_only=True)
+class Op:
+    """One SHAL op a step called, in order (`record.md` §2.1, #409).
+
+    The per-step sibling of the record's own top-level `calls`: unlike `calls`
+    (free-form AOS pass-through, invariant 4 below), `ops` is a shape this
+    module defines and validates, keyed `ops` so the two can never be confused.
+    Exactly one of `error`/`blocked` is set, and only for the matching `result`.
+    """
+
+    device: str
+    op: str
+    args: dict[str, Any]
+    side_effect: str
+    # true when the device is a SHAL simulator; never inferred from `device`.
+    simulated: bool | None = None
+    result: OpResult
+    value: Any = None
+    retries: int = 0
+    shal_txn: str | None = None
+    error: OpError | None = None
+    blocked: OpBlocked | None = None
+
+    def __post_init__(self) -> None:
+        # CTO review on #409 (PR #452): validate at construction, not only on
+        # read -- `result` is a `Literal`, not enforced at runtime, and
+        # `retries` had no check at all. Without this, `write()` could store
+        # a record its own `read()` would refuse.
+        if self.result not in _OP_RESULTS:
+            raise RecordError(
+                f"an op's result must be one of {', '.join(sorted(_OP_RESULTS))} "
+                f"— got {self.result!r}")
+        if (self.result == "error") != (self.error is not None):
+            raise RecordError("an op's 'error' is set if and only if result='error'")
+        if (self.result == "blocked") != (self.blocked is not None):
+            raise RecordError("an op's 'blocked' is set if and only if result='blocked'")
+        if isinstance(self.retries, bool) or not isinstance(self.retries, int) \
+                or self.retries < 0:
+            raise RecordError(f"an op's retries must be a non-negative int — "
+                              f"got {self.retries!r}")
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -161,15 +274,24 @@ class Step:
     tell that from a failed check. Optional, omitted when unset, and only on an
     `error` step. Added without a `record_version` bump: an older reader ignores
     the key and every older record reads as `cause=None`.
+
+    `ops` (`record.md` §2.1, #409) is every SHAL op this step ran, in order —
+    the per-step sibling of the record's own top-level `calls`, same
+    `None`/`()` rule as `calls` (invariant 4): `None` means "not collected"
+    (the key is still written, as `null`, in a v3 record — never omitted,
+    unlike `calls`); `()` means "collected, none".
     """
 
     name: str
     verdict: StepVerdict
     measurements: tuple[Measurement, ...] = ()
     cause: Cause | None = None
+    ops: tuple[Op, ...] | None = None
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "measurements", tuple(self.measurements))
+        if self.ops is not None:
+            object.__setattr__(self, "ops", tuple(self.ops))
         if self.cause is not None and self.verdict != "error":
             raise RecordError("a step cause belongs on an error step only")
 
@@ -199,7 +321,7 @@ class Abort:
 class Record:
     """One run of one sequence against one unit (`record.md` §2).
 
-    Keyword-only by construction: fifteen fields are far too many to order by
+    Keyword-only by construction: sixteen fields are far too many to order by
     position, and §7's "fields are added, never renamed or removed" means new
     fields must be able to appear anywhere without moving the existing ones.
     """
@@ -218,6 +340,10 @@ class Record:
     calls: tuple[dict[str, Any], ...] | None = ()
     firmware: str | None = None
     abort: Abort | None = None
+    # #409: reserved, always None for now — no ticket computes repeatability
+    # yet. A v3 record always WRITES this key, `null` — never omitted, unlike
+    # every other optional field here (invariant 7 below).
+    repeatability: Any | None = None
     record_version: int = RECORD_VERSION
 
     def __post_init__(self) -> None:
@@ -262,7 +388,8 @@ class Record:
         out["started"] = self.started
         out["ended"] = self.ended
         out["verdict"] = self.verdict
-        out["steps"] = [_step_to_mapping(s) for s in self.steps]
+        v3 = self.record_version >= 3
+        out["steps"] = [_step_to_mapping(s, v3) for s in self.steps]
         if self.calls is not None:  # None = not collected: omitted, not `[]`
             out["calls"] = [dict(c) for c in self.calls]
         if self.abort is not None:
@@ -271,6 +398,12 @@ class Record:
                 "after_step": self.abort.after_step,
                 "reason": self.abort.reason,
             }
+        # `record.md` §2.1: a v3 record always carries `repeatability`, `null`
+        # when unknown — a record built with an explicit older `record_version`
+        # (as a test reconstructing an old file does) omits it, matching what
+        # that version actually wrote.
+        if v3:
+            out["repeatability"] = self.repeatability
         return out
 
     @classmethod
@@ -317,6 +450,7 @@ class Record:
                 _as_mapping(c, "calls[]", source) for c in _seq(m, "calls", source)
             ),
             abort=abort,
+            repeatability=m.get("repeatability"),
         )
 
         stored = _enum(m, "verdict", _VERDICTS, source)
@@ -330,27 +464,53 @@ class Record:
         return rec
 
 
-def _step_to_mapping(step: Step) -> dict[str, Any]:
+def _step_to_mapping(step: Step, v3: bool) -> dict[str, Any]:
     out: dict[str, Any] = {"name": step.name, "verdict": step.verdict}
     if step.cause is not None:
         out["cause"] = step.cause
-    out["measurements"] = [_measurement_to_mapping(x) for x in step.measurements]
+    if v3:
+        out["ops"] = None if step.ops is None else [_op_to_mapping(o) for o in step.ops]
+    out["measurements"] = [_measurement_to_mapping(x, v3) for x in step.measurements]
     return out
 
 
-def _measurement_to_mapping(m: Measurement) -> dict[str, Any]:
+def _op_to_mapping(o: Op) -> dict[str, Any]:
+    return {
+        "device": o.device,
+        "op": o.op,
+        "args": dict(o.args),
+        "side_effect": o.side_effect,
+        "simulated": o.simulated,
+        "result": o.result,
+        "value": o.value,
+        "retries": o.retries,
+        "shal_txn": o.shal_txn,
+        "error": None if o.error is None else {"message": o.error.message,
+                                                "address": o.error.address},
+        "blocked": None if o.blocked is None else {"reason": o.blocked.reason,
+                                                    "message": o.blocked.message},
+    }
+
+
+def _measurement_to_mapping(m: Measurement, v3: bool) -> dict[str, Any]:
     limits: dict[str, Any] = {}
     if m.limits.min is not None:
         limits["min"] = m.limits.min
     if m.limits.max is not None:
         limits["max"] = m.limits.max
-    return {
+    out = {
         "name": m.name,
         "value": m.value,
         "unit": m.unit,
         "limits": limits,
         "pass": m.passed,
     }
+    if v3:
+        out["instrument_id"] = m.instrument_id
+        out["instrument_simulated"] = m.instrument_simulated
+        out["limit_source"] = None if m.limit_source is None else {
+            "document": m.limit_source.document, "revision": m.limit_source.revision}
+    return out
 
 
 def _step_from_mapping(data: Any, source: str) -> Step:
@@ -359,13 +519,55 @@ def _step_from_mapping(data: Any, source: str) -> Step:
     cause = None if s.get("cause") is None else _enum(s, "cause", _CAUSES, source)
     if cause is not None and verdict != "error":
         raise RecordError(f"{source}: 'cause' belongs on an error step only")
+    ops_raw = s.get("ops")
+    if ops_raw is None:
+        ops = None
+    else:
+        if not isinstance(ops_raw, list):
+            raise RecordError(f"{source}: 'ops' must be a list, got {type(ops_raw).__name__}")
+        ops = tuple(_op_from_mapping(o, source) for o in ops_raw)
     return Step(
         name=_req(s, "name", str, source),
         verdict=verdict,
         cause=cause,
+        ops=ops,
         measurements=tuple(
             _measurement_from_mapping(x, source) for x in _seq(s, "measurements", source)
         ),
+    )
+
+
+def _op_from_mapping(data: Any, source: str) -> Op:
+    x = _as_mapping(data, "ops[]", source)
+    result = _enum(x, "result", _OP_RESULTS, source)
+    error_raw = x.get("error")
+    error = None
+    if error_raw is not None:
+        e = _as_mapping(error_raw, "ops[].error", source)
+        error = OpError(message=_req(e, "message", str, source),
+                        address=_req(e, "address", str, source))
+    if (result == "error") != (error is not None):
+        raise RecordError(f"{source}: ops[].error is set if and only if result='error'")
+    blocked_raw = x.get("blocked")
+    blocked = None
+    if blocked_raw is not None:
+        b = _as_mapping(blocked_raw, "ops[].blocked", source)
+        blocked = OpBlocked(reason=_enum(b, "reason", _BLOCKED_REASONS, source),
+                            message=_req(b, "message", str, source))
+    if (result == "blocked") != (blocked is not None):
+        raise RecordError(f"{source}: ops[].blocked is set if and only if result='blocked'")
+    return Op(
+        device=_req(x, "device", str, source),
+        op=_req(x, "op", str, source),
+        args=_as_mapping(x.get("args", {}), "ops[].args", source),
+        side_effect=_req(x, "side_effect", str, source),
+        simulated=_opt(x, "simulated", bool, source),
+        result=result,
+        value=x.get("value"),
+        retries=x.get("retries", 0),
+        shal_txn=_opt(x, "shal_txn", str, source),
+        error=error,
+        blocked=blocked,
     )
 
 
@@ -375,6 +577,12 @@ def _measurement_from_mapping(data: Any, source: str) -> Measurement:
     for key in lim:
         if key not in ("min", "max"):
             raise RecordError(f"{source}: limits has unknown key {key!r} (min/max only)")
+    limit_source_raw = x.get("limit_source")
+    limit_source = None
+    if limit_source_raw is not None:
+        ls = _as_mapping(limit_source_raw, "limit_source", source)
+        limit_source = LimitSource(document=_req(ls, "document", str, source),
+                                   revision=_req(ls, "revision", str, source))
     return Measurement(
         name=_req(x, "name", str, source),
         value=_number(x, "value", source),
@@ -384,6 +592,9 @@ def _measurement_from_mapping(data: Any, source: str) -> Measurement:
             max=_opt_number(lim, "max", source),
         ),
         passed=_req(x, "pass", bool, source),
+        instrument_id=_opt(x, "instrument_id", str, source),
+        instrument_simulated=_opt(x, "instrument_simulated", bool, source),
+        limit_source=limit_source,
     )
 
 
@@ -732,6 +943,7 @@ def _read_db(store: StoreLike, record_id: str) -> Record | None:
 __all__ = [
     "RECORD_VERSION", "DB_NAME", "YAML_DIRNAME",
     "Record", "Step", "Measurement", "Limits", "Abort", "RecordError",
-    "Verdict", "StepVerdict", "Runner", "AbortBy",
+    "Op", "OpError", "OpBlocked", "LimitSource",
+    "Verdict", "StepVerdict", "Runner", "AbortBy", "OpResult", "BlockedReason",
     "write", "read", "to_yaml", "to_json", "db_path", "yaml_path",
 ]

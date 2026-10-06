@@ -8,6 +8,7 @@ a station wrote a year ago and the floor screen index the same rows.
 import json
 import re
 import sqlite3
+from pathlib import Path
 
 import pytest
 import yaml
@@ -21,7 +22,11 @@ from shal.record import (
     RECORD_VERSION,
     Abort,
     Limits,
+    LimitSource,
     Measurement,
+    Op,
+    OpBlocked,
+    OpError,
     Record,
     RecordError,
     Step,
@@ -34,6 +39,8 @@ from shal.record import (
     write,
     yaml_path,
 )
+
+_DATA_DIR = Path(__file__).parent / "data"
 
 # `record.md` §2's own example, plus every awkward shape the round-trip must
 # survive: a one-sided limit, a float that is not exactly representable, a
@@ -154,7 +161,7 @@ def test_key_order_is_the_specs_order_not_alphabetical(tmp_path):
     assert keys == [
         "record_version", "record", "unit", "station", "sequence", "sequence_version",
         "firmware", "setup", "setup_version", "runner", "started", "ended",
-        "verdict", "steps", "calls",
+        "verdict", "steps", "calls", "repeatability",
     ]
     assert text.startswith("record_version:")   # §7: the first field
 
@@ -254,10 +261,10 @@ def test_abort_round_trips(tmp_path):
 
 
 # --------------------------------------------------------------------------- #
-# #223: `record_version` is 2; a v2 reader reads v1; a newer record says so
+# #223: `record_version` is 3; a v3 reader reads v1/v2; a newer record says so
 # --------------------------------------------------------------------------- #
 
-_NEWER = "this record is version 3, newer than this SHAL reads (up to 2) — upgrade pyshal"
+_NEWER = "this record is version 4, newer than this SHAL reads (up to 3) — upgrade pyshal"
 
 
 def _write_doc(store, doc) -> None:
@@ -266,18 +273,21 @@ def _write_doc(store, doc) -> None:
     path.write_text(yaml.safe_dump(doc, sort_keys=False), encoding="utf-8", newline="\n")
 
 
-def test_a_new_record_is_written_as_version_2(tmp_path):
-    assert RECORD_VERSION == 2
+def test_a_new_record_is_written_as_version_3(tmp_path):
+    assert RECORD_VERSION == 3
     write(FULL, tmp_path)
     assert yaml_path(tmp_path, FULL.record).read_text(encoding="utf-8").startswith(
-        "record_version: 2\n")
-    assert json.loads(_db_json(tmp_path, FULL.record))["record_version"] == 2
+        "record_version: 3\n")
+    assert json.loads(_db_json(tmp_path, FULL.record))["record_version"] == 3
 
 
 def test_a_v1_record_still_reads_unchanged(tmp_path):
-    doc = _with(calls=[]).to_mapping()
+    # built AS a v1 record (not a v3 one with its version field overwritten)
+    # so `to_mapping()` genuinely omits the v3-only keys a real v1 file never had.
+    doc = _with(calls=[], record_version=1).to_mapping()
     doc["record_version"] = 1
     assert doc["calls"] == []                   # v1 always wrote `calls`
+    assert "repeatability" not in doc and "ops" not in doc["steps"][0]
     _write_doc(tmp_path, doc)
 
     [got] = read(tmp_path)
@@ -286,12 +296,186 @@ def test_a_v1_record_still_reads_unchanged(tmp_path):
     assert got.to_mapping() == doc              # reads back exactly as written
 
 
+# --------------------------------------------------------------------------- #
+# #409: record_version 3 — Step.ops, Measurement.instrument_id/limit_source/
+# instrument_simulated, Record.repeatability (`record.md` §2.1)
+# --------------------------------------------------------------------------- #
+
+def test_a_stored_v1_record_loads_with_the_v3_defaults(tmp_path):
+    """A real record file written before this ticket (`tests/data/record-v1.yaml`),
+    loaded by the one reader this module ships today — the v3 fields it never
+    had come back `None`/omitted, not reconstructed or guessed."""
+    path = yaml_path(tmp_path, "rec-20250601T090000-aaaa11")
+    path.parent.mkdir(parents=True)
+    path.write_bytes((_DATA_DIR / "record-v1.yaml").read_bytes())
+    [got] = read(tmp_path)
+    assert got.record_version == 1
+    assert got.repeatability is None
+    assert got.steps[0].ops is None
+    assert got.steps[0].measurements[0].instrument_id is None
+    assert got.steps[0].measurements[0].instrument_simulated is None
+    assert got.steps[0].measurements[0].limit_source is None
+    assert "repeatability" not in got.to_mapping()
+    assert "ops" not in got.to_mapping()["steps"][0]
+
+
+def test_a_stored_v2_record_loads_with_the_v3_defaults(tmp_path):
+    """Same, for `tests/data/record-v2.yaml` — `calls` omitted (not collected,
+    v2-era), and still no v3 keys."""
+    path = yaml_path(tmp_path, "rec-20260101T120000-bbbb22")
+    path.parent.mkdir(parents=True)
+    path.write_bytes((_DATA_DIR / "record-v2.yaml").read_bytes())
+    [got] = read(tmp_path)
+    assert got.record_version == 2
+    assert got.calls is None
+    assert got.repeatability is None
+    assert got.steps[0].ops is None
+    assert got.steps[0].measurements[0].instrument_id is None
+    assert "repeatability" not in got.to_mapping()
+
+
+_V3_FULL = Record(
+    record="rec-20261001T100000-c0ffee",
+    unit="SN-000900",
+    station="bench-hemi",
+    sequence="psu-bringup",
+    sequence_version="9f8e7d6",
+    setup="bench.yaml",
+    setup_version="91efa96",
+    runner="pytest",
+    started="2026-10-01T10:00:00Z",
+    ended="2026-10-01T10:00:40Z",
+    repeatability=None,          # always null for now (#409) — no ticket fills it
+    steps=[
+        Step(
+            name="measure_vout",
+            verdict="pass",
+            ops=[
+                Op(device="psu", op="set_voltage", args={"volts": 3.3},
+                  side_effect="actuator", simulated=True, result="ok",
+                  value=None, retries=0, shal_txn="a1b2"),
+                Op(device="relay", op="close", args={}, side_effect="config",
+                  simulated=False, result="blocked",
+                  blocked=OpBlocked(reason="approval", message="no approver set")),
+                Op(device="psu", op="read_voltage", args={}, side_effect="none",
+                  simulated=True, result="error",
+                  error=OpError(message="no connection", address="sim0")),
+            ],
+            measurements=[
+                Measurement(name="vout", value=3.30, unit="V",
+                            limits=Limits(min=3.2, max=3.4), passed=True,
+                            instrument_id="dmm0", instrument_simulated=True,
+                            limit_source=LimitSource(
+                                document="buck-5v-3v3 datasheet", revision="rev B")),
+            ],
+        ),
+    ],
+)
+
+
+def test_a_v3_record_round_trips_with_every_new_key_present(tmp_path):
+    write(_V3_FULL, tmp_path)
+    assert read(tmp_path) == [_V3_FULL]
+    assert _read_yaml(tmp_path, _V3_FULL.record) == _V3_FULL
+    assert _read_db(tmp_path, _V3_FULL.record) == _V3_FULL
+
+    doc = yaml.safe_load(yaml_path(tmp_path, _V3_FULL.record).read_text(encoding="utf-8"))
+    assert doc["record_version"] == 3
+    assert doc["repeatability"] is None
+    op0, op1, op2 = doc["steps"][0]["ops"]
+    assert op0 == {"device": "psu", "op": "set_voltage", "args": {"volts": 3.3},
+                   "side_effect": "actuator", "simulated": True, "result": "ok",
+                   "value": None, "retries": 0, "shal_txn": "a1b2",
+                   "error": None, "blocked": None}
+    assert op1["result"] == "blocked"
+    assert op1["blocked"] == {"reason": "approval", "message": "no approver set"}
+    assert op1["error"] is None
+    assert op2["result"] == "error"
+    assert op2["error"] == {"message": "no connection", "address": "sim0"}
+    assert op2["blocked"] is None
+    meas = doc["steps"][0]["measurements"][0]
+    assert meas["instrument_id"] == "dmm0"
+    assert meas["instrument_simulated"] is True
+    assert meas["limit_source"] == {"document": "buck-5v-3v3 datasheet", "revision": "rev B"}
+
+
+def test_ops_is_the_per_step_key_never_confused_with_the_top_level_calls(tmp_path):
+    rec = _with(record="rec-ops-vs-calls", calls=[{"capability": "x"}],
+               steps=[Step(name="s", verdict="pass",
+                          ops=[Op(device="psu", op="set_voltage", args={}, result="ok",
+                                 side_effect="actuator")])])
+    write(rec, tmp_path)
+    [got] = read(tmp_path)
+    assert got.calls == ({"capability": "x"},)
+    assert got.steps[0].ops == (Op(device="psu", op="set_voltage", args={},
+                                   side_effect="actuator", result="ok"),)
+    doc = yaml.safe_load(yaml_path(tmp_path, rec.record).read_text(encoding="utf-8"))
+    assert "ops" not in doc            # top-level: never
+    assert doc["steps"][0]["ops"][0]["op"] == "set_voltage"
+
+
+def test_an_op_error_must_be_set_if_and_only_if_result_is_error():
+    with pytest.raises(RecordError, match="error"):
+        Op(device="d", op="o", args={}, side_effect="none", result="error")
+    with pytest.raises(RecordError, match="error"):
+        Op(device="d", op="o", args={}, side_effect="none", result="ok",
+          error=OpError(message="x", address="y"))
+
+
+def test_an_op_blocked_must_be_set_if_and_only_if_result_is_blocked():
+    with pytest.raises(RecordError, match="blocked"):
+        Op(device="d", op="o", args={}, side_effect="none", result="blocked")
+    with pytest.raises(RecordError, match="blocked"):
+        Op(device="d", op="o", args={}, side_effect="none", result="ok",
+          blocked=OpBlocked(reason="limits", message="x"))
+
+
+def test_an_unknown_blocked_reason_is_refused(tmp_path):
+    doc = _with(steps=[Step(name="s", verdict="pass",
+                           ops=[Op(device="d", op="o", args={}, side_effect="none",
+                                  result="blocked",
+                                  blocked=OpBlocked(reason="limits", message="x"))])]
+               ).to_mapping()
+    doc["steps"][0]["ops"][0]["blocked"]["reason"] = "gremlins"
+    with pytest.raises(RecordError, match="reason"):
+        Record.from_mapping(doc)
+
+
+# CTO review on #409 (PR #452): the writer must refuse what its own reader
+# would refuse, at construction time -- not only discover it on the next
+# `read()`, by which point a bad record is already on disk.
+
+def test_an_unknown_op_result_is_refused_at_construction():
+    with pytest.raises(RecordError, match="result"):
+        Op(device="d", op="o", args={}, side_effect="none", result="weird")
+
+
+def test_an_unknown_blocked_reason_is_refused_at_construction():
+    with pytest.raises(RecordError, match="reason"):
+        OpBlocked(reason="weird", message="x")
+
+
+@pytest.mark.parametrize("bad", ["three", None, -1, True])
+def test_a_bad_retries_is_refused_at_construction(bad):
+    with pytest.raises(RecordError, match="retries"):
+        Op(device="d", op="o", args={}, side_effect="none", result="ok", retries=bad)
+
+
+def test_a_bad_retries_in_a_stored_file_is_refused_on_read():
+    doc = _with(steps=[Step(name="s", verdict="pass",
+                           ops=[Op(device="d", op="o", args={}, side_effect="none",
+                                  result="ok")])]).to_mapping()
+    doc["steps"][0]["ops"][0]["retries"] = "three"
+    with pytest.raises(RecordError, match="retries"):
+        Record.from_mapping(doc)
+
+
 @pytest.mark.parametrize("drop", [None, "unit", "steps", "verdict"])
 def test_a_newer_record_is_refused_in_one_sentence_naming_no_key(drop):
     doc = FULL.to_mapping()
-    doc["record_version"] = 3
+    doc["record_version"] = 4
     if drop:
-        del doc[drop]                           # a v3 record may well lack a v2 key
+        del doc[drop]                           # a v4 record may well lack a v3 key
     with pytest.raises(RecordError) as err:
         Record.from_mapping(doc, source="r.yaml")
     assert str(err.value) == f"r.yaml: {_NEWER}"
@@ -303,7 +487,7 @@ def test_read_refuses_the_whole_store_when_one_record_is_newer(tmp_path):
     # whole read, as before: a silent skip would under-report the station.
     write(MINIMAL, tmp_path)
     doc = FULL.to_mapping()
-    doc["record_version"] = 3
+    doc["record_version"] = 4
     _write_doc(tmp_path, doc)
     with pytest.raises(RecordError, match=re.escape(_NEWER)):
         read(tmp_path)
@@ -319,25 +503,25 @@ def test_read_skip_returns_every_readable_record_and_the_skipped_list(tmp_path):
     write(MINIMAL, tmp_path)
     write(FULL, tmp_path)
     doc = _with(record="rec-20260909T160000-v3v3v3").to_mapping()
-    doc["record_version"] = 3
-    del doc["unit"]                             # a v3 record may well lack a v2 key
+    doc["record_version"] = 4
+    del doc["unit"]                             # a v4 record may well lack a v3 key
     _write_doc(tmp_path, doc)
 
     records, skipped = read(tmp_path, newer="skip")
     assert records == [MINIMAL, FULL]           # ordered by started, as ever
-    assert skipped == [("rec-20260909T160000-v3v3v3", 3)]
+    assert skipped == [("rec-20260909T160000-v3v3v3", 4)]
 
 
 def test_read_skip_takes_the_id_from_the_store_not_from_the_record(tmp_path):
     # A newer version may rename or drop the `record` field; the id a caller can
     # act on is the one the store files it under.
     doc = FULL.to_mapping()
-    doc["record_version"] = 3
+    doc["record_version"] = 4
     _write_doc(tmp_path, doc)
     del doc["record"]
     yaml_path(tmp_path, FULL.record).write_text(yaml.safe_dump(doc, sort_keys=False),
                                                 encoding="utf-8", newline="\n")
-    assert read(tmp_path, newer="skip") == ([], [(FULL.record, 3)])
+    assert read(tmp_path, newer="skip") == ([], [(FULL.record, 4)])
 
 
 def test_read_skip_lists_a_newer_db_only_record_and_ignores_the_filters(tmp_path):

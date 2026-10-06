@@ -35,6 +35,16 @@ All notable changes to this project are documented here. The format follows
   other actuator and ask for approval. Sonos reads stay `none`.
 
 ### Added
+- **`record_version` 3 reserves `Step.ops`, `Measurement.instrument_id`/
+  `instrument_simulated`/`limit_source` and `Record.repeatability`** (#409,
+  `record.md` §2.1). All new keys are always present in a v3 record, `null`
+  when unknown — an agent sees every key without reading docs. `ops` is the
+  per-step list of SHAL op calls (`device`, `op`, `args`, `side_effect`,
+  `simulated`, `result: ok | error | blocked`, `value`, `retries`,
+  `shal_txn`, `error`, `blocked`), the schema'd sibling of the record's own
+  free-form top-level `calls` — never confused, because the key differs.
+  Nothing fills these fields yet (out of scope for this ticket); a v1/v2
+  record still reads with all of them `None`.
 - **The virtual bench ships as a sample: `shal docs --sample virtual-bench --to DIR`
   (#384).** `examples/demos/virtual-bench` is in no wheel, so a cold agent with only
   the installed package couldn't find it; it's now also `src/shal/samples/virtual-bench/`
