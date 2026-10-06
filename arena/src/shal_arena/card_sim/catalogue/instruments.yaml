@@ -8,3 +8,7 @@ instruments:
     replacement_usd: 1200
     fuse_a: 0.4
     fuse_source: "DMM datasheet, current input fuse rating"
+  relay-modbus:
+    replacement_usd: 400
+  sht31:
+    replacement_usd: 150

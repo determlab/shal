@@ -1,0 +1,17 @@
+arena_card: 1
+id: buck-12v-relay
+description: "Fictional card, no real part. 12 V input through a relay, buck to 3.3 V, one test point tp_3v3, plus a regulator temperature test point."
+inputs:
+  vin: {nominal_v: 12.0}
+rails:
+  3v3: {from: vin, nominal_v: 3.3, tol_pct: 3, test_point: tp_3v3, min_input_v: 10.5, tol_source: "buck-12v-relay datasheet 3.2 output accuracy (fictional datasheet)"}
+temp_points:
+  regulator: {nominal_c: 45.0, test_point: tp_reg_temp, high_c: 85.0, tol_source: "buck-12v-relay datasheet 5.1 thermal derating (fictional datasheet)"}
+damage:
+  - {input: vin, above_v: 13.0, effect: protection, source: "datasheet 7.3 OVP (fictional datasheet)"}
+  - {input: vin, above_v: 14.0, effect: destroyed, source: "datasheet 6.1 abs max (fictional datasheet)"}
+faults:
+  - {id: ok, rail: 3v3}
+  - {id: low_voltage, rail: 3v3, shift_v: -0.40}
+  - {id: open, rail: 3v3}
+  - {id: overheat, temp_point: regulator, shift_c: 45.0}

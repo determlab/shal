@@ -16,20 +16,23 @@ from shal import registry
 
 from shal_arena.runner import check_instrument_driver, start_run, take_measurement
 
-from .conftest import SAMPLE_TASK
+from .conftest import RELAY_RAIL_TASK, SAMPLE_TASK
 
 _EXAMPLES_DIR = Path(__file__).resolve().parent.parent / "examples"
 MINIMAL_PSU_DRIVER = _EXAMPLES_DIR / "minimal_psu_driver.py"
 MINIMAL_DMM_DRIVER = _EXAMPLES_DIR / "minimal_dmm_driver.py"
+MINIMAL_RELAY_DRIVER = _EXAMPLES_DIR / "minimal_relay_driver.py"
+MINIMAL_TEMP_DRIVER = _EXAMPLES_DIR / "minimal_temp_driver.py"
 
 
 @pytest.fixture(autouse=True)
 def _clean_registry_slots():
-    """Neither minimal example uses override=True (arena#394 made that
-    unnecessary) -- start each test from a clean slot for both compatibles,
+    """None of the minimal examples use override=True (arena#394 made that
+    unnecessary) -- start each test from a clean slot for every compatible,
     same reasoning as test_bench_driver_once.py's own fixture."""
     saved = {c: list(registry._entries.get(c, [])) for c in
-             ("arena,bench-psu1", "arena,bench-dmm1")}
+             ("arena,bench-psu1", "arena,bench-dmm1",
+              "arena,bench-relay1", "arena,bench-temp1")}
     for c in saved:
         registry._entries[c] = []
     try:
@@ -66,6 +69,34 @@ def test_minimal_dmm_driver_example_takes_a_real_reading(tmp_path: Path) -> None
     # instrument is reachable, and this is a real reading, not just a check.
     result = take_measurement(run_id, "dmm0", MINIMAL_DMM_DRIVER, state_dir=tmp_path)
     assert isinstance(result["reading"], float)
+
+
+def test_minimal_relay_driver_example_passes_check(tmp_path: Path) -> None:
+    run_id = start_run(str(RELAY_RAIL_TASK), seed=1, state_dir=tmp_path)["run_id"]
+    report = check_instrument_driver(run_id, "relay0", MINIMAL_RELAY_DRIVER, state_dir=tmp_path)
+    assert report["passed"] is True, report["problems"]
+
+
+def test_minimal_temp_driver_example_passes_check(tmp_path: Path) -> None:
+    run_id = start_run(str(RELAY_RAIL_TASK), seed=1, state_dir=tmp_path)["run_id"]
+    report = check_instrument_driver(run_id, "temp0", MINIMAL_TEMP_DRIVER, state_dir=tmp_path)
+    assert report["passed"] is True, report["problems"]
+
+
+def test_minimal_temp_driver_example_takes_a_real_reading(tmp_path: Path) -> None:
+    run_id = start_run(str(RELAY_RAIL_TASK), seed=1, state_dir=tmp_path)["run_id"]
+    result = take_measurement(run_id, "temp0", MINIMAL_TEMP_DRIVER, state_dir=tmp_path)
+    assert isinstance(result["reading"], float)
+
+
+def test_minimal_relay_driver_example_calls_through_shal(tmp_path: Path) -> None:
+    from shal_arena.runner import call_op
+
+    run_id = start_run(str(RELAY_RAIL_TASK), seed=1, state_dir=tmp_path)["run_id"]
+    result = call_op(run_id, "relay0", MINIMAL_RELAY_DRIVER, "read_relay", ["0"],
+                     state_dir=tmp_path)
+    assert result["ok"] is True
+    assert result["result"] is True
 
 
 def test_readme_examples_use_task_names_not_repo_paths() -> None:

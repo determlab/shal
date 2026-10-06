@@ -11,7 +11,7 @@ from pathlib import Path
 
 from .conftest import SAMPLE_TASK
 
-_NAMES = ["easy", "medium", "hard", "rail-3v3"]
+_NAMES = ["easy", "medium", "hard", "rail-3v3", "relay-rail"]
 
 
 def _cli(args: list[str], cwd: Path) -> subprocess.CompletedProcess:

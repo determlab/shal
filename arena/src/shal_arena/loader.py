@@ -124,7 +124,7 @@ def load_task(task_path: str | Path) -> LoadedTask:
 
 def _cross_check(task: Task, card: Card, task_path: Path) -> None:
     input_names = {i.name for i in card.inputs}
-    test_points = {r.test_point for r in card.rails}
+    test_points = {r.test_point for r in card.rails} | {t.test_point for t in card.temp_points}
 
     for i, instrument in enumerate(task.instruments):
         where = f"{task_path}: task.instruments[{i}]"

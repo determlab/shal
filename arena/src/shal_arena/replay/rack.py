@@ -10,8 +10,8 @@ with no hardware and no extra `--drivers` file.
 
 A case with no packaged `harness/sim.py` yet renders grey, with a link to
 file a `driver-request` issue instead of a rack slot — this never happens
-for either of the two cases packaged today, but the mechanism holds for
-every case `cases.py` adds later without this file changing.
+for any case packaged today, but the mechanism holds for every case
+`cases.py` adds later without this file changing.
 
 "The page does nothing that cannot also be done without it" (issue #315
 Scope): `build_setup_yaml` is the whole mechanism; `render_rack_page` is
@@ -24,6 +24,7 @@ from __future__ import annotations
 import html
 import json
 from dataclasses import dataclass
+from typing import Any
 
 import yaml
 
@@ -60,23 +61,38 @@ def rack_tiles() -> list[Tile]:
     return out
 
 
+def _bus_and_address(case) -> tuple[str, Any]:
+    """The bus `driver:` and child `address` this case's own packaged
+    harness topology uses — read from that file rather than assumed, so a
+    case on a bus other than `shal,sim-scpi` (`shal,sim-i2c`'s address
+    grammar is a 7-bit int, `shal,sim-msg`'s is any non-empty label) gets a
+    `setup.yaml` that actually loads."""
+    doc = yaml.safe_load(case.harness_topology.read_text(encoding="utf-8"))
+    bench_spec = next(iter(doc["root"].values()))
+    child_spec = next(iter(bench_spec["children"].values()))
+    return bench_spec["driver"], child_spec["address"]
+
+
 def build_setup_yaml(case_names: list[str]) -> str:
-    """The `setup.yaml` a rack of ``case_names`` builds — one `shal,sim-scpi`
-    bench per slot, each carrying one node of that case's own `compatible`
-    driver (the same one `shal-arena check-driver` binds against). Raises
-    `shal_arena.errors.TaskFormatError` (via `resolve_case`) on an unknown
-    case name, naming the fix, same as every other arena entry point."""
+    """The `setup.yaml` a rack of ``case_names`` builds — one sim bench per
+    slot (the bus each case's own packaged harness uses — see
+    `_bus_and_address`), each carrying one node of that case's own
+    `compatible` driver (the same one `shal-arena check-driver` binds
+    against). Raises `shal_arena.errors.TaskFormatError` (via
+    `resolve_case`) on an unknown case name, naming the fix, same as every
+    other arena entry point."""
     if not case_names:
         raise ValueError("pick at least one instrument tile for the rack")
     root: dict[str, dict] = {}
     for i, name in enumerate(case_names):
         case = resolve_case(name)  # unknown name -> TaskFormatError with a fix
+        bus_driver, address = _bus_and_address(case)
         node_id = name.replace("-", "_")
         root[f"bench{i}"] = {
-            "driver": "shal,sim-scpi",
+            "driver": bus_driver,
             "address": f"sim{i}",
             "children": {
-                node_id: {"driver": case.compatible, "address": 1},
+                node_id: {"driver": case.compatible, "address": address},
             },
         }
     doc = {"shal_version": 1, "root": root}

@@ -25,7 +25,7 @@ from typing import Any
 
 import yaml
 
-from .schema import Card, Rail
+from .schema import Card, Rail, TempPoint
 
 # the realized ripple for a 'noise' run is the card's own ripple_vpp, rescaled
 # by this seed-derived factor — so two different seeds that both happen to
@@ -60,6 +60,16 @@ def rail_for_fault(card: Card, realized: RealizedFault) -> Rail | None:
     if rail_name is None:
         return None
     return next((r for r in card.rails if r.name == rail_name), None)
+
+
+def temp_point_for_fault(card: Card, realized: RealizedFault) -> TempPoint | None:
+    """The card temperature point ``realized`` targets (e.g. ``overheat``),
+    or `None` for a fault with no ``temp_point`` — the temperature analogue
+    of `rail_for_fault`."""
+    temp_name = realized.extra.get("temp_point")
+    if temp_name is None:
+        return None
+    return next((t for t in card.temp_points if t.name == temp_name), None)
 
 
 def harness_for_run(case: Any, *, rail: Rail, realized: RealizedFault, seed: int) -> dict:
