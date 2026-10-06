@@ -32,7 +32,7 @@ jobs:
       - name: Lint
         run: ruff check src tests
       - name: Test
-        run: python -m pytest --cov=shal --cov-report=term-missing
+        run: python -m pytest -rs --cov=shal --cov-report=term-missing
 
   examples:
     # Keep examples/ alive: a src/shal change that breaks a demo or the
@@ -324,4 +324,4 @@ jobs:
           shal-mcp --help > /dev/null
           shal mcp --help > /dev/null
       - name: Test
-        run: python -m pytest
+        run: python -m pytest -rs
