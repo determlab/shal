@@ -73,12 +73,24 @@ class RunStore:
         # issue #435: the old bare name read as a SHAL core record (the
         # core package's own record format) to anyone who hasn't read this
         # file's own code -- this is the arena's own run record, a
-        # different shape entirely. Old run folders written before this
-        # rename are not migrated (Scope: "no migration").
+        # different shape entirely. A run `answer`s from here on always
+        # WRITES the new name -- `record_path` below is the one place that
+        # also reads the old one, for a capture made before this rename.
         return self.dir / f"{run_id}.arena-record.json"
 
+    def _legacy_record_path(self, run_id: str) -> Path:
+        return self.dir / f"{run_id}.record.json"
+
     def record_path(self, run_id: str) -> Path:
-        return self._record_path(run_id)
+        """The run's own record file -- the new name, or (issue #435 CTO
+        review: "export and verify must still read old captures") the old
+        bare `record.json` name, for a capture made before this rename and
+        never migrated. Never writes either path; only picks which one a
+        reader should open."""
+        new_path = self._record_path(run_id)
+        if not new_path.is_file() and self._legacy_record_path(run_id).is_file():
+            return self._legacy_record_path(run_id)
+        return new_path
 
     def sim_log_path(self, run_id: str) -> Path:
         """Issue #312: the sim log is player-readable (it never names the
