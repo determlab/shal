@@ -84,7 +84,7 @@ header .sub { font-size: 13px; color: var(--dim); margin-top: 2px; }
 .bench .wire.flash { stroke: var(--stop); }
 .bench .rail-line { stroke: var(--dim); stroke-width: 2; }
 .bench .probe-dot { fill: var(--dim); }
-.bench .refused-label { fill: var(--gate); font-size: 15px; font-weight: 700; }
+.bench .refused-dot { fill: var(--gate); }
 .bench .box { fill: #1F242C; stroke: var(--line); stroke-width: 1.5; }
 .bench .card-box.ok { stroke: var(--ok); }
 .bench .card-box.protection { stroke: var(--gate); }
@@ -135,7 +135,11 @@ _BENCH_SVG = """
   <text x="38" y="83" text-anchor="middle" class="mono-label" id="psu-value">&#8212;</text>
 
   <path class="wire" id="wire-psu-card" d="M70 79 H118"/>
-  <text x="94" y="68" text-anchor="middle" class="refused-label" id="refused-label"></text>
+  <!-- #427: a dot, not text -- "refused" as a word did not clear the 48-unit
+       gap between the PSU and card boxes at any font that still reads as
+       body text. The timeline's own "refused" pill already carries the
+       word; this is just a persistent, silent reminder on the wire. -->
+  <circle cx="94" cy="79" r="4" class="refused-dot" id="refused-dot" style="display:none"/>
 
   <rect class="box card-box ok" id="card-box" x="118" y="32" width="144" height="92" rx="10"/>
   <text x="190" y="24" text-anchor="middle">Card</text>
@@ -307,7 +311,7 @@ function renderBench(payload) {
   // #406 CTO review: "refused" stays as a small amber label once the flash
   // has settled -- the wire itself is grey, never permanently red.
   const sawRefused = payload.timeline.some(e => e.kind === "refused");
-  document.getElementById("refused-label").textContent = sawRefused ? "refused" : "";
+  document.getElementById("refused-dot").style.display = sawRefused ? "" : "none";
 }
 
 function flash(el) {
@@ -399,6 +403,34 @@ function renderResult(payload) {
     + (sentence ? `<div class="row">${sentence}</div>` : "") + "</div>";
 }
 
+// issue #406 follow-up: "Drivers written by the agent" -- folded, one line
+// above each: "The driver the agent wrote for the <name>, <n> lines".
+// Built with textContent, never innerHTML, so the code itself (arbitrary
+// text) can never be interpreted as markup.
+function renderDriverCode(payload) {
+  const section = document.getElementById("driver-code-section");
+  const drivers = payload.drivers || {};
+  const names = Object.keys(drivers);
+  section.innerHTML = "";
+  if (names.length === 0) return;
+  const label = document.createElement("div");
+  label.className = "section-label";
+  label.textContent = "Drivers written by the agent";
+  section.appendChild(label);
+  for (const name of names) {
+    const d = drivers[name];
+    const details = document.createElement("details");
+    details.className = "driver-code";
+    const summary = document.createElement("summary");
+    summary.textContent = `The driver the agent wrote for the ${name}, ${d.lines} lines`;
+    const pre = document.createElement("pre");
+    pre.textContent = d.code;
+    details.appendChild(summary);
+    details.appendChild(pre);
+    section.appendChild(details);
+  }
+}
+
 function render(payload) {
   document.getElementById("title").textContent = payload.title;
   document.getElementById("sub").textContent =
@@ -409,6 +441,7 @@ function render(payload) {
   renderPlainLine(payload);
   renderBench(payload);
   renderTimeline(payload);
+  renderDriverCode(payload);
   renderScriptedSection(payload);
   renderResult(payload);
 }
