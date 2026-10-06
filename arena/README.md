@@ -19,6 +19,24 @@ case below.
 pip install -e ".[dev]"   # from arena/, with pyshal already installed
 ```
 
+## See it run
+
+No clone, no config, no task of your own needed — issue #410 ships the
+whole story (a virtual bench pass, a blocked 30 V request, three arena
+tasks measured and answered for real, a result card, and the gate-on/off
+benchmark) inside the installed package itself:
+
+```bash
+shal-arena demo --json
+```
+
+prints one JSON document (`{"ok", "record_path", "card_path", "steps", ...}`)
+— `record_path` and `card_path` are absolute paths to real files this run
+just wrote, ready to open. Drop `--json` to watch it narrate instead
+(`--pause 0` skips the pauses between steps either way); see
+[`examples/demos/story/README.md`](../examples/demos/story/README.md) for
+the full walkthrough and what each step proves.
+
 ## Agent path: card, replay, rack and setup.yaml
 
 Every command below is non-interactive, takes `--json`, and is pasted

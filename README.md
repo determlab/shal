@@ -313,7 +313,12 @@ already have) —
 `pip install pytest==9.1.1 "pytest-shal @ git+https://github.com/determlab/pytest-shal@f45937de74737473e3b2b896b25bef087468da40"`
 **(main only, not in the PyPI release yet)** — then `python bench/run_bench.py` runs it
 and prints one line of JSON. For scored, agent-driven practice on top of it:
-`pip install shal-arena`.
+`pip install shal-arena` **(main only, not in the PyPI release yet)**, then
+`shal-arena demo --json` runs the whole challenge story — a virtual bench
+pass, a blocked 30 V request, three scored arena tasks, a result card, and
+the SHAL gate compared on and off — with no clone and no task of your own;
+`--json` prints `record_path`/`card_path`, absolute paths to the files it
+just wrote, ready to open.
 
 `shal docs` prints the authoring guide that ships inside the package — how to
 add your own device, with no network and nothing to clone.
