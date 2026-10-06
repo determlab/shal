@@ -9,7 +9,7 @@ viewer sees until the animation itself reaches the end.
 """
 from __future__ import annotations
 
-import json
+import html
 import time
 from pathlib import Path
 from typing import Any
@@ -17,7 +17,14 @@ from typing import Any
 from ..errors import ArenaError
 from ..store import DEFAULT_STATE_DIR
 from .data import run_payload
-from .page import _BENCH_SVG, _SCRIPT, _STYLE, REPO_URL, SAFETY_LINE  # noqa: F401 - reused verbatim
+from .page import (  # noqa: F401 - reused verbatim
+    _BENCH_SVG,
+    _SCRIPT,
+    _STYLE,
+    REPO_URL,
+    SAFETY_LINE,
+    safe_json,
+)
 
 
 class RunNotFinished(ArenaError):
@@ -53,7 +60,12 @@ function startExport(fullPayload) {
 
 
 def _label(agent: str | None, date: str) -> str:
-    return f"Replay of a recorded run · {agent or 'agent'} · {date} · simulated instruments"
+    # issue #406 CTO review: --agent and the record's own closed_at both go
+    # into the HTML as text, not data -- html.escape, not safe_json (which
+    # only protects a `</script>` breakout, not a bare `<tag>`).
+    safe_agent = html.escape(agent or "agent")
+    safe_date = html.escape(date)
+    return f"Replay of a recorded run · {safe_agent} · {safe_date} · simulated instruments"
 
 
 def render_export_page(payload: dict[str, Any], *, agent: str | None = None) -> str:
@@ -63,7 +75,7 @@ def render_export_page(payload: dict[str, Any], *, agent: str | None = None) -> 
     date = (payload.get("record") or {}).get("closed_at", time.strftime(
         "%Y-%m-%dT%H:%M:%SZ", time.gmtime()))[:10]
     label = _label(agent, date)
-    payload_json = json.dumps(payload)
+    payload_json = safe_json(payload)
     body = f"""<!doctype html>
 <html lang="en">
 <head>

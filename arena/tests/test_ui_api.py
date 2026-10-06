@@ -84,3 +84,36 @@ def test_a_bad_path_is_a_clean_404_not_a_crash(running_server):
     _run_id, httpd = running_server
     status, _ = _get(httpd, "/nothing/here")
     assert status == 404
+
+
+def test_safe_json_escapes_a_script_breakout() -> None:
+    from shal_arena.ui.page import safe_json
+
+    hostile = "ok</script><script>window.pwned=1</script>"
+    out = safe_json({"given": hostile})
+    assert "</script>" not in out
+    assert "\\u003c/script>" in out
+    assert json.loads(out) == {"given": hostile}   # round-trips to the real value
+
+
+def test_render_watch_page_escapes_a_hostile_record_given() -> None:
+    """CTO review round 3: `record.given` is never checked against the
+    fault ids -- a hostile answer must not be able to close the <script>
+    tag its own data sits in. Built directly from a hand-made payload
+    (not a real run) so this is a focused, fast unit test of page.py
+    alone, same thing test_ui_export.py checks end to end for the export."""
+    from shal_arena.ui.page import render_watch_page
+
+    hostile = "ok</script><script>window.pwned=1</script>"
+    payload = {
+        "run_id": "run-x", "task_id": "t", "title": "T", "question": "Q",
+        "status": "closed", "closed": True, "turns": 0, "instruments": [],
+        "tiles": {}, "card": {"applied": {}, "destroyed": False}, "timeline": [],
+        "record": {"given": hostile, "correct": False, "disqualified": False},
+        "score": None,
+    }
+    html = render_watch_page("run-x", payload)
+    assert "</script><script>window.pwned" not in html
+    assert "\\u003c/script>\\u003cscript>window.pwned" in html
+    assert html.count("<script") == 2
+    assert html.count("</script>") == 2

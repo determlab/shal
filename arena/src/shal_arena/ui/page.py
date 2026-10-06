@@ -20,6 +20,16 @@ from typing import Any
 
 REPO_URL = "https://github.com/determlab/shal"
 
+
+def safe_json(obj: Any) -> str:
+    """`json.dumps`, with every `<` escaped (issue #406 CTO review: a
+    `</script>` inside the DATA -- the agent's own answer, never checked
+    against the fault ids, can legitimately be any string -- would close
+    the script tag it sits in and inject markup). JSON strings never need a
+    literal `<`, so this is lossless; the embedding page always reads it
+    back with `JSON.parse`, never as literal HTML."""
+    return json.dumps(obj).replace("<", "\\u003c")
+
 #: CTO brand tokens (#406 round 2 approval) -- local stacks only, no network.
 _STYLE = """
 :root {
@@ -59,16 +69,20 @@ header .sub { font-size: 13px; color: var(--dim); margin-top: 2px; }
 .bench { margin: 0 16px 16px; padding: 10px; background: var(--panel);
   border: 1px solid var(--line); border-radius: 12px; }
 .bench svg { width: 100%; height: auto; display: block; }
-.bench text { font-size: 13px; fill: var(--dim); font-family: Inter, system-ui, sans-serif; }
+/* #406 CTO review: the SVG's own font-size is in viewBox units, not CSS
+   px -- a 380-wide viewBox renders ~338px wide inside the 390px .wrap
+   (16px side margins + 10px padding each side), so 13 viewBox units is
+   only ~11.5 actual px. 17 units * (338/380) ~= 15.1 actual px. */
+.bench text { font-size: 17px; fill: var(--dim); font-family: Inter, system-ui, sans-serif; }
 .bench .mono-label { font-family: "JetBrains Mono", ui-monospace, monospace;
-  fill: var(--text); font-size: 13px; font-weight: 700; }
+  fill: var(--text); font-size: 17px; font-weight: 700; }
 /* #406 CTO review: wires must read at >= 3:1 contrast on the #262B33 panel --
    var(--line) alone does not; var(--dim) does. */
 .bench .wire { stroke: var(--dim); stroke-width: 2; fill: none; transition: stroke .25s; }
 .bench .wire.flash { stroke: var(--stop); }
 .bench .rail-line { stroke: var(--dim); stroke-width: 2; }
 .bench .probe-dot { fill: var(--dim); }
-.bench .refused-label { fill: var(--gate); font-size: 13px; font-weight: 700; }
+.bench .refused-label { fill: var(--gate); font-size: 17px; font-weight: 700; }
 .bench .box { fill: #1F242C; stroke: var(--line); stroke-width: 1.5; }
 .bench .card-box.ok { stroke: var(--ok); }
 .bench .card-box.protection { stroke: var(--gate); }
@@ -125,9 +139,10 @@ _BENCH_SVG = """
   <text x="190" y="100" text-anchor="middle" id="card-health">Card health: ok</text>
 
   <path class="wire" id="wire-card-dmm" d="M240 75 H308"/>
-  <!-- a drawn probe touching the rail/test point -->
-  <line x1="274" y1="62" x2="274" y2="75" class="wire" id="probe-lead"/>
-  <circle cx="274" cy="62" r="4" class="probe-dot" id="probe-dot"/>
+  <!-- the probe sits ON the test point (the rail line's own end, inside the
+       card box), #406 CTO review round 3 -- not floating on the wire. -->
+  <line x1="225" y1="62" x2="240" y2="75" class="wire" id="probe-lead"/>
+  <circle cx="225" cy="62" r="4" class="probe-dot" id="probe-dot"/>
 
   <rect class="box" x="308" y="55" width="64" height="40" rx="8"/>
   <text x="340" y="48" text-anchor="middle">DMM</text>
@@ -151,7 +166,8 @@ function stepTitle(e) {
   const addr = e.address || "";
   if (e.kind === "check") return `Checked driver on ${addr}`;
   if (e.kind === "measure") return `Measured ${addr}`;
-  if (e.kind === "query" || e.kind === "write") return `Read ${addr}`;
+  if (e.kind === "query") return `Read ${addr}`;
+  if (e.kind === "write") return `Wrote ${addr}`;
   if (e.kind === "refused") {
     const v = e.detail && e.detail.volts;
     return `Tried to set ${addr} to ${v} V`;   // never "Drove" -- nothing was sent
@@ -362,12 +378,12 @@ def render_watch_page(run_id: str, payload: dict[str, Any]) -> str:
     """The live page: embeds `payload` once (as data, in a JSON script tag --
     never pre-rendered fault text), then polls `/api/run/<run_id>` every
     second via `_SCRIPT`'s own `start()` until the run closes."""
-    payload_json = json.dumps(payload)
+    payload_json = safe_json(payload)
     shell = _shell(run_id)
     script_tag = (
         f'<script id="run-data" type="application/json">{payload_json}</script>\n'
         f"<script>{_SCRIPT}\n"
-        f"start({json.dumps(run_id)}, JSON.parse(document.getElementById('run-data')"
+        f"start({safe_json(run_id)}, JSON.parse(document.getElementById('run-data')"
         f".textContent));</script>\n"
     )
     return shell.replace("</body>", script_tag + "</body>")

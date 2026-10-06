@@ -74,6 +74,36 @@ def test_export_withholds_the_fault_from_the_static_shell(tmp_path: Path) -> Non
     assert fault in rest   # it is in the embedded data -- the run IS finished
 
 
+def test_export_escapes_a_hostile_answer_so_it_cannot_close_the_script_tag(
+    tmp_path: Path) -> None:
+    """CTO review round 3: `record.given` is never checked against the
+    fault ids, so it can legitimately be any string an agent writes --
+    including one crafted to break out of the <script> tag its own data
+    sits in and inject markup. The fix is `safe_json`'s `<` -> `\\u003c`;
+    confirm no literal `</script` survives in the embedded data, and the
+    hostile <script> never appears as its own, separate tag."""
+    hostile = "ok</script><script>window.pwned=1</script>"
+    run_id = _finished_run(tmp_path, given=hostile)
+    html = build_export(run_id, state_dir=tmp_path)
+
+    assert "</script><script>window.pwned" not in html
+    assert "\\u003c/script>\\u003cscript>window.pwned" in html
+    # exactly two real <script> tags: the data blob and the one behavior
+    # script -- a successful injection would add a third.
+    assert html.count("<script") == 2
+    assert html.count("</script>") == 2
+
+
+def test_export_escapes_a_hostile_agent_label(tmp_path: Path) -> None:
+    """CTO review round 3: --agent goes into the HTML as visible text, not
+    JSON -- html.escape, not safe_json (which only stops a </script>
+    breakout, not a bare <tag>)."""
+    run_id = _finished_run(tmp_path)
+    html = build_export(run_id, state_dir=tmp_path, agent="<b>pwned</b>")
+    assert "<b>pwned</b>" not in html
+    assert "&lt;b&gt;pwned&lt;/b&gt;" in html
+
+
 def test_export_never_calls_the_live_poller(tmp_path: Path) -> None:
     """The export's own driver is `startExport(...)`; it must never also
     invoke the live page's `start(...)` (its `fetch`-based poll loop), the
