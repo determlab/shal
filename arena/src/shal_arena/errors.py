@@ -82,3 +82,15 @@ class LockTimeout(ArenaError):
     mistake — a healthy run never hits this."""
 
     exit_code = 1
+
+
+class FileBusy(ArenaError):
+    """issue #449 (follow-up to #436/#442 CTO review): ``store.py``'s
+    ``_retry_on_permission_error`` retries a transient Windows
+    ``PermissionError`` (a reader's open landing on the exact instant an
+    ``os.replace`` or a read runs) for a short deadline, then re-raises. A
+    raw ``PermissionError`` past that deadline would print a traceback with
+    no fix; this names the file and the one thing to do instead. Exit 1: a
+    crash, not a usage mistake."""
+
+    exit_code = 1
