@@ -47,6 +47,26 @@ def test_start_run_returns_task_text_instrument_list_and_run_id(tmp_path: Path) 
         assert "drives" in inst or "probe" in inst
 
 
+def test_start_run_states_the_rail_limit_in_volts_matching_the_card(tmp_path: Path) -> None:
+    """issue #428: without a numeric limit in the run JSON, the agent has to
+    guess one -- a real run judged "2.9 V is outside 3.3 V +/-5-10%" against
+    a tolerance it invented, when the card (buck-5v-3v3.yaml) already says
+    tol_pct: 3."""
+    result = start_run(SAMPLE_TASK, state_dir=tmp_path)
+    loaded = load_task(SAMPLE_TASK)
+    card_rail = loaded.card.rails[0]
+
+    rails = result["rails"]
+    assert len(rails) == 1
+    rail = rails[0]
+    assert rail["nominal_v"] == card_rail.nominal_v
+    assert rail["tol_pct"] == card_rail.tol_pct == 3
+    assert rail["min_v"] == pytest.approx(card_rail.nominal_v * (1 - card_rail.tol_pct / 100))
+    assert rail["max_v"] == pytest.approx(card_rail.nominal_v * (1 + card_rail.tol_pct / 100))
+    assert rail["min_v"] == pytest.approx(3.3 * 0.97)
+    assert rail["max_v"] == pytest.approx(3.3 * 1.03)
+
+
 def test_no_file_the_player_can_read_contains_the_hidden_fault(tmp_path: Path) -> None:
     state_dir = tmp_path / "state"
     result = start_run(SAMPLE_TASK, state_dir=state_dir)
