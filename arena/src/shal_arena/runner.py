@@ -25,6 +25,7 @@ from __future__ import annotations
 
 import importlib.util
 import inspect
+import math
 import re
 import sys
 import typing
@@ -356,7 +357,19 @@ def drive_input(run_id: str, address: str, volts: float, *,
 
     Protection and damage here are a consequence of the player's own
     'drives' instrument, independent of the run's hidden fault — this never
-    reads or reveals it (DoD 4)."""
+    reads or reveals it (DoD 4).
+
+    CTO review on #407 round 2, must-fix 3: ``nan``/``inf`` compare False
+    against every damage limit, so they passed the gate as "sent" and left
+    the card simulation holding a non-finite applied voltage (a later read
+    of it is then invalid JSON) -- refused up front, naming the value,
+    before the gate or the sim ever sees it. This predates #407 (the CLI's
+    own ``shal-arena drive <run> psu0 nan`` has the same gap), but Play's
+    own HTTP route exposes it to any POST, so it is fixed here, the one
+    place both callers go through."""
+    if not math.isfinite(volts):
+        raise CheckCouldNotRun(f"drive: {volts} is not a finite number",
+                               fix="pass a finite voltage, e.g. 5.0")
     store = RunStore(state_dir)
     # one call that reaches the sim is one turn; also refuses a closed run
     # before anything is applied (issue #325).
@@ -811,6 +824,32 @@ def take_measurement(run_id: str, address: str, driver_path: str | Path, *,
     return result
 
 
+def has_any_measurement(run_id: str, state_dir: str | Path = DEFAULT_STATE_DIR) -> bool:
+    """True when this run's own measurement requirement is satisfied --
+    either a probe-less task (nothing to measure in the first place, so
+    there is nothing to require), or a probe-ful one where the player has
+    called `take_measurement` at least once on SOME probe instrument
+    (issue #407: the one check both `answer`'s own `disqualified` field
+    below and the Play UI's "Answer is off until you measure" rule share --
+    extracted here so Play can refuse the HTTP call before it closes the
+    run, from the exact same rule `answer` already enforces, never a
+    second one).
+
+    CTO review on #407 round 2, must-fix 4: `bool(probe_addresses) and
+    any(...)` made a probe-less task (drive-only, e.g. `conftest.py`'s
+    `minimal_task` fixture -- relay-rail actually has 2 probes, dmm0 and
+    temp0, so that was the wrong example) always disqualified -- there
+    being nothing to measure is not the same as the player having skipped
+    measuring something. A probe-less task's requirement is vacuously
+    satisfied."""
+    store = RunStore(state_dir)
+    state = store.load(run_id)
+    loaded = load_task(state.task_path)
+    sim_log = SimLog(store.sim_log_path(run_id))
+    probe_addresses = [str(i.address) for i in loaded.task.instruments if i.probe is not None]
+    return not probe_addresses or any(sim_log.has_measure(addr) for addr in probe_addresses)
+
+
 def answer(run_id: str, value: str, *, state_dir: str | Path = DEFAULT_STATE_DIR
           ) -> dict[str, Any]:
     """Close the run: compare ``value`` against the hidden fault and write the
@@ -836,9 +875,7 @@ def answer(run_id: str, value: str, *, state_dir: str | Path = DEFAULT_STATE_DIR
     record = store.answer(run_id, given=value, fault_id=fault_id)
 
     sim_log = SimLog(store.sim_log_path(run_id))
-    probe_addresses = [str(i.address) for i in loaded.task.instruments if i.probe is not None]
-    disqualified = bool(probe_addresses) and not any(
-        sim_log.has_measure(addr) for addr in probe_addresses)
+    disqualified = not has_any_measurement(run_id, state_dir)
     score = build_score(task_id=loaded.task.id, seed=state.seed, fault_id=fault_id,
                         given=value, correct=record["correct"], disqualified=disqualified,
                         created_at=state.created_at, closed_at=record["closed_at"],

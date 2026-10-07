@@ -335,9 +335,17 @@ timeline replayed as an animation, labelled "Replay of a recorded run ·
 `LABEL` · date · simulated instruments" at the top. Opens and plays offline;
 the only outside link anywhere on the page is the repo's own.
 
-Read-only: `ui` never writes to a run, and has no PLAY buttons (a separate
-ticket). Mobile-first — a 360 px wide screen, tap targets at least 44 px, no
-drag.
+Read-only with `--run <id>` (WATCH mode): every POST route 405s. With no
+`--run`, `shal-arena ui` starts in PLAY mode instead — no run open yet, a
+task picker, then the same write routes a person's buttons call
+(`measure`/`drive`/`switch`/`answer`), each running the exact runner.py
+function the CLI calls. A server serves one run at a time: `POST
+/api/play/start` again while a run is still open is refused ("finish
+(Answer) before starting another"); once `answer` closes it, the next
+`start` opens a fresh one on the SAME server -- no restart needed. Restarting
+the server itself loses whatever Play run was still open; Play cannot resume
+a run across a restart, so finish (Answer) before stopping it. Mobile-first —
+a 360 px wide screen, tap targets at least 44 px, no drag.
 
 ## Task and card format (v1)
 

@@ -54,3 +54,14 @@ def test_installed_wheel_has_card_sim_catalogue(tmp_path: Path) -> None:
         names = zf.namelist()
     assert any(n.endswith("shal_arena/card_sim/catalogue/instruments.yaml") for n in names), (
         f"card_sim/catalogue/*.yaml did not make it into the wheel: {names}")
+    # CTO review on #407 round 2, must-fix 2: Play's own reference drivers
+    # used to live in `arena/examples/`, which setuptools never packages at
+    # all (it is outside `src/`) -- a real `pip install` had no file for
+    # `ui.play.REFERENCE_DRIVERS` to open, and every Play control 400'd.
+    # `shal_arena.reference_drivers` is an ordinary in-package module,
+    # discovered by `[tool.setuptools.packages.find]` like any other --
+    # this proves it, in the one place that actually builds the wheel.
+    for module_name in ("psu_driver", "dmm_driver", "relay_driver", "temp_driver"):
+        assert any(n.endswith(f"shal_arena/reference_drivers/{module_name}.py")
+                  for n in names), (
+            f"reference_drivers/{module_name}.py did not make it into the wheel: {names}")
