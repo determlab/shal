@@ -471,7 +471,11 @@ def test_a_comma_in_the_userinfo_does_not_leak_through_sim_scpi() -> None:
     assert exc.response == "ftp://host"
 
 
-@pytest.mark.parametrize("text,expected", [
+# CTO ruling (PR #459, 01:22): the URL table runs through every text-
+# carrying bus (sim_scpi, scpi_raw here; scpi_raw's own run is in the core
+# `tests/test_buses.py`, since scpi_raw is core, not arena) -- one shared
+# table, so every bus is held to the exact same cases.
+_URL_TABLE = [
     ("(http://u:p@h:5025)", "(http://h:5025)"),
     ("see http://u:p@h:5025, ok", "see http://h:5025, ok"),
     ("(http://u:p@h/x?token=a)", "(http://h/x)"),
@@ -488,7 +492,10 @@ def test_a_comma_in_the_userinfo_does_not_leak_through_sim_scpi() -> None:
     ("http://u:p;w@h", "http://h"),
     ("http://u:pa)ss@h:80", "http://h:80"),
     ("http://bob:it's@h/", "http://h/"),
-])
+]
+
+
+@pytest.mark.parametrize("text,expected", _URL_TABLE)
 def test_redact_url_in_text_table(text: str, expected: str) -> None:
     """A direct table test of the helper (CTO review rounds 3-4): trailing
     punctuation a URL is normally wrapped in is never swallowed, a
@@ -497,6 +504,66 @@ def test_redact_url_in_text_table(text: str, expected: str) -> None:
     legal inside a URL's own userinfo (round 4) is ever treated as the end
     of the match."""
     assert shal_log.redact_url_in_text(text) == expected
+
+
+@scpi_sim_model("test,echo-scpi")
+class _EchoScpiModel:
+    """Echoes the command back as the reply -- lets one registered model
+    run the whole `_URL_TABLE` through a real `sim_scpi` bus, parametrized
+    by what's SENT rather than needing one fixed-reply model per case."""
+
+    def scpi(self, cmd: str) -> str:
+        return cmd
+
+
+_register_dummy_driver("test,echo-scpi", MessageTransport)
+
+
+@pytest.mark.parametrize("text,expected", _URL_TABLE)
+def test_url_table_through_a_real_sim_scpi_bus(text: str, expected: str) -> None:
+    """CTO ruling (PR #459, 01:22): per-bus tests run the URL table, not
+    only the bare-helper unit test above -- through the REAL redaction path
+    (`record_exchange` -> `_clean_payload` -> `redact_structured`), not
+    `redact_url_in_text` called directly."""
+    topo = {"shal_version": 1, "root": {"bench": {
+        "id": "bench", "driver": "shal,sim-scpi", "address": "sim0",
+        "children": {"p": {"id": "p", "driver": "test,echo-scpi",
+                           "address": "psu1"}}}}}
+    captured: list = []
+    with shal.load(topo) as hal, shal_log.exchange_sink(captured.append):
+        hal.get_node("bench").driver.exchange("psu1", {"scpi": text, "query": True})
+    (exc,) = captured
+    assert exc.request == expected
+    assert exc.response == expected
+
+
+@msg_sim_model("test,echo-msg")
+class _EchoMsgModel:
+    """Echoes the request dict back, with the table's text under `value` --
+    runs `_URL_TABLE` through a real `sim_msg` bus the same way the
+    `sim_scpi` test above does."""
+
+    def handle(self, msg: dict) -> dict:
+        return dict(msg)
+
+
+_register_dummy_driver("test,echo-msg", MessageTransport)
+
+
+@pytest.mark.parametrize("text,expected", _URL_TABLE)
+def test_url_table_through_a_real_sim_msg_bus(text: str, expected: str) -> None:
+    """CTO ruling (PR #459, 01:22): `sim_msg` carries free text as a dict
+    VALUE, not a loose string -- `redact_structured` must still reach and
+    clean it the same way through the real bus call."""
+    topo = {"shal_version": 1, "root": {"bench": {
+        "id": "bench", "driver": "shal,sim-msg", "address": "sim0",
+        "children": {"r": {"id": "r", "driver": "test,echo-msg", "address": "svc1"}}}}}
+    captured: list = []
+    with shal.load(topo) as hal, shal_log.exchange_sink(captured.append):
+        hal.get_node("bench").driver.exchange("svc1", {"value": text})
+    (exc,) = captured
+    assert exc.request["value"] == expected
+    assert exc.response["value"] == expected
 
 
 def test_a_secret_modbus_value_is_logged_only_in_redacted_form() -> None:
@@ -560,6 +627,32 @@ def test_a_secret_i2c_payload_is_logged_only_in_redacted_form() -> None:
     # hex-encoded (shal.log.redact): never the literal secret text
     assert "s3cr3t-token" not in exc.response
     assert exc.response == shal_log.redact(_SECRET_URL.encode())
+
+
+def test_a_long_i2c_payload_is_capped_at_redacts_64_byte_limit() -> None:
+    """CTO ruling (PR #459, 01:22): i2c rows go through `shal.log.redact`
+    (hex, 64-byte limit) -- not unbounded, the same cap the audit log
+    already uses. A payload over the limit must come out truncated with
+    `redact`'s own `…` marker, not hex-dumped in full."""
+    long_secret = ("s3cr3t-" * 10).encode()  # 70 bytes, over the 64-byte cap
+    assert len(long_secret) > 64
+
+    @sim_model("test,secret-i2c-long")
+    class _SecretI2cLongModel:
+        def txn(self, ops) -> bytes:
+            return long_secret
+
+    _register_dummy_driver("test,secret-i2c-long", ByteTransport)
+    topo = {"shal_version": 1, "root": {"bench": {
+        "id": "bench", "driver": "shal,sim-i2c", "address": "sim0",
+        "children": {"d": {"id": "d", "driver": "test,secret-i2c-long", "address": 73}}}}}
+    captured: list = []
+    with shal.load(topo) as hal, shal_log.exchange_sink(captured.append):
+        hal.get_node("bench").driver.txn(73, [Write(bytes([0])), Read(len(long_secret))])
+    (exc,) = captured
+    assert exc.response == shal_log.redact(long_secret)
+    assert exc.response.endswith("…")
+    assert "s3cr3t" not in exc.response  # hex, never the literal text either
 
 
 def test_record_exchange_is_a_noop_with_no_sink_active() -> None:
