@@ -1,9 +1,13 @@
 """issue #406 DoD: never show the fault before the run ends. Scans the page
 HTML and the `/api/run/<id>` JSON while a run is still open -- the realized
-fault for this seed must not appear in either, by any route."""
+fault for this seed must not appear in either, by any route. issue #407
+extends this to the Play routes: starting, driving and measuring through
+them must leak nothing either, the same as the WATCH-only path above."""
 from __future__ import annotations
 
+import json
 import threading
+import urllib.error
 import urllib.request
 from pathlib import Path
 
@@ -18,6 +22,18 @@ def _get(httpd, path: str) -> bytes:
     url = f"http://{HOST}:{httpd.server_address[1]}{path}"
     with urllib.request.urlopen(url, timeout=5) as resp:
         return resp.read()
+
+
+def _post(httpd, path: str, body: dict) -> tuple[int, bytes]:
+    url = f"http://{HOST}:{httpd.server_address[1]}{path}"
+    data = json.dumps(body).encode("utf-8")
+    req = urllib.request.Request(url, data=data, method="POST",
+                                 headers={"Content-Type": "application/json"})
+    try:
+        with urllib.request.urlopen(req, timeout=5) as resp:
+            return resp.status, resp.read()
+    except urllib.error.HTTPError as e:
+        return e.code, e.read()
 
 
 def test_no_fault_name_appears_before_the_run_ends(tmp_path: Path) -> None:
@@ -50,6 +66,35 @@ def test_no_fault_name_appears_before_the_run_ends(tmp_path: Path) -> None:
     # no score, while the run is open.
     assert '"record": null' in api
     assert '"score": null' in api
+
+
+def test_play_routes_never_leak_the_fault_before_the_run_ends(tmp_path: Path) -> None:
+    card = load_task(str(SAMPLE_TASK)).card
+    fault = pick_fault(card, 1)
+
+    httpd = serve(None, state_dir=tmp_path, port=0, open_browser=False)
+    thread = threading.Thread(target=httpd.serve_forever, daemon=True)
+    thread.start()
+    try:
+        status, started = _post(httpd, "/api/play/start",
+                                {"task": str(SAMPLE_TASK), "seed": 1})
+        assert status == 200
+        run_id = json.loads(started)["run_id"]
+
+        _post(httpd, "/api/play/drive", {"address": "psu0", "volts": 30.0})  # gate-refused
+        _post(httpd, "/api/play/drive", {"address": "psu0", "volts": 5.0})
+        status, measured = _post(httpd, "/api/play/measure", {"address": "dmm0"})
+
+        page = _get(httpd, "/").decode("utf-8")
+        api = _get(httpd, f"/api/run/{run_id}").decode("utf-8")
+    finally:
+        httpd.shutdown()
+        httpd.server_close()
+        thread.join(timeout=5)
+
+    assert fault not in measured.decode("utf-8")
+    assert fault not in page
+    assert fault not in api
 
 
 def test_pick_fault_itself_names_what_this_test_checks() -> None:

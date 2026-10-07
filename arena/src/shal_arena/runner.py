@@ -798,6 +798,21 @@ def take_measurement(run_id: str, address: str, driver_path: str | Path, *,
     return result
 
 
+def has_any_measurement(run_id: str, state_dir: str | Path = DEFAULT_STATE_DIR) -> bool:
+    """True once the player has called `take_measurement` at least once on
+    SOME probe instrument of this run (issue #407: the one check both
+    `answer`'s own `disqualified` field below and the Play UI's "Answer is
+    off until you measure" rule share -- extracted here so Play can refuse
+    the HTTP call before it closes the run, from the exact same rule
+    `answer` already enforces, never a second one)."""
+    store = RunStore(state_dir)
+    state = store.load(run_id)
+    loaded = load_task(state.task_path)
+    sim_log = SimLog(store.sim_log_path(run_id))
+    probe_addresses = [str(i.address) for i in loaded.task.instruments if i.probe is not None]
+    return bool(probe_addresses) and any(sim_log.has_measure(addr) for addr in probe_addresses)
+
+
 def answer(run_id: str, value: str, *, state_dir: str | Path = DEFAULT_STATE_DIR
           ) -> dict[str, Any]:
     """Close the run: compare ``value`` against the hidden fault and write the
@@ -823,9 +838,7 @@ def answer(run_id: str, value: str, *, state_dir: str | Path = DEFAULT_STATE_DIR
     record = store.answer(run_id, given=value, fault_id=fault_id)
 
     sim_log = SimLog(store.sim_log_path(run_id))
-    probe_addresses = [str(i.address) for i in loaded.task.instruments if i.probe is not None]
-    disqualified = bool(probe_addresses) and not any(
-        sim_log.has_measure(addr) for addr in probe_addresses)
+    disqualified = not has_any_measurement(run_id, state_dir)
     score = build_score(task_id=loaded.task.id, seed=state.seed, fault_id=fault_id,
                         given=value, correct=record["correct"], disqualified=disqualified,
                         created_at=state.created_at, closed_at=record["closed_at"],

@@ -80,6 +80,10 @@ def _cmd_ui(args: argparse.Namespace) -> int:
             ArenaError(f"--driver: {e}", fix="check the path after '=' exists"), as_json=True)
 
     if args.export:
+        if args.run is None:
+            return _report_error(
+                ArenaError("--export needs --run RUN_ID", fix="pass --run <id> with --export"),
+                as_json=True)
         from .ui.export import build_export
         try:
             html = build_export(args.run, state_dir=args.state_dir, agent=args.agent,
@@ -314,9 +318,12 @@ def _build_parser() -> argparse.ArgumentParser:
     p_demo.set_defaults(func=_cmd_demo)
 
     p_ui = sub.add_parser(
-        "ui", help="WATCH a run live in a local page, or export a finished one (issue #406)")
-    p_ui.add_argument("--run", required=True, metavar="RUN_ID",
-                      help="the run_id to watch (from `run`'s own output)")
+        "ui", help="WATCH a run live, PLAY one with buttons, or export a finished one "
+                   "(issues #406, #407)")
+    p_ui.add_argument("--run", default=None, metavar="RUN_ID",
+                      help="the run_id to watch (from `run`'s own output) -- required for "
+                           "--export; without it (and without --export), the page starts "
+                           "in PLAY mode with no run open yet (issue #407)")
     p_ui.add_argument("--port", type=int, default=0,
                       help="local port (default: 0, picks a free one)")
     p_ui.add_argument("--no-open", action="store_true",
