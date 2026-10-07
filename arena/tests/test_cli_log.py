@@ -220,18 +220,24 @@ def test_a_userinfo_leak_in_argv_and_json_never_reaches_the_cli_log(tmp_path: Pa
     carrier for a secret url -- no `.cli.jsonl` line may ever show the
     userinfo."""
     state_dir = tmp_path / "state"
-    # the userinfo itself, not the bare word "admin": a CI runner's own
-    # username can legitimately contain "admin" (e.g. Windows CI's
-    # "runneradmin", which appears in --state-dir's own path value) --
-    # checking the full "user:pass@" substring avoids that false positive
-    # while still proving the actual secret never reaches the log.
-    leaks = [("ftp://admin:1234,5678@host", "admin:1234,5678@"),
-            ("http://admin:9999;x@h", "admin:9999;x@")]
-    for leak, userinfo in leaks:
+    # CTO must-fix (02:42 review): checking the whole "user:pass@" substring
+    # passes on 3 real partial leaks -- userinfo cut at punctuation
+    # (round-4 shape), the user dropped but the password kept, or the `@`
+    # dropped but the userinfo kept -- none of which is a whole,
+    # byte-for-byte "user:pass@" string, so the old assertion missed all 3.
+    # High-entropy markers on EACH side of the separator catch a partial
+    # leak of any shape, and can't clash with a runner name, a tmp path, a
+    # run id or a timestamp the way short digit runs like "1234"/"9999"
+    # could.
+    leaks = [("ftp://Uq7Zuser:Pw1Kq8x,Pw2Rm4v@host", ("Uq7Zuser", "Pw1Kq8x", "Pw2Rm4v")),
+            ("http://Uq7Zuser:Pw3Tz6n;Pw4Hb9c@h", ("Uq7Zuser", "Pw3Tz6n", "Pw4Hb9c"))]
+    for leak, parts in leaks:
         run_proc = _run_cli("run", str(SAMPLE_TASK), "--state-dir", str(state_dir), "--json")
         run_id = json.loads(run_proc.stdout)["run_id"]
         proc = _run_cli("answer", run_id, leak, "--state-dir", str(state_dir), "--json")
         assert proc.returncode == 0, proc.stderr
 
         raw = RunStore(state_dir).cli_log_path(run_id).read_text(encoding="utf-8")
-        assert userinfo not in raw, (userinfo, raw)
+        assert '"answer"' in raw, raw  # the line was actually written
+        for part in parts:
+            assert part not in raw, (part, raw)
