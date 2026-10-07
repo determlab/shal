@@ -174,11 +174,18 @@ def test_a_raising_sink_logs_exactly_one_warning_naming_itself(name, topology, d
 
 def test_record_exchange_itself_swallows_a_raising_sink_and_warns_once(caplog):
     with caplog.at_level(logging.WARNING, logger="shal.log"), exchange_sink(_raising_sink):
-        result = record_exchange("test", "/x", "addr", "req", "resp")
+        result = record_exchange("test", "/x", "addr", "REQ-MARKER", "RESP-MARKER")
     assert result is None
     warnings = _warnings(caplog)
     assert len(warnings) == 1
-    assert "_raising_sink" in warnings[0].getMessage()
+    # must-fix 1 (263a116 review): the sink's own name is the ONE %s arg --
+    # never the exchange it saw, logged lazily so `getMessage()` is the
+    # real proof (an f-string in the call site would pass this even if the
+    # log statement later embedded the exchange too).
+    assert warnings[0].args == ("_raising_sink",)
+    message = warnings[0].getMessage()
+    assert "REQ-MARKER" not in message
+    assert "RESP-MARKER" not in message
 
 
 def test_record_exchange_itself_lets_keyboardinterrupt_propagate(caplog):
@@ -189,10 +196,20 @@ def test_record_exchange_itself_lets_keyboardinterrupt_propagate(caplog):
     assert not _warnings(caplog)
 
 
-def test_record_exchange_is_a_noop_before_the_try_when_no_sink_is_active():
-    # the no-sink path is still a no-op before any redaction/sink work --
-    # unchanged by this issue's guard
+def test_record_exchange_is_a_noop_before_the_try_when_no_sink_is_active(monkeypatch):
+    # must-fix 2 (263a116 review): "no-op" means no redaction work runs
+    # either, not just "returns None" -- moving the Exchange build (and
+    # its redaction) above the `if sink is None: return` still returned
+    # None, so the old assertion never caught that. Counting calls to the
+    # two redaction entry points pins "no sink -> neither ever runs".
+    import shal.log as log_mod
+
+    calls: list[str] = []
+    monkeypatch.setattr(log_mod, "redact_url", lambda v: calls.append("redact_url"))
+    monkeypatch.setattr(log_mod, "_clean_payload", lambda v: calls.append("_clean_payload"))
+
     assert record_exchange("test", "/x", "addr", "req", "resp") is None
+    assert calls == []
 
 
 def test_redaction_runs_outside_the_guard_so_a_redaction_bug_still_raises(caplog, monkeypatch):

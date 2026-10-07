@@ -265,9 +265,8 @@ def record_exchange(bus_family: str, path: str, address: Any, request: Any,
     unaffected either way; `KeyboardInterrupt`/`SystemExit` are not
     `Exception` subclasses, so they already propagate with no special
     case. A broken sink is one WARNING naming it (never the exchange it
-    saw): `exc_info` is safe to include because a sink can only ever have
-    raised from code working with fields `_clean_payload` already
-    sanitized."""
+    saw): `exc_info` carries only what the sink's own exception carries;
+    the exchange fields it was handed are already sanitized."""
     sink = _exchange_sink.get()
     if sink is None:
         return
