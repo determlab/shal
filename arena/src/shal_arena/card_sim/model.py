@@ -130,6 +130,9 @@ class CardSim:
         # cut it off entirely, independent of any input-driven protection/
         # damage above — `set_power` is the one place that changes it.
         self.power_on = True
+        # issue #478: an ``open`` fault is an open circuit on the card, so
+        # the card draws about 0 A from its supply (`supply_current`).
+        self.open_circuit = False
 
     # -- introspection -------------------------------------------------- #
     @property
@@ -174,7 +177,11 @@ class CardSim:
         return self.rail_voltage(rail.name)
 
     def supply_current(self) -> float:
-        return self.short_a if self.destroyed else self.supply_a
+        if self.destroyed:
+            return self.short_a
+        if self.open_circuit:
+            return 0.0
+        return self.supply_a
 
     # -- actions -------------------------------------------------------- #
     def apply_input(self, name: str, volts: float, *, gate: Gate | None = None,

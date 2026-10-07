@@ -128,7 +128,7 @@ def test_start_run_never_leaks_the_fault_or_its_vocabulary(tmp_path: Path) -> No
         # `low_voltage`/`overheat` from `_FAULT_WORDS` was never needed.
         answer = result["task"].pop("answer")
         assert answer == {"kind": "enum",
-                          "values": ["ok", "low_voltage", "open", "overheat"]}
+                          "values": ["ok", "low_voltage", "open", "overheat", "probe"]}
         text = json.dumps(result)
         for word in _FAULT_WORDS:
             assert word not in text, (fault_id, word, text)

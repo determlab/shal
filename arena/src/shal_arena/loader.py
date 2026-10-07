@@ -159,10 +159,12 @@ def _cross_check(task: Task, card: Card, task_path: Path) -> None:
                     fix=f"set probe to one of {sorted('card.' + t for t in test_points)}")
 
     if task.question.answer.kind == "enum":
-        fault_ids = {f.id for f in card.faults}
+        # issue #478: a fault is answered by its own `answer:` key when the
+        # card gives one (`broken_probe` -> `probe`), else by its id.
+        fault_ids = {str(f.extra.get("answer", f.id)) for f in card.faults}
         answer_values = set(task.question.answer.values)
         if answer_values != fault_ids:
             raise TaskFormatError(
                 f"{task_path}: task.question.answer.values {sorted(answer_values)} must "
-                f"equal the card's fault ids {sorted(fault_ids)}",
+                f"equal the card's fault answers {sorted(fault_ids)}",
                 fix=f"set task.question.answer.values to {sorted(fault_ids)}")
