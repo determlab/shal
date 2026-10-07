@@ -18,16 +18,26 @@ the shape above -- never silently skipped, so a reviewer (or an agent reading
 
 CTO review on #380: a macOS cell never gates the merge decision (same ruling
 as the workflow's own `continue-on-error: macos-latest`), so every count that
-decides the exit code and the page's "gate met" verdict excludes it; a macOS
-cell still renders, still shown FAIL/PASS, just labelled non-gating. A cell
-whose `run_attempt` is more than 1 is flagged: the gate rule is "green on
-attempt 1", so a pass on retry does not count towards it.
+decides the exit code excludes it; a macOS cell still renders, still shown
+FAIL/PASS, just labelled non-gating. A cell whose `run_attempt` is more than
+1 is flagged: the gate rule is "green on attempt 1", so a pass on retry does
+not count towards it.
+
+shal#402 (D6 spec; CTO review on #380, module docstring lines 19-23): the
+gate is 3 DAILY runs in a row, never one run. This page prints the one-run
+verdict as `this run: N/M gating cells pass (day D of 3)`; `gate met` is
+printed only when this run and the 2 immediately preceding daily runs (read
+from `--history FILE`, a JSON list of past runs oldest-first) were each a
+scheduled run, attempt 1, every gating cell green. With no `--history`,
+day is always 1 (nothing to look back on) and the gate is never met from a
+single run.
 
 Usage:
-    evidence_page.py DIR --out evidence.html [--json]
+    evidence_page.py DIR --out evidence.html [--history runs.json] [--json]
 
 Exit 0 if every gating cell passed, 1 if a gating check failed or a gating
-cell is missing (a macOS-only failure never sets this).
+cell is missing (a macOS-only failure never sets this) -- unchanged by the
+3-day gate above, which decides only the page's verdict text.
 """
 from __future__ import annotations
 
@@ -100,8 +110,10 @@ def _counts(cells: list[dict[str, Any]]) -> dict[str, int]:
 
 def summarize(cells: list[dict[str, Any]]) -> dict[str, Any]:
     """Overall counts across every cell, plus a `gating` breakdown that
-    leaves macOS out -- that second one is what the exit code and the page's
-    "gate met" verdict are based on (CTO review on #380)."""
+    leaves macOS out -- that second one is what the exit code is based on
+    (CTO review on #380). The page's "gate met" verdict is a separate,
+    3-daily-run decision (`gate_status`, shal#402); this run's own gating
+    counts only feed the one-run verdict line."""
     overall = _counts(cells)
     overall["gating"] = _counts([c for c in cells if c["gating"]])
     return overall
@@ -112,6 +124,64 @@ def _is_retry(run_attempt: Any) -> bool:
         return int(run_attempt) > 1
     except (TypeError, ValueError):
         return False
+
+
+#: shal#402: the shape --history takes, named in every error about it.
+HISTORY_FORMAT = ('a JSON list of prior runs, oldest first, each '
+                  '{"event": <str>, "attempt": <int>, "gating_passed": <bool>}')
+
+
+def load_history(path: Path) -> list[dict[str, Any]]:
+    """`--history FILE`: the runs immediately before this one, oldest
+    first, ending with the most recent run before this one. Never a
+    dashboard of every run ever -- only enough to look back 2 days (the gate
+    needs 3 in a row including today). Raises ValueError, naming
+    `HISTORY_FORMAT`, for anything that cannot be read as that shape (shal#402
+    Agent path: "an error for a bad history file names the expected
+    format")."""
+    try:
+        doc = json.loads(path.read_text(encoding="utf-8"))
+    except OSError as e:
+        raise ValueError(f"--history {path}: cannot read file ({e}); expected "
+                         f"{HISTORY_FORMAT}") from e
+    except json.JSONDecodeError as e:
+        raise ValueError(f"--history {path}: not valid JSON ({e}); expected "
+                         f"{HISTORY_FORMAT}") from e
+    if not isinstance(doc, list):
+        raise ValueError(f"--history {path}: expected {HISTORY_FORMAT}, "
+                         f"got {type(doc).__name__}")
+    for entry in doc:
+        if not (isinstance(entry, dict) and {"event", "attempt", "gating_passed"} <= entry.keys()):
+            raise ValueError(f"--history {path}: every entry must have "
+                             f"event/attempt/gating_passed; expected {HISTORY_FORMAT}")
+    return doc
+
+
+def _qualifies(entry: dict[str, Any]) -> bool:
+    """One history entry counts towards the streak only if it was a
+    scheduled run (not a manual/PR run), green on the first attempt, and
+    every gating cell passed -- the exact 3 conditions #402's gate rule
+    names."""
+    return (entry.get("event") == "schedule" and entry.get("attempt") == 1
+            and bool(entry.get("gating_passed")))
+
+
+def gate_status(today_gating_passed: bool, history: list[dict[str, Any]]) -> tuple[int, bool]:
+    """``(day, gate_met)``: ``day`` counts consecutive qualifying daily runs
+    ending with today, capped at 3 for display; ``gate_met`` is true only at
+    3. A single failing or non-qualifying day anywhere in the 3 (today, or
+    either of the 2 history entries immediately before it) resets the count
+    -- it never partially credits a streak that broke."""
+    if not today_gating_passed:
+        return 1, False
+    streak = 1
+    for entry in reversed(history):
+        if streak >= 3:
+            break
+        if not _qualifies(entry):
+            break
+        streak += 1
+    return streak, streak >= 3
 
 
 def _render_versions(versions: dict[str, Any]) -> str:
@@ -193,21 +263,27 @@ def _render_header(cells: list[dict[str, Any]]) -> str:
             f'generated {generated}. Gate rule: <em>{html.escape(GATE_RULE)}</em></p>')
 
 
-def _render_summary(counts: dict[str, Any]) -> str:
+def _render_summary(counts: dict[str, Any], day: int, gate_met: bool) -> str:
     gating = counts["gating"]
-    gate_met = gating["failed"] == 0 and gating["missing"] == 0
+    # shal#402: "gate met" is produced from the 3-daily-run check alone
+    # (`gate_status`, via `day`/`gate_met` here) -- never from this run's
+    # own cell counts, which is what the one-run verdict below reports
+    # instead.
+    verdict = ("gate met" if gate_met else
+              f"this run: {gating['passed']}/{gating['cells']} gating cells "
+              f"pass (day {day} of 3)")
     return (
         "<table class=\"summary\">"
         "<tr><th></th><th>cells</th><th>passed</th><th>failed</th><th>missing</th></tr>"
         "<tr><td>all</td><td>{cells}</td><td>{passed}</td><td>{failed}</td><td>{missing}</td></tr>"
         "<tr><td>gating (non-macOS)</td><td>{g_cells}</td><td>{g_passed}</td>"
         "<td>{g_failed}</td><td>{g_missing}</td></tr>"
-        "</table><p class=\"gate-verdict\">gate {verdict}</p>"
+        "</table><p class=\"gate-verdict\">{verdict}</p>"
     ).format(
         cells=counts["cells"], passed=counts["passed"], failed=counts["failed"],
         missing=counts["missing"], g_cells=gating["cells"], g_passed=gating["passed"],
         g_failed=gating["failed"], g_missing=gating["missing"],
-        verdict="met" if gate_met else "not met",
+        verdict=verdict,
     )
 
 
@@ -229,10 +305,14 @@ pre { white-space: pre-wrap; word-break: break-word; margin: 0.3rem 0 0; }
 """
 
 
-def render_page(cells: list[dict[str, Any]]) -> str:
+def render_page(cells: list[dict[str, Any]],
+                history: list[dict[str, Any]] | None = None) -> str:
     counts = summarize(cells)
+    gating = counts["gating"]
+    today_gating_passed = gating["failed"] == 0 and gating["missing"] == 0
+    day, gate_met = gate_status(today_gating_passed, history or [])
     header = _render_header(cells)
-    summary = _render_summary(counts)
+    summary = _render_summary(counts, day, gate_met)
     body = "".join(_render_cell(c) for c in cells)
     return ("<!doctype html><html><head><meta charset=\"utf-8\">"
             "<title>Evidence — clean-machine run</title>"
@@ -248,21 +328,37 @@ def main(argv: list[str] | None = None) -> int:
                                "own evidence.json (gh run download's own layout)")
     parser.add_argument("--out", required=True, type=Path, metavar="PATH",
                         help="where to write the HTML page")
+    parser.add_argument("--history", type=Path, metavar="FILE", default=None,
+                        help="JSON list of the runs immediately before this one, oldest "
+                             f"first ({HISTORY_FORMAT}) -- without it, this run is always "
+                             "day 1 of 3 and the gate is never met from one run (shal#402)")
     parser.add_argument("--json", action="store_true", help="print the cell counts as JSON")
     args = parser.parse_args(argv)
 
+    history: list[dict[str, Any]] = []
+    if args.history is not None:
+        try:
+            history = load_history(args.history)
+        except ValueError as e:
+            print(f"evidence_page.py: {e}", file=sys.stderr)
+            return 2
+
     cells = load_cells(args.dir)
-    args.out.write_text(render_page(cells), encoding="utf-8")
     counts = summarize(cells)
     gating = counts["gating"]
+    today_gating_passed = gating["failed"] == 0 and gating["missing"] == 0
+    day, gate_met = gate_status(today_gating_passed, history)
+    args.out.write_text(render_page(cells, history), encoding="utf-8")
 
     if args.json:
-        print(json.dumps({**counts, "page": str(args.out), "side_effect": "write"}))
+        print(json.dumps({**counts, "day": day, "gate_met": gate_met,
+                          "page": str(args.out), "side_effect": "write"}))
     else:
+        verdict = "gate met" if gate_met else f"day {day} of 3"
         print(f"evidence page written to {args.out}: {counts['cells']} cell(s), "
              f"{counts['passed']} passed, {counts['failed']} failed, "
              f"{counts['missing']} missing (gating: {gating['passed']} passed, "
-             f"{gating['failed']} failed, {gating['missing']} missing)")
+             f"{gating['failed']} failed, {gating['missing']} missing; {verdict})")
 
     return 1 if gating["failed"] or gating["missing"] else 0
 
