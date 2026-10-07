@@ -37,7 +37,7 @@ def _lines(state_dir: Path, run_id: str) -> list[dict]:
 
 def test_a_secret_url_in_the_payload_appears_only_in_redacted_form() -> None:
     payload = {"endpoint": "https://user:s3cr3t-token@example.invalid/path?token=abc123"}
-    _argv, redacted, _text = _redact_cli_line([], payload, None)
+    _argv, redacted, _text, _note = _redact_cli_line([], payload, None)
     dumped = json.dumps(redacted)
     assert "s3cr3t-token" not in dumped
     assert "token=abc123" not in dumped
@@ -45,22 +45,22 @@ def test_a_secret_url_in_the_payload_appears_only_in_redacted_form() -> None:
 
 
 def test_token_flag_with_a_space_is_redacted() -> None:
-    argv, _payload, _text = _redact_cli_line(["--token", "X"], None, None)
+    argv, _payload, _text, _note = _redact_cli_line(["--token", "X"], None, None)
     assert argv == ["--token", "***"]
 
 
 def test_password_flag_with_equals_is_redacted() -> None:
-    argv, _payload, _text = _redact_cli_line(["--password=X"], None, None)
+    argv, _payload, _text, _note = _redact_cli_line(["--password=X"], None, None)
     assert argv == ["--password=***"]
 
 
 def test_a_nested_auth_key_is_masked_in_place() -> None:
-    _argv, redacted, _text = _redact_cli_line([], {"auth": {"key": "shh"}}, None)
+    _argv, redacted, _text, _note = _redact_cli_line([], {"auth": {"key": "shh"}}, None)
     assert redacted == {"auth": "***"}
 
 
 def test_normal_values_stay_readable() -> None:
-    argv, payload, _text = _redact_cli_line(["--seed", "9"], {"reading": 3.30}, None)
+    argv, payload, _text, _note = _redact_cli_line(["--seed", "9"], {"reading": 3.30}, None)
     assert argv == ["--seed", "9"]
     assert payload == {"reading": 3.30}
 
@@ -87,7 +87,7 @@ def test_three_commands_on_one_run_write_three_lines(tmp_path: Path) -> None:
     printed = [json.loads(p.stdout) for p in (run_proc, measure_proc, answer_proc)]
     for entry, proc, doc in zip(lines, (run_proc, measure_proc, answer_proc), printed,
                                 strict=True):
-        assert set(entry) == {"time", "argv", "exit_code", "json", "text"}
+        assert set(entry) == {"time", "argv", "exit_code", "json", "text", "note"}
         assert entry["exit_code"] == proc.returncode
         assert entry["json"] == doc
 

@@ -204,6 +204,38 @@ def _role(instrument: Any) -> str:
     return f"probes {instrument.probe}"
 
 
+def _notes(run_id: str, store: RunStore) -> list[dict[str, Any]]:
+    """issue #470: every logged `--note`, in call order -- its own list,
+    never folded into `_timeline`'s measurement rows (Constraints: "never
+    inside the measurement rows"). Each entry names the command it was
+    attached to, so a reader can still tell it apart from, or line it up
+    against, a nearby reading in the Timeline above. `has_reading` is
+    whether THAT SAME call's own `--json` payload carried a `reading` --
+    the CTO's call: no conflict detection (the fixed line below never
+    depends on what the note says), but the line is shown whenever a
+    reading was there to compare against, agreement or not.
+    `<run>.cli.jsonl` may not exist yet (no command has been logged), and
+    a line already on disk is read as-is -- `_log_cli_call` is the one
+    writer, and it always produces a whole, valid JSON line."""
+    path = store.cli_log_path(run_id)
+    if not path.is_file():
+        return []
+    notes = []
+    for line in path.read_text(encoding="utf-8").splitlines():
+        if not line.strip():
+            continue
+        entry = json.loads(line)
+        note = entry.get("note")
+        if note is None:
+            continue
+        argv = entry.get("argv") or []
+        command = next((a for a in argv if not a.startswith("-")), "")
+        payload = entry.get("json") or {}
+        notes.append({"command": command, "note": note, "time": entry.get("time"),
+                     "has_reading": payload.get("reading") is not None})
+    return notes
+
+
 def run_payload(run_id: str, *, state_dir: str | Path = DEFAULT_STATE_DIR) -> dict[str, Any]:
     """Everything the page needs for one run, live or finished. Raises
     `shal_arena.errors.UnknownRun` (same as every other reader) for a run id
@@ -270,6 +302,7 @@ def run_payload(run_id: str, *, state_dir: str | Path = DEFAULT_STATE_DIR) -> di
         "card": {"applied": dict(state.card_applied), "destroyed": state.card_destroyed,
                 "power_on": state.card_power_on},
         "timeline": _timeline(run_id, store),
+        "notes": _notes(run_id, store),
         "record": record,
         "score": score,
     }

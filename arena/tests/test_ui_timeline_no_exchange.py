@@ -36,18 +36,34 @@ from .conftest import (
 from .test_exchange_log import _play_all_three_protocols
 
 _DOM_STUB = """
+// A real DOM escapes &/</> when it serializes a text node back out through
+// an ancestor's innerHTML (never quotes -- that is an attribute-value
+// rule, not a text-content one). Needed below because renderNotes builds
+// its rows with textContent/createTextNode, not one escaped HTML string
+// the way stepRowHtml already does.
+function escapeForHtml(s) {
+  return String(s).replace(/[&<>]/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;"}[c]));
+}
 function makeEl() {
   const el = {
     _text: "", _html: "",
     classList: { add() {}, remove() {} },
     style: {},
     children: [],
-    appendChild(c) { el.children.push(c); },
+    // issue #470: a child's own serialized content (its _html, falling
+    // back to its escaped textContent for a plain text node) is appended
+    // to the parent's own _html too -- real innerHTML reflects every
+    // appendChild, and renderNotes builds its rows that way, not by one
+    // innerHTML string assignment the way renderTimeline does.
+    appendChild(c) {
+      el.children.push(c);
+      el._html += (c._html !== undefined) ? c._html : escapeForHtml(c.textContent);
+    },
     setAttribute() {}, getAttribute() { return null; },
   };
   Object.defineProperty(el, "textContent", {
     get() { return el._text; },
-    set(v) { el._text = String(v); el._html = String(v); },
+    set(v) { el._text = String(v); el._html = escapeForHtml(v); },
   });
   Object.defineProperty(el, "innerHTML", {
     get() { return el._html; },

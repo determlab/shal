@@ -306,6 +306,13 @@ def _build_parser() -> argparse.ArgumentParser:
         p.add_argument("--json", action="store_true", help="print one JSON document")
         p.add_argument("--state-dir", default=".shal-arena", metavar="DIR",
                        help="where run state lives (default: ./.shal-arena)")
+        # issue #470: the agent's own claim, saved in <run>.cli.jsonl
+        # alongside this call, never mixed into this command's own result
+        # -- `main()` checks the 2000-char limit before `func` runs.
+        p.add_argument("--note", default=None, metavar="TEXT",
+                       help=f"a short note in your own words, saved in <run>.cli.jsonl "
+                            f"next to this call (max {NOTE_MAX_CHARS} characters); never "
+                            "changes what this command does or returns")
 
     p_demo = sub.add_parser(
         "demo",
@@ -453,6 +460,16 @@ def _build_parser() -> argparse.ArgumentParser:
 
 _RUN_LINE_RE = re.compile(r"^run (\S+):")
 
+#: issue #470: the one limit on --note, named in both --help and the error
+#: a note over it gets.
+NOTE_MAX_CHARS = 2000
+
+
+def _note_too_long_error(note: str) -> ArenaError:
+    return ArenaError(
+        f"--note is {len(note)} characters, over the {NOTE_MAX_CHARS}-character limit",
+        fix=f"shorten the note to {NOTE_MAX_CHARS} characters or fewer")
+
 
 class _Tee:
     """Mirrors every write to the real stdout, flushed through immediately,
@@ -482,8 +499,9 @@ class _Tee:
         return "".join(self._parts)
 
 
-def _redact_cli_line(argv: list[str], payload: dict[str, Any] | None, text: str | None
-                     ) -> tuple[list[str], dict[str, Any] | None, str | None]:
+def _redact_cli_line(argv: list[str], payload: dict[str, Any] | None, text: str | None,
+                     note: str | None = None
+                     ) -> tuple[list[str], dict[str, Any] | None, str | None, str | None]:
     """issue #460: the one place every value written to ``<run>.cli.jsonl``
     passes through before it reaches disk -- a one-line swap if the
     redaction policy ever changes. `redact_secret_args`/`redact_url_in_text`/
@@ -497,13 +515,20 @@ def _redact_cli_line(argv: list[str], payload: dict[str, Any] | None, text: str 
     `text` gets the URL rule only, never the key-based secret rule
     `redact_structured` also applies to `json` (round 2 nit): `text` is a
     command's own PRINTED output, which has no keys to check -- the URL
-    rule is the only one that ever applied to it."""
+    rule is the only one that ever applied to it.
+
+    `note` (#470) is free text too, so it gets the same URL rule as `text`;
+    it also gets `redact_secret_args`' flag-style rule (split on whitespace,
+    re-joined) so a note that echoes a command line, e.g. "... --token abc",
+    redacts the same way argv itself would -- no second redaction path."""
     argv = [redact_url_in_text(a) for a in redact_secret_args(argv)]
     if payload is not None:
         payload = redact_structured(payload)
     if text is not None:
         text = redact_url_in_text(text)
-    return argv, payload, text
+    if note is not None:
+        note = redact_url_in_text(" ".join(redact_secret_args(note.split())))
+    return argv, payload, text, note
 
 
 def _extract_run_id(args: argparse.Namespace, printed: str,
@@ -523,7 +548,8 @@ def _extract_run_id(args: argparse.Namespace, printed: str,
 
 
 def _log_cli_call(state_dir: str, run_id: str, argv: list[str], exit_code: int,
-                  parsed: dict[str, Any] | None, printed: str) -> None:
+                  parsed: dict[str, Any] | None, printed: str,
+                  note: str | None = None) -> None:
     """issue #460: one JSON line to ``<run>.cli.jsonl``, under the run's own
     lock (`RunStore.append_cli_log`, reusing #436/#442's lock -- agents run
     commands in parallel). `json` is the parsed `--json` output; `text` is
@@ -534,11 +560,16 @@ def _log_cli_call(state_dir: str, run_id: str, argv: list[str], exit_code: int,
     stderr, not stdout (`_report_error`), so a FAILING command run without
     `--json` logs `text: ""` here -- only `exit_code` and `argv` say
     anything went wrong. stderr is never mirrored into this file; `--json`
-    is the one shape that carries the error text itself, in `json.error`."""
+    is the one shape that carries the error text itself, in `json.error`.
+
+    `note` (#470) is the agent's own claim about this call, saved alongside
+    it -- never folded into `json`/`text`, which are only ever this
+    command's own output."""
     text = None if parsed is not None else printed
-    argv, parsed, text = _redact_cli_line(argv, parsed, text)
+    argv, parsed, text, note = _redact_cli_line(argv, parsed, text, note)
     entry = {"time": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
-             "argv": argv, "exit_code": exit_code, "json": parsed, "text": text}
+             "argv": argv, "exit_code": exit_code, "json": parsed, "text": text,
+             "note": note}
     RunStore(state_dir).append_cli_log(run_id, entry)
 
 
@@ -546,6 +577,12 @@ def main(argv: list[str] | None = None) -> int:
     parser = _build_parser()
     args = parser.parse_args(argv)
     raw_argv = list(argv if argv is not None else sys.argv[1:])
+
+    # issue #470: checked before the command runs, so an over-limit note
+    # never runs the command and never writes a cli.jsonl line for it.
+    note = getattr(args, "note", None)
+    if note is not None and len(note) > NOTE_MAX_CHARS:
+        return _report_error(_note_too_long_error(note), getattr(args, "json", False))
 
     # issue #460: mirror what the command prints, to log it, without ever
     # holding it back from the real stdout (round 2 must-fix: a buffer-then-
@@ -572,7 +609,7 @@ def main(argv: list[str] | None = None) -> int:
     run_id = _extract_run_id(args, printed, parsed)
     if run_id is not None:
         state_dir = getattr(args, "state_dir", DEFAULT_STATE_DIR)
-        _log_cli_call(state_dir, run_id, raw_argv, exit_code, parsed, printed)
+        _log_cli_call(state_dir, run_id, raw_argv, exit_code, parsed, printed, note)
     return exit_code
 
 

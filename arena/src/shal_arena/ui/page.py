@@ -594,6 +594,48 @@ function renderDriverCode(payload) {
   }
 }
 
+// issue #470: "agent notes, in its own words" -- its own block, never
+// folded into a timeline/measurement row. A note is free text an agent
+// wrote with --note; it is rendered with textContent only (never
+// innerHTML), the same rule every other untrusted string on this page
+// already follows (renderDriverCode above). No conflict detection: a note
+// and a reading from the same call are each shown in their own place
+// (this block, and the Timeline above it), never merged into one row.
+// issue #470. Heading and record line are the CMO's own exact text
+// (2026-10-07), shown verbatim -- the heading always, the record line
+// under every note whose own call also carried a reading, agreement or
+// not (the CTO's call: no conflict detection, so the text never depends
+// on what the note says). Built with textContent/createTextNode only,
+// never innerHTML, so the note itself (arbitrary agent text) can never be
+// interpreted as markup -- same pattern `renderDriverCode` already uses.
+function renderNotes(payload) {
+  const section = document.getElementById("notes-section");
+  const notes = payload.notes || [];
+  section.innerHTML = "";
+  if (notes.length === 0) return;
+  const label = document.createElement("div");
+  label.className = "section-label";
+  label.textContent = "The agent's own note (its words, not checked)";
+  section.appendChild(label);
+  for (const n of notes) {
+    const row = document.createElement("p");
+    row.className = "plain-line note-row";
+    const tag = document.createElement("span");
+    tag.className = "mono note-command";
+    tag.textContent = n.command ? `${n.command}: ` : "";
+    row.appendChild(tag);
+    row.appendChild(document.createTextNode(n.note));
+    section.appendChild(row);
+    if (n.has_reading) {
+      const recordLine = document.createElement("p");
+      recordLine.className = "plain-line note-record-line";
+      recordLine.textContent =
+        "The record shows the reading above. The note is the agent's claim.";
+      section.appendChild(recordLine);
+    }
+  }
+}
+
 function render(payload) {
   document.getElementById("title").textContent = payload.title;
   document.getElementById("sub").textContent =
@@ -610,6 +652,7 @@ function render(payload) {
   renderDriverCode(payload);
   renderRoles(payload);
   renderTimeline(payload);
+  renderNotes(payload);
   renderScriptedSection(payload);
   renderResult(payload);
 }
@@ -704,6 +747,7 @@ def _shell(run_id: str, *, banner: str = "") -> str:
   <div id="roles-section"></div>
   <div class="section-label">Timeline</div>
   <div class="timeline" id="timeline-list"></div>
+  <div id="notes-section"></div>
   <div id="scripted-section"></div>
   <div id="result-section"></div>
   <footer>{SAFETY_LINE}
