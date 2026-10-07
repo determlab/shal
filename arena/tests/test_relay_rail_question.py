@@ -58,6 +58,39 @@ def test_the_power_up_line_stays_per_the_cto_ruling():
     assert "relay0" in _TASK.question.text
 
 
+_HINT_WORDS = ("3V3", "3v3", "regulator", "temperature", "hot")
+
+
+def test_no_hint_word_reaches_what_the_agent_actually_receives(tmp_path):
+    """CTO must-fix, round 2 on PR #465: the two tests above check the raw
+    yaml fields (`_TASK.title`/`_TASK.question.text`), not what an agent
+    actually reads. This checks the real channels instead: `start_run`'s
+    own `task.title`/`task.question`, and the first 2 lines the plain-text
+    (non-`--json`) CLI prints for `shal-arena run relay-rail` -- the run
+    id/title line, then the question line.
+
+    `card_description` is EXEMPT from this scan (CTO ruling): it
+    legitimately lists the card's own parts and documented limits (the
+    regulator's 85 C rating, the rail's 3% tolerance -- issue #426), and
+    names no test point as the suspect; only the title and question may
+    never point at one."""
+    state_dir = tmp_path / "state"
+    result = start_run(str(RELAY_RAIL_TASK), state_dir=state_dir)
+    for word in _HINT_WORDS:
+        assert word not in result["task"]["title"], (word, result["task"]["title"])
+        assert word not in result["task"]["question"], (word, result["task"]["question"])
+
+    proc = subprocess.run(
+        [sys.executable, "-m", "shal_arena.cli", "run", str(RELAY_RAIL_TASK),
+         "--state-dir", str(tmp_path / "state2")],
+        stdin=subprocess.DEVNULL, capture_output=True, text=True, timeout=30)
+    assert proc.returncode == 0, proc.stderr
+    title_line, question_line = proc.stdout.splitlines()[:2]
+    for word in _HINT_WORDS:
+        assert word not in title_line, (word, title_line)
+        assert word not in question_line, (word, question_line)
+
+
 # --------------------------------------------------------------------------- #
 # the answer values are still visible in the run JSON
 # --------------------------------------------------------------------------- #
