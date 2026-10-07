@@ -382,28 +382,52 @@ def run_story(*, pause: float, json_mode: bool, port: int | None = None) -> int:
     # issue #408: start the "easy" arena task's run FIRST, before any step
     # prints, so there is already a real, watchable run id to name in the ui
     # hint below -- `_run_arena_task("easy", ...)` reuses this same run
-    # later instead of starting a second one (`pre_started_runs`). No other
-    # step's own behaviour changes: same order, same checks, same lines --
-    # only WHEN this one run_id is created moves earlier.
+    # later instead of starting a second one (`pre_started_runs`). Same
+    # order, same checks, same lines for every step -- but the "easy" run's
+    # own `created_at` now predates the bench steps and their pauses that
+    # run before `arena_easy` does, so its `duration_s` grows by that much
+    # (PM ruling on #408 round 2: accepted -- this is a scripted demo in a
+    # temp dir; a seed that restarts the clock when `arena_easy` itself
+    # begins would touch the run store and is its own, separate issue).
+    #
+    # CTO review on #408, must-fix 2: this used to run outside any per-step
+    # try/except, so a failure here (a task load error, a lock timeout)
+    # ended the whole story with a raw traceback -- under --json, stdout
+    # then had no JSON document at all, breaking the #383/#410 contract
+    # that stdout is always one parseable document with a non-empty `fix`.
+    # On failure: no hint is printed, `ui_hint` is `null` in the JSON (with
+    # `ui_hint_fix` naming the problem), `pre_started_runs` stays unset, and
+    # every step still runs -- `_run_arena_task("easy", ...)` starts its
+    # own run instead, exactly as it did before this issue.
     from .runner import start_run
 
-    with _arena_task_file("easy") as easy_task_path:
-        easy_state_dir = state_dir / "easy"
-        easy_run_id = start_run(str(easy_task_path), state_dir=easy_state_dir)["run_id"]
-    ctx["pre_started_runs"] = {"easy": (easy_run_id, easy_state_dir)}
+    ui_hint: str | None = None
+    ui_hint_fix: str | None = None
+    try:
+        with _arena_task_file("easy") as easy_task_path:
+            easy_state_dir = state_dir / "easy"
+            easy_run_id = start_run(str(easy_task_path), state_dir=easy_state_dir)["run_id"]
+        ctx["pre_started_runs"] = {"easy": (easy_run_id, easy_state_dir)}
+        ui_hint = f"shal-arena ui --run {easy_run_id}"
+        if port is not None:
+            ui_hint += f" --port {port}"
+    except Exception as e:  # noqa: BLE001 - the hint is a bonus; the story must still run
+        traceback.print_exc()
+        ui_hint_fix = getattr(e, "fix", None) or (
+            "see the traceback on stderr; this is a bug in the story itself, not "
+            "something a retry fixes -- every step still ran")
 
-    ui_hint = f"shal-arena ui --run {easy_run_id}"
-    if port is not None:
-        ui_hint += f" --port {port}"
-    if not json_mode:
-        print(ui_hint)
-        sys.stdout.flush()
-    else:
-        # CTO ruling (issue #408 scope): --json keeps stdout as ONE JSON
-        # document -- the hint goes to stderr for a person watching the
-        # log, and into the JSON's own `ui_hint` field for a machine reader
-        # (the Agent path: "the printed line (or the ui_hint field)").
-        print(ui_hint, file=sys.stderr)
+    if ui_hint is not None:
+        if not json_mode:
+            print(ui_hint)
+            sys.stdout.flush()
+        else:
+            # CTO ruling (issue #408 scope): --json keeps stdout as ONE JSON
+            # document -- the hint goes to stderr for a person watching the
+            # log, and into the JSON's own `ui_hint` field for a machine
+            # reader (the Agent path: "the printed line (or the ui_hint
+            # field)").
+            print(ui_hint, file=sys.stderr)
 
     steps: list[dict[str, Any]] = []
     overall_ok = True
@@ -443,8 +467,9 @@ def run_story(*, pause: float, json_mode: bool, port: int | None = None) -> int:
 
     if json_mode:
         print(json.dumps({"ok": overall_ok, "note": FIRST_LINE, "ui_hint": ui_hint,
-                         "state_dir": str(state_dir), "record_path": record_path,
-                         "card_path": card_path, "steps": steps}, indent=2, default=str))
+                         "ui_hint_fix": ui_hint_fix, "state_dir": str(state_dir),
+                         "record_path": record_path, "card_path": card_path,
+                         "steps": steps}, indent=2, default=str))
     elif record_path or card_path:
         print(f"record: {record_path}")
         print(f"result card: {card_path}")
@@ -464,6 +489,8 @@ def main(argv: list[str] | None = None) -> int:
                              "later run that command with a fixed port -- never binds "
                              "anything itself")
     args = parser.parse_args(argv)
+    if args.port is not None and not (1 <= args.port <= 65535):
+        parser.error(f"--port must be between 1 and 65535, got {args.port}")
     return run_story(pause=args.pause, json_mode=args.json, port=args.port)
 
 

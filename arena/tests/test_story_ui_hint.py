@@ -36,7 +36,8 @@ def test_plain_mode_prints_the_ui_hint_with_a_real_id_before_the_first_step():
     assert run_id.startswith("run-")
 
     first_step_line = next(ln for ln in lines if ln.startswith("Setting the bench"))
-    assert lines.index(hint_line) < lines.index(first_step_line)
+    assert lines.index(hint_line) == 1
+    assert first_step_line in lines
 
     # a real, already-open run -- shal-arena ui --run <id> would bind to it
     from shal_arena.ui.data import run_payload
@@ -66,3 +67,41 @@ def test_json_mode_stdout_is_still_one_json_document_with_a_ui_hint_field():
     assert match.group(1).startswith("run-")
     # also on stderr, for a person tailing the log under --json
     assert doc["ui_hint"] in proc.stderr
+
+
+def test_the_easy_runs_own_duration_grows_by_the_bench_pauses_only():
+    """PM ruling on #408 round 2 (CTO must-fix 1): starting the "easy" run
+    before the step loop means its own `duration_s` (created_at to
+    closed_at) now includes the 3 bench steps' pauses that run before
+    `arena_easy` does -- accepted as a scripted-demo behaviour change, not
+    a regression, so this pins it rather than letting it silently drift
+    back to ~0 (or grow further) unnoticed. `medium`/`hard` start inside
+    their own step, same as before #408 -- their own duration stays tiny,
+    proving only `easy` changed."""
+    from shal_arena.ui.data import run_payload
+
+    pause = 2
+    proc = _run_story("--pause", str(pause), "--json")
+    assert proc.returncode == 0, proc.stderr
+    doc = json.loads(proc.stdout)
+    state_dir = Path(doc["state_dir"])
+
+    def _duration(step_id: str, level: str) -> float:
+        step = next(s for s in doc["steps"] if s["step"] == step_id)
+        run_id = step["result"]["run_id"]
+        payload = run_payload(run_id, state_dir=state_dir / level)
+        return payload["score"]["duration_s"]
+
+    # 3 steps (virtual_bench_pass, virtual_bench_unplug_dmm,
+    # psu_30v_blocked) each sleep `pause` before arena_easy's own sleep and
+    # run -- comfortably over 1 pause (timestamps are second-granularity,
+    # so the margin stays well clear of rounding noise), safely under
+    # "something broke and it's now minutes".
+    easy_duration = _duration("arena_easy", "easy")
+    assert pause < easy_duration < 30.0
+
+    # medium/hard still start inside their own step, exactly as before --
+    # their duration never absorbs an earlier step's pauses, so it stays
+    # well under easy's.
+    assert _duration("arena_medium", "medium") < easy_duration / 2
+    assert _duration("arena_hard", "hard") < easy_duration / 2

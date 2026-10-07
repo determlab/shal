@@ -52,7 +52,7 @@ def _cmd_demo(args: argparse.Namespace) -> int:
     from .demo import run_story
 
     pause = args.pause if args.pause is not None else (0.0 if args.json else 2.0)
-    return run_story(pause=pause, json_mode=args.json, port=args.port)
+    return run_story(pause=pause, json_mode=args.json)
 
 
 def _parse_driver_args(specs: list[str]) -> dict[str, dict[str, Any]]:
@@ -311,9 +311,6 @@ def _build_parser() -> argparse.ArgumentParser:
                         help="seconds between steps (default: 2.0, or 0 under --json)")
     p_demo.add_argument("--json", action="store_true",
                         help="print one JSON document on stdout instead of narrating")
-    p_demo.add_argument("--port", type=int, default=None, metavar="PORT",
-                        help="issue #408: included in the printed ui hint ('shal-arena "
-                             "ui --run <id> --port PORT') -- never binds anything itself")
     p_demo.set_defaults(func=_cmd_demo)
 
     p_ui = sub.add_parser(
