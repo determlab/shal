@@ -94,13 +94,16 @@ def redact_secret_args(argv: Sequence[str]) -> list[str]:
     return out
 
 
-#: A `scheme://...` substring, greedy to the next whitespace. Deliberately
-#: narrower than "contains a URL": `redact_url` itself was written for a
-#: value that IS an address end to end (a bare `host:port` counts too), not
-#: for free text that happens to contain an `@` for an unrelated reason
-#: (CTO review on #457 round 2: a real SCPI channel list, `MEAS:VOLT? (@1)`,
+#: A `scheme://...` substring, stopping before trailing punctuation a URL
+#: is normally wrapped in rather than swallowing it (CTO review round 3:
+#: "(http://u:p@h/x?token=a)" must keep its own ")"; the old `\S+` ate it,
+#: and `redact_url`'s query-drop then silently dropped it for good). Still
+#: deliberately narrower than "contains a URL": `redact_url` itself was
+#: written for a value that IS an address end to end (a bare `host:port`
+#: counts too), not for free text that happens to contain an `@` for an
+#: unrelated reason (round 2: a real SCPI channel list, `MEAS:VOLT? (@1)`,
 #: has no `://` anywhere and must never be touched).
-_URL_SUBSTRING_RE = re.compile(r"[A-Za-z][\w+.-]*://\S+")
+_URL_SUBSTRING_RE = re.compile(r"""[A-Za-z][\w+.-]*://[^\s"')\]}>,;]+""")
 
 
 def redact_url_in_text(value: str) -> str:
@@ -112,8 +115,23 @@ def redact_url_in_text(value: str) -> str:
     SCPI channel list) and, worse, could leave a URL's own userinfo in
     place depending on where in the string it fell. Finds each
     `scheme://...` substring and runs the real `redact_url` on just that
-    piece."""
-    return _URL_SUBSTRING_RE.sub(lambda m: redact_url(m.group(0)), value)
+    piece.
+
+    Total, never raising (CTO review round 3): a malformed address inside
+    otherwise-ordinary text (an unterminated IPv6 literal, a port cut short
+    by the punctuation-stopping above, a stray space in the host) makes
+    `redact_url`'s `urlsplit` raise `ValueError`. Turning on the exchange
+    log must never change what a bus call returns, so a substring that
+    fails to parse is replaced with a placeholder naming only its scheme —
+    never passed through raw, which would leak the userinfo it was trying
+    to strip."""
+    def _sub(m: re.Match) -> str:
+        try:
+            return redact_url(m.group(0))
+        except ValueError:
+            scheme = m.group(0).split("://", 1)[0]
+            return f"{scheme}://<redacted>"
+    return _URL_SUBSTRING_RE.sub(_sub, value)
 
 
 def redact_structured(value: Any) -> Any:
