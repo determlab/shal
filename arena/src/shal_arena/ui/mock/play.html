@@ -1,0 +1,266 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>shal-arena · Play (design mock)</title>
+<style>
+  :root {
+    /* same brand tokens as the WATCH mock (#406) -- local stacks only, no outside fonts */
+    --bg: #1A1D23;
+    --panel: #262B33;
+    --text: #F2F4F7;
+    --dim: #9BA3AF;
+    --gate: #FFB224;   /* amber: the gate, always present */
+    --ok: #3DDC84;     /* green */
+    --stop: #F0524D;   /* red: ONLY the gate-stop step itself, briefly */
+    --line: #343B46;
+  }
+  * { box-sizing: border-box; }
+  html, body {
+    margin: 0; padding: 0; background: var(--bg); color: var(--text);
+    font-family: Inter, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+    -webkit-tap-highlight-color: transparent;
+  }
+  .mono { font-family: "JetBrains Mono", ui-monospace, SFMono-Regular, Consolas, monospace; }
+  .mock-banner {
+    background: #2a2010; color: var(--gate); font-size: 13px;
+    padding: 8px 16px; text-align: center; border-bottom: 1px solid var(--line);
+  }
+  .frame-label {
+    max-width: 390px; margin: 28px auto 8px; padding: 0 16px;
+    font-size: 13px; color: var(--dim); text-transform: uppercase; letter-spacing: .04em;
+  }
+  .phone {
+    max-width: 390px; margin: 0 auto 40px; border: 1px solid var(--line);
+    border-radius: 18px; overflow: hidden; background: var(--bg);
+  }
+
+  header { padding: 14px 16px 10px; }
+  header .title { font-size: 16px; font-weight: 700; }
+  header .sub { font-size: 13px; color: var(--dim); margin-top: 2px; }
+
+  .section-label { font-size: 12px; color: var(--dim); text-transform: uppercase;
+                   letter-spacing: .04em; margin: 0 0 6px 20px; }
+
+  /* -- frame 1: task picker -- */
+  .task-list { display: flex; flex-direction: column; gap: 10px; padding: 0 16px 20px; }
+  .task-row { background: var(--panel); border: 1px solid var(--line); border-radius: 12px;
+              padding: 12px 14px; display: flex; align-items: center; justify-content: space-between;
+              gap: 10px; }
+  .task-row .name { font-size: 14px; font-weight: 600; }
+  .task-row .level { font-size: 12px; color: var(--dim); margin-top: 2px; }
+  .btn { min-height: 44px; min-width: 44px; border-radius: 10px; border: none;
+         font-size: 14px; font-weight: 700; padding: 10px 16px; cursor: pointer;
+         display: inline-flex; align-items: center; justify-content: center; gap: 6px; }
+  .btn-start { background: var(--gate); color: #1A1D23; }
+  .btn-primary { background: var(--ok); color: #0B2016; }
+  .btn-secondary { background: var(--panel); color: var(--text); border: 1px solid var(--line); }
+  .btn[disabled] { background: var(--panel); color: var(--dim); border: 1px solid var(--line);
+                   cursor: not-allowed; }
+  .btn-hint { font-size: 12px; color: var(--dim); margin-top: 6px; text-align: center; }
+
+  /* -- bench, same schematic as WATCH -- */
+  .bench { margin: 0 16px 16px; padding: 10px; background: var(--panel);
+           border: 1px solid var(--line); border-radius: 12px; }
+  .bench svg { width: 100%; height: auto; display: block; }
+  .bench text { font-size: 11px; fill: var(--dim); font-family: Inter, system-ui, sans-serif; }
+  .bench .mono-label { font-family: "JetBrains Mono", ui-monospace, monospace; fill: var(--text); font-size: 13px; font-weight: 700; }
+  .bench .wire { stroke: var(--line); stroke-width: 2; fill: none; }
+  .bench .box { fill: #1F242C; stroke: var(--line); stroke-width: 1.5; rx: 8; }
+  .bench .card-outline.ok { stroke: var(--ok); }
+  .bench .card-outline.unknown { stroke: #9BA3AF; }
+
+  /* -- play controls -- */
+  .control { margin: 0 16px 14px; padding: 12px 14px; background: var(--panel);
+             border: 1px solid var(--line); border-radius: 12px; }
+  .control .label { font-size: 13px; font-weight: 600; margin-bottom: 8px; }
+  .control .side-effect { font-size: 11px; color: var(--dim); font-weight: 400; }
+  .control-row { display: flex; gap: 8px; align-items: center; }
+  .control input[type=number] { flex: 1; min-height: 44px; background: #1F242C; color: var(--text);
+                                border: 1px solid var(--line); border-radius: 8px; padding: 0 12px;
+                                font-size: 15px; font-family: inherit; }
+  .answer-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-top: 2px; }
+  .answer-grid .btn { width: 100%; }
+
+  .step { background: var(--panel); border: 1px solid var(--line); border-radius: 10px;
+          padding: 11px 12px; min-height: 44px; display: flex; gap: 10px; align-items: flex-start; }
+  .timeline { display: flex; flex-direction: column; gap: 8px; padding: 0 16px 16px; }
+  .step .n { flex: 0 0 24px; height: 24px; border-radius: 50%; background: #1F242C;
+             display: flex; align-items: center; justify-content: center; font-size: 11px; color: var(--dim); }
+  .step .body { flex: 1; }
+  .step .what { font-size: 14px; font-weight: 600; }
+  .step .detail { font-size: 13px; color: var(--dim); margin-top: 1px; }
+  .step.stop-flash { border-color: var(--stop); background: rgba(240,82,77,.10); }
+  .step.stop-flash .n { color: var(--stop); border: 1px solid var(--stop); background: transparent; }
+  .step.stop-flash .what { color: var(--stop); }
+  .pill { font-size: 11px; font-weight: 700; padding: 3px 9px; border-radius: 999px; align-self: center; white-space: nowrap; }
+  .pill.sent { background: rgba(255,178,36,.15); color: var(--gate); }
+  .pill.refused { background: rgba(240,82,77,.15); color: var(--stop); }
+
+  .result { margin: 4px 16px 18px; border-radius: 12px; padding: 14px;
+            border: 1px solid var(--ok); background: rgba(61,220,132,.08); }
+  .result .verdict { font-size: 17px; font-weight: 800; color: var(--ok); }
+  .result .row { font-size: 13px; color: var(--dim); margin-top: 6px; display: flex; gap: 10px; flex-wrap: wrap; }
+  .result .row b { color: var(--text); font-weight: 600; }
+
+  .verdict-bar { margin: 0 16px 14px; padding: 12px 14px; border-radius: 12px;
+                 display: flex; align-items: flex-start; gap: 10px;
+                 background: rgba(61,220,132,.12); border: 1px solid var(--ok); }
+  .verdict-bar .icon { font-size: 18px; line-height: 1; color: var(--ok); }
+  .verdict-bar .text { font-size: 14px; font-weight: 600; }
+
+  footer { padding: 4px 16px 24px; text-align: center; font-size: 12px; color: var(--dim); }
+  footer .run-id { font-size: 11px; opacity: .7; }
+</style>
+</head>
+<body>
+  <div class="mock-banner">DESIGN MOCK — sample data, not a real run — issue #407 (same visual language as #406)</div>
+
+  <!-- ============== FRAME 1: pick a task to start ============== -->
+  <div class="frame-label">Frame 1 — pick a task (Start task)</div>
+  <div class="phone">
+    <header>
+      <div class="title">Play</div>
+      <div class="sub">pick a task to start</div>
+    </header>
+    <div class="task-list">
+      <div class="task-row">
+        <div><div class="name">Is the 3V3 rail in spec?</div><div class="level">rail-3v3 · easy</div></div>
+        <button class="btn btn-start">Start task</button>
+      </div>
+      <div class="task-row">
+        <div><div class="name">Is the 5V rail in spec at 12V input?</div><div class="level">medium · medium</div></div>
+        <button class="btn btn-start">Start task</button>
+      </div>
+      <div class="task-row">
+        <div><div class="name">A card came back from the line</div><div class="level">relay-rail · medium</div></div>
+        <button class="btn btn-start">Start task</button>
+      </div>
+    </div>
+    <footer>Simulated instruments only · side effect: write (opens a new run)</footer>
+  </div>
+
+  <!-- ============== FRAME 2: playing, before any measurement ============== -->
+  <div class="frame-label">Frame 2 — before a measurement: Answer is off, with why</div>
+  <div class="phone">
+    <header>
+      <div class="title">Is the 3V3 rail in spec?</div>
+      <div class="sub">rail-3v3 · playing</div>
+    </header>
+
+    <div class="section-label">Bench</div>
+    <div class="bench">
+      <svg viewBox="0 0 380 150" xmlns="http://www.w3.org/2000/svg">
+        <rect class="box" x="8" y="55" width="64" height="40" rx="8"/>
+        <text x="40" y="48" text-anchor="middle">PSU</text>
+        <text x="40" y="79" text-anchor="middle" class="mono-label">5.0 V</text>
+        <path class="wire" d="M72 75 H140"/>
+        <rect class="box card-outline unknown" x="140" y="35" width="100" height="80" rx="10"/>
+        <text x="190" y="28" text-anchor="middle">Card</text>
+        <text x="190" y="80" text-anchor="middle" fill="#9BA3AF">not yet measured</text>
+        <path class="wire" d="M240 75 H308"/>
+        <rect class="box" x="308" y="55" width="64" height="40" rx="8"/>
+        <text x="340" y="48" text-anchor="middle">DMM</text>
+        <text x="340" y="79" text-anchor="middle" fill="#9BA3AF">—</text>
+      </svg>
+    </div>
+
+    <div class="section-label">Controls</div>
+    <div class="control">
+      <div class="label">Set voltage <span class="side-effect">· drives psu0 (gate checked)</span></div>
+      <div class="control-row">
+        <input type="number" value="5.0" step="0.1" aria-label="volts">
+        <button class="btn btn-secondary">Set</button>
+      </div>
+    </div>
+    <div class="control">
+      <div class="label">Measure <span class="side-effect">· reads dmm0</span></div>
+      <button class="btn btn-primary" style="width:100%">Measure</button>
+    </div>
+    <div class="control">
+      <div class="label">Answer <span class="side-effect">· closes the run</span></div>
+      <div class="answer-grid">
+        <button class="btn" disabled>ok</button>
+        <button class="btn" disabled>low_voltage</button>
+        <button class="btn" disabled>noise</button>
+        <button class="btn" disabled>open</button>
+      </div>
+      <div class="btn-hint">measure dmm0 at least once before answering</div>
+    </div>
+
+    <div class="section-label">Timeline</div>
+    <div class="timeline">
+      <div class="step">
+        <div class="n">1</div>
+        <div class="body"><div class="what">Checked driver on psu0</div><div class="detail">passed</div></div>
+      </div>
+      <div class="step">
+        <div class="n">2</div>
+        <div class="body"><div class="what">Drove psu0 to 5.0 V</div><div class="detail">applied</div></div>
+        <div class="pill sent">sent</div>
+      </div>
+    </div>
+    <footer>Simulated instruments only · <span class="run-id mono">run-…a81e</span></footer>
+  </div>
+
+  <!-- ============== FRAME 3: a gate-refused Set voltage tap ============== -->
+  <div class="frame-label">Frame 3 — gate refusal: nothing was sent</div>
+  <div class="phone">
+    <header>
+      <div class="title">Is the 3V3 rail in spec?</div>
+      <div class="sub">rail-3v3 · playing</div>
+    </header>
+
+    <div class="control">
+      <div class="label">Set voltage <span class="side-effect">· drives psu0 (gate checked)</span></div>
+      <div class="control-row">
+        <input type="number" value="30" step="0.1" aria-label="volts">
+        <button class="btn btn-secondary">Set</button>
+      </div>
+    </div>
+
+    <div class="section-label">Timeline</div>
+    <div class="timeline">
+      <div class="step">
+        <div class="n">1</div>
+        <div class="body"><div class="what">Checked driver on psu0</div><div class="detail">passed</div></div>
+      </div>
+      <div class="step stop-flash">
+        <div class="n">2</div>
+        <div class="body"><div class="what">Drove psu0 to 30.0 V</div>
+          <div class="detail">nothing was sent — this would damage the card</div></div>
+        <div class="pill refused">refused</div>
+      </div>
+    </div>
+    <footer>Simulated instruments only · <span class="run-id mono">run-…a81e</span></footer>
+  </div>
+
+  <!-- ============== FRAME 4: answered, finished ============== -->
+  <div class="frame-label">Frame 4 — after Answer: finished, result card</div>
+  <div class="phone">
+    <header>
+      <div class="title">Is the 3V3 rail in spec?</div>
+      <div class="sub">rail-3v3 · finished</div>
+    </header>
+
+    <div class="verdict-bar">
+      <div class="icon">&#10003;</div>
+      <div class="text">Correct</div>
+    </div>
+
+    <div class="section-label">Controls</div>
+    <div class="control">
+      <div class="label" style="color:var(--dim)">Run finished — no further controls</div>
+    </div>
+
+    <div class="section-label">Result</div>
+    <div class="result">
+      <div class="verdict">Correct</div>
+      <div class="row">answered <b>ok</b> · 3 turns · not disqualified</div>
+    </div>
+    <footer>Simulated instruments only · <span class="run-id mono">run-…a81e</span></footer>
+  </div>
+
+</body>
+</html>
