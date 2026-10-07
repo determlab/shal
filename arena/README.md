@@ -460,3 +460,15 @@ fixed probe/drives pair — e.g. `call <run-id> relay0 ./driver.py set_relay
 0 false --json` and `call <run-id> relay0 ./driver.py read_relay 0
 --json`; `measure`/`check-driver` are unchanged and still cover the probe
 instruments, `dmm0` and `temp0`.
+
+Issue #390 adds leaderboard part 1: `shal-arena verify <score.json> --json`
+replays a closed run from `arena/challenges/<week>.yaml`'s published seed and
+prints `{"ok", "result": "verified"|"disqualified"|"refused", "reason",
+"week", "side_effect": "none"}`, exit 0 only on `verified` — a PR with a
+score file and its run record can be checked without a server.
+A `verified` result is consistency-checked, not proof of a run: verify
+proves the score, record, sim log and published seed agree with each other
+(record hash, fault recomputed from the seed, answer, score fields, at least
+one `measure` line), but with the seed public and the sim open the answer can
+be computed offline, so it cannot prove anyone ran the sim. `turns`,
+`duration_s` and `gate_stops` are not checked — never rank on them.

@@ -1,0 +1,4 @@
+# arena-record.json's bytes are hash-pinned (score.json's record_sha256) -- git
+# must never normalize line endings on checkout or commit, on any OS, or
+# the hash stops matching (the actual bug this file fixes).
+* -text

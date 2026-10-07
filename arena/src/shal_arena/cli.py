@@ -46,6 +46,7 @@ from .replay.rack import build_setup_yaml, render_rack_page
 from .runner import answer as _answer
 from .runner import call_op, check_instrument_driver, drive_input, start_run, take_measurement
 from .store import DEFAULT_STATE_DIR, RunStore
+from .verify import verify as _verify
 
 
 def _cmd_demo(args: argparse.Namespace) -> int:
@@ -225,6 +226,20 @@ def _cmd_answer(args: argparse.Namespace) -> int:
             print("disqualified: no measurement logged for this run")
         print(f"sim log: {result['sim_log']}")
     return 0
+
+
+_VERIFY_EXIT = {"verified": 0, "disqualified": 1, "refused": 2}
+
+
+def _cmd_verify(args: argparse.Namespace) -> int:
+    result = _verify(args.score_file, week=args.week)
+    if args.json:
+        _json_out(result)
+    else:
+        print(f"{result['result']}: {result['reason']}")
+        if result["week"]:
+            print(f"week: {result['week']}")
+    return _VERIFY_EXIT[result["result"]]
 
 
 def _cmd_bench(args: argparse.Namespace) -> int:
@@ -447,6 +462,20 @@ def _build_parser() -> argparse.ArgumentParser:
                          help="also write the result to this path")
     add_common(p_setup)
     p_setup.set_defaults(func=_cmd_setup_yaml)
+
+    p_verify = sub.add_parser(
+        "verify",
+        help="leaderboard part 1 (issue #390): replay a closed run from the weekly "
+             "seed and say whether its score file holds up")
+    p_verify.add_argument("score_file", help="path to the run's <stem>.score.json; "
+                                             "<stem>.record.json and <stem>.simlog.jsonl "
+                                             "must sit beside it")
+    p_verify.add_argument("--week", default=None, metavar="YYYY-WW",
+                          help="which arena/challenges/<week>.yaml to check against; "
+                               "default: the nearest yyyy-ww directory name in "
+                               "score_file's own path")
+    p_verify.add_argument("--json", action="store_true", help="print one JSON document")
+    p_verify.set_defaults(func=_cmd_verify)
 
     return parser
 
