@@ -52,6 +52,7 @@ html, body { margin: 0; padding: 0; background: var(--bg); color: var(--text);
 header { padding: 14px 16px 10px; }
 header .title { font-size: 16px; font-weight: 700; }
 header .sub { font-size: 13px; color: var(--dim); margin-top: 2px; }
+header .question { font-size: 13px; color: var(--text); margin-top: 6px; }
 .verdict-bar { margin: 0 16px 14px; padding: 12px 14px; border-radius: 12px;
   display: flex; align-items: flex-start; gap: 10px;
   background: rgba(61,220,132,.12); border: 1px solid var(--ok); }
@@ -267,6 +268,17 @@ function stepDetail(e) {
   return "";
 }
 
+// issue #474 (regression from #459): `kind: "exchange"` rows are the raw
+// bus-layer log #459 added to `payload.timeline` -- real data, kept there
+// for #447's own log table, but never a timeline STEP: each one merely
+// restates, in raw protocol text, what an agent step (call/write/measure)
+// already shows. Every reader of `payload.timeline` for display -- the
+// step list and the "N step(s) so far" count alike -- goes through this
+// first; nothing in `payload.timeline` itself, or its length, changes.
+function visibleSteps(entries) {
+  return entries.filter(e => e.kind !== "exchange");
+}
+
 // a bare "measure" marker paired with a later "reading" at the same
 // address is one real step, told by the reading's own row -- not two.
 function hasPairedReading(entries, i) {
@@ -305,7 +317,8 @@ function renderVerdict(payload) {
   if (!payload.closed) {
     el.className = "verdict-bar running";
     el.innerHTML = '<div class="icon">⋯</div><div class="text">Running…'
-      + `<span class="reason">${payload.timeline.length} step(s) so far</span></div>`;
+      + `<span class="reason">${visibleSteps(payload.timeline).length} step(s) so far`
+      + "</span></div>";
     return;
   }
   const rec = payload.record || {};
@@ -474,7 +487,7 @@ function renderRoles(payload) {
 
 function renderTimeline(payload) {
   const list = document.getElementById("timeline-list");
-  const entries = payload.timeline;
+  const entries = visibleSteps(payload.timeline);
   const agentSteps = entries.filter((e, i) => !hasPairedReading(entries, i));
   list.innerHTML = agentSteps.map((e, i) => stepRowHtml(e, i)).join("");
 
@@ -571,6 +584,10 @@ function render(payload) {
   document.getElementById("title").textContent = payload.title;
   document.getElementById("sub").textContent =
     `${payload.task_id} · ${payload.closed ? "finished" : "running…"}`;
+  // issue #474: the task's own question, under the title -- textContent
+  // only, same as every other agent-written or task-written field on this
+  // page.
+  document.getElementById("question").textContent = payload.question || "";
   document.getElementById("run-id").textContent = payload.run_id;
   renderBadge(payload);
   renderVerdict(payload);
@@ -660,6 +677,7 @@ def _shell(run_id: str, *, banner: str = "") -> str:
   <header>
     <div class="title" id="title"></div>
     <div class="sub" id="sub"></div>
+    <div class="question" id="question"></div>
   </header>
   <div class="problem">{problem_html}</div>
   <div class="verdict-bar" id="verdict-bar"></div>
