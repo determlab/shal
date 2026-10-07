@@ -84,7 +84,8 @@ def _render_with_node(payload: dict) -> dict:
     with tempfile.TemporaryDirectory() as d:
         path = Path(d) / "render.js"
         path.write_text(script, encoding="utf-8")
-        proc = subprocess.run([node, str(path)], capture_output=True, text=True, timeout=30)
+        proc = subprocess.run([node, str(path)], capture_output=True, text=True,
+                              encoding="utf-8", timeout=30)
     assert proc.returncode == 0, proc.stderr
     return json.loads(proc.stdout)
 
@@ -102,7 +103,8 @@ def _render_single_row_html(entry: dict) -> str:
     with tempfile.TemporaryDirectory() as d:
         path = Path(d) / "row.js"
         path.write_text(script, encoding="utf-8")
-        proc = subprocess.run([node, str(path)], capture_output=True, text=True, timeout=30)
+        proc = subprocess.run([node, str(path)], capture_output=True, text=True,
+                              encoding="utf-8", timeout=30)
     assert proc.returncode == 0, proc.stderr
     return proc.stdout
 
