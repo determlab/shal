@@ -307,6 +307,18 @@ def _build_parser() -> argparse.ArgumentParser:
         p.add_argument("--state-dir", default=".shal-arena", metavar="DIR",
                        help="where run state lives (default: ./.shal-arena)")
 
+    def add_note(p: argparse.ArgumentParser) -> None:
+        # issue #470: the agent's own claim, saved in <run>.cli.jsonl
+        # alongside this call, never mixed into this command's own result
+        # -- `main()` checks the 2000-char limit before `func` runs. Only on
+        # the subcommands that name a run (CTO review: on `rack`/`setup-yaml`/
+        # `bench` it was accepted and silently dropped), so argparse rejects
+        # it everywhere else.
+        p.add_argument("--note", default=None, metavar="TEXT",
+                       help=f"a short note in your own words, saved in <run>.cli.jsonl "
+                            f"next to this call (max {NOTE_MAX_CHARS} characters); never "
+                            "changes what this command does or returns")
+
     p_demo = sub.add_parser(
         "demo",
         help="run the whole demo story from the installed package, no clone needed "
@@ -353,6 +365,7 @@ def _build_parser() -> argparse.ArgumentParser:
     p_run.add_argument("--seed", type=int, default=None,
                        help="override the task's seed (a weekly challenge passes this)")
     add_common(p_run)
+    add_note(p_run)
     p_run.set_defaults(func=_cmd_run)
 
     p_check = sub.add_parser(
@@ -362,6 +375,7 @@ def _build_parser() -> argparse.ArgumentParser:
     p_check.add_argument("instrument", help="the instrument address from `run`'s output")
     p_check.add_argument("manifest", help="path to your driver.py")
     add_common(p_check)
+    add_note(p_check)
     p_check.set_defaults(func=_cmd_check)
 
     p_measure = sub.add_parser(
@@ -371,6 +385,7 @@ def _build_parser() -> argparse.ArgumentParser:
     p_measure.add_argument("instrument", help="the instrument address from `run`'s output")
     p_measure.add_argument("manifest", help="path to your driver.py")
     add_common(p_measure)
+    add_note(p_measure)
     p_measure.set_defaults(func=_cmd_measure)
 
     p_drive = sub.add_parser(
@@ -381,6 +396,7 @@ def _build_parser() -> argparse.ArgumentParser:
     p_drive.add_argument("instrument", help="the instrument address from `run`'s output")
     p_drive.add_argument("volts", type=float)
     add_common(p_drive)
+    add_note(p_drive)
     p_drive.set_defaults(func=_cmd_drive)
 
     p_call = sub.add_parser(
@@ -393,12 +409,14 @@ def _build_parser() -> argparse.ArgumentParser:
     p_call.add_argument("op", help="the op name on your driver, e.g. set_relay")
     p_call.add_argument("args", nargs="*", help="positional arguments for the op, e.g. 0 false")
     add_common(p_call)
+    add_note(p_call)
     p_call.set_defaults(func=_cmd_call)
 
     p_answer = sub.add_parser("answer", help="answer the question and close the run")
     p_answer.add_argument("run_id")
     p_answer.add_argument("value", help="your answer (one of the card's fault ids, or 'ok')")
     add_common(p_answer)
+    add_note(p_answer)
     p_answer.set_defaults(func=_cmd_answer)
 
     p_bench = sub.add_parser(
@@ -430,6 +448,7 @@ def _build_parser() -> argparse.ArgumentParser:
                           help="where to write the card html (default: "
                                "<state-dir>/<run_id>.card.html)")
     add_common(p_replay)
+    add_note(p_replay)
     p_replay.set_defaults(func=_cmd_replay)
 
     p_rack = sub.add_parser(
@@ -452,6 +471,16 @@ def _build_parser() -> argparse.ArgumentParser:
 
 
 _RUN_LINE_RE = re.compile(r"^run (\S+):")
+
+#: issue #470: the one limit on --note, named in both --help and the error
+#: a note over it gets.
+NOTE_MAX_CHARS = 2000
+
+
+def _note_too_long_error(note: str) -> ArenaError:
+    return ArenaError(
+        f"--note is {len(note)} characters, over the {NOTE_MAX_CHARS}-character limit",
+        fix=f"shorten the note to {NOTE_MAX_CHARS} characters or fewer")
 
 
 class _Tee:
@@ -482,8 +511,9 @@ class _Tee:
         return "".join(self._parts)
 
 
-def _redact_cli_line(argv: list[str], payload: dict[str, Any] | None, text: str | None
-                     ) -> tuple[list[str], dict[str, Any] | None, str | None]:
+def _redact_cli_line(argv: list[str], payload: dict[str, Any] | None, text: str | None,
+                     note: str | None = None
+                     ) -> tuple[list[str], dict[str, Any] | None, str | None, str | None]:
     """issue #460: the one place every value written to ``<run>.cli.jsonl``
     passes through before it reaches disk -- a one-line swap if the
     redaction policy ever changes. `redact_secret_args`/`redact_url_in_text`/
@@ -497,13 +527,58 @@ def _redact_cli_line(argv: list[str], payload: dict[str, Any] | None, text: str 
     `text` gets the URL rule only, never the key-based secret rule
     `redact_structured` also applies to `json` (round 2 nit): `text` is a
     command's own PRINTED output, which has no keys to check -- the URL
-    rule is the only one that ever applied to it."""
-    argv = [redact_url_in_text(a) for a in redact_secret_args(argv)]
+    rule is the only one that ever applied to it.
+
+    `note` (#470) is free text too, so it gets the same URL rule as `text`,
+    plus `redact_secret_args`' flag-style rule (`_redact_note`), so a note
+    that echoes a command line, e.g. "... --token abc", redacts the same way
+    argv itself would -- no second redaction path. The note is also IN
+    `argv` as the `--note` value, so that value is swapped for its redacted
+    form too (CTO review: `redact_secret_args` never looks inside a value
+    that doesn't start with `-`, so it leaked there)."""
+    note_at = _note_value_positions(argv)
+    redacted = [redact_url_in_text(a) for a in redact_secret_args(argv)]
+    for i, prefix in note_at:
+        redacted[i] = prefix + _redact_note(argv[i][len(prefix):])
+    argv = redacted
     if payload is not None:
         payload = redact_structured(payload)
     if text is not None:
         text = redact_url_in_text(text)
-    return argv, payload, text
+    if note is not None:
+        note = _redact_note(note)
+    return argv, payload, text, note
+
+
+def _redact_note(note: str) -> str:
+    """issue #470: the flag rule on each word, the URL rule on the whole --
+    with every separator kept exactly as written (CTO review: "never
+    shorten, rewrite or hide the note"; `" ".join(note.split())` collapsed
+    newlines and runs of spaces). `redact_secret_args` keeps the list
+    length, so the words go back between their own separators."""
+    parts = re.split(r"(\s+)", note)
+    parts[::2] = redact_secret_args(parts[::2])
+    return redact_url_in_text("".join(parts))
+
+
+def _note_value_positions(argv: list[str]) -> list[tuple[int, str]]:
+    """Where a `--note` value sits in `argv`: `(index, prefix)`, the prefix
+    being `"--note="` (or an abbreviation argparse accepts, e.g. `--no=`)
+    for the one-element form, or `""` for the element after `--note`."""
+    out = []
+    i = 0
+    while i < len(argv):
+        flag, sep, _value = argv[i].partition("=")
+        if len(flag) >= 3 and "--note".startswith(flag):
+            if sep:
+                out.append((i, flag + "="))
+            elif i + 1 < len(argv):
+                out.append((i + 1, ""))
+                i += 1
+        elif argv[i] == "--":
+            break
+        i += 1
+    return out
 
 
 def _extract_run_id(args: argparse.Namespace, printed: str,
@@ -523,7 +598,8 @@ def _extract_run_id(args: argparse.Namespace, printed: str,
 
 
 def _log_cli_call(state_dir: str, run_id: str, argv: list[str], exit_code: int,
-                  parsed: dict[str, Any] | None, printed: str) -> None:
+                  parsed: dict[str, Any] | None, printed: str,
+                  note: str | None = None) -> None:
     """issue #460: one JSON line to ``<run>.cli.jsonl``, under the run's own
     lock (`RunStore.append_cli_log`, reusing #436/#442's lock -- agents run
     commands in parallel). `json` is the parsed `--json` output; `text` is
@@ -534,11 +610,16 @@ def _log_cli_call(state_dir: str, run_id: str, argv: list[str], exit_code: int,
     stderr, not stdout (`_report_error`), so a FAILING command run without
     `--json` logs `text: ""` here -- only `exit_code` and `argv` say
     anything went wrong. stderr is never mirrored into this file; `--json`
-    is the one shape that carries the error text itself, in `json.error`."""
+    is the one shape that carries the error text itself, in `json.error`.
+
+    `note` (#470) is the agent's own claim about this call, saved alongside
+    it -- never folded into `json`/`text`, which are only ever this
+    command's own output."""
     text = None if parsed is not None else printed
-    argv, parsed, text = _redact_cli_line(argv, parsed, text)
+    argv, parsed, text, note = _redact_cli_line(argv, parsed, text, note)
     entry = {"time": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
-             "argv": argv, "exit_code": exit_code, "json": parsed, "text": text}
+             "argv": argv, "exit_code": exit_code, "json": parsed, "text": text,
+             "note": note}
     RunStore(state_dir).append_cli_log(run_id, entry)
 
 
@@ -546,6 +627,12 @@ def main(argv: list[str] | None = None) -> int:
     parser = _build_parser()
     args = parser.parse_args(argv)
     raw_argv = list(argv if argv is not None else sys.argv[1:])
+
+    # issue #470: checked before the command runs, so an over-limit note
+    # never runs the command and never writes a cli.jsonl line for it.
+    note = getattr(args, "note", None)
+    if note is not None and len(note) > NOTE_MAX_CHARS:
+        return _report_error(_note_too_long_error(note), getattr(args, "json", False))
 
     # issue #460: mirror what the command prints, to log it, without ever
     # holding it back from the real stdout (round 2 must-fix: a buffer-then-
@@ -572,7 +659,7 @@ def main(argv: list[str] | None = None) -> int:
     run_id = _extract_run_id(args, printed, parsed)
     if run_id is not None:
         state_dir = getattr(args, "state_dir", DEFAULT_STATE_DIR)
-        _log_cli_call(state_dir, run_id, raw_argv, exit_code, parsed, printed)
+        _log_cli_call(state_dir, run_id, raw_argv, exit_code, parsed, printed, note)
     return exit_code
 
 

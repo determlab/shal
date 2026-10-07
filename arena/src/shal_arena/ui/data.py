@@ -204,6 +204,41 @@ def _role(instrument: Any) -> str:
     return f"probes {instrument.probe}"
 
 
+def _notes(run_id: str, store: RunStore) -> list[dict[str, Any]]:
+    """issue #470: every logged `--note`, in call order -- its own list,
+    never folded into `_timeline`'s measurement rows (Constraints: "never
+    inside the measurement rows"). Each entry names the command it was
+    attached to, so a reader can still tell it apart from, or line it up
+    against, a nearby reading in the Timeline above. `has_reading` is
+    whether THAT SAME call took a reading: a `measure` that exited 0 -- the
+    one subcommand that logs a `reading` (a read op through `call` marks
+    the instrument measured, never a `reading` line). It is based on the
+    call, not its output format (CTO review: a plain-text `measure` logs
+    `json: null`). No conflict detection: the fixed line below never
+    depends on what the note says.
+    `<run>.cli.jsonl` may not exist yet (no command has been logged). A line
+    that does not parse (a crash mid-append) is skipped: this list is a
+    display, not the record, and one bad line must not take the page down."""
+    path = store.cli_log_path(run_id)
+    if not path.is_file():
+        return []
+    notes = []
+    for line in path.read_text(encoding="utf-8").splitlines():
+        if not line.strip():
+            continue
+        try:
+            entry = json.loads(line)
+        except ValueError:
+            continue
+        if not isinstance(entry, dict) or entry.get("note") is None:
+            continue
+        argv = entry.get("argv") or []
+        command = next((a for a in argv if not a.startswith("-")), "")
+        notes.append({"command": command, "note": entry["note"], "time": entry.get("time"),
+                     "has_reading": command == "measure" and entry.get("exit_code") == 0})
+    return notes
+
+
 def run_payload(run_id: str, *, state_dir: str | Path = DEFAULT_STATE_DIR) -> dict[str, Any]:
     """Everything the page needs for one run, live or finished. Raises
     `shal_arena.errors.UnknownRun` (same as every other reader) for a run id
@@ -270,6 +305,7 @@ def run_payload(run_id: str, *, state_dir: str | Path = DEFAULT_STATE_DIR) -> di
         "card": {"applied": dict(state.card_applied), "destroyed": state.card_destroyed,
                 "power_on": state.card_power_on},
         "timeline": _timeline(run_id, store),
+        "notes": _notes(run_id, store),
         "record": record,
         "score": score,
     }
