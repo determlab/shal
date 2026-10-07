@@ -27,7 +27,7 @@ from typing import Any
 
 from ..driver import Driver
 from ..errors import HopError, LoadError
-from ..log import bus_logger, current_txn, redact_url
+from ..log import bus_logger, current_txn, record_exchange, redact_url
 from ..node import Node
 from ..transport import MessageTransport, Transport
 from .http_bus import is_envelope, parse_envelope
@@ -131,6 +131,7 @@ class SimMsgBus(SimFaultMixin, Driver, Transport, MessageTransport):
             if not is_envelope(msg):
                 reply = model.handle(msg)
                 self.log.debug("exchange", event="exchange", addr=str(addr))
+                record_exchange("sim_msg", self.host.path, addr, msg, reply)
                 return reply
             envelope = parse_envelope(msg, self.host.path)
             reply = _envelope_reply(model.handle(envelope))
@@ -144,6 +145,9 @@ class SimMsgBus(SimFaultMixin, Driver, Transport, MessageTransport):
                                f"{redact_url(target)}", path=self.host.path,
                                hop="sim-msg", txn=current_txn.get(),
                                delivered="unknown")
+            record_exchange("sim_msg", self.host.path, addr,
+                            {"method": envelope["method"], "path": envelope["path"]},
+                            {"status": reply["status"]})
             return reply
 
 

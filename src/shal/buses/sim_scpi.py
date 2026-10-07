@@ -32,7 +32,7 @@ from typing import Any
 from ..driver import Driver, idempotent
 from ..driver import op as _op  # `op` is the loop name in the model below
 from ..errors import HopError, LoadError
-from ..log import bus_logger, current_txn, redact_url
+from ..log import bus_logger, current_txn, record_exchange, redact_url
 from ..node import Node
 from ..transport import MessageTransport, Transport
 from .sim_fault import SimFaultMixin
@@ -160,6 +160,7 @@ class SimScpiBus(SimFaultMixin, Driver, Transport, MessageTransport):
             reply = model.scpi(msg["scpi"])
             self.log.debug("%s %r", "query" if msg.get("query") else "write",
                            msg["scpi"], event="exchange", addr=str(addr))
+            record_exchange("sim_scpi", self.host.path, addr, msg["scpi"], reply)
             return {"reply": reply}
 
 

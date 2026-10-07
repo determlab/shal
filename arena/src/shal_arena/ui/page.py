@@ -211,17 +211,27 @@ function stepTitle(e) {
   if (e.kind === "query") return `Read ${addr}`;
   if (e.kind === "write") {
     // issue #427 CTO review round 3: a clean, in-range drive is now its
-    // own step ("Powered the card at 12.00 V") -- it used to write
-    // nothing to the sim log at all, so the PSU box's value changed with
-    // no step explaining it.
+    // own step. issue #457: `drive` goes through SHAL's own gate, not the
+    // agent's driver op -- the row says so, never `set_voltage`.
     const v = e.detail && e.detail.volts;
-    return v === undefined ? `Wrote ${addr}` : `Powered the card at ${fmtNum(v)}`;
+    return v === undefined ? `Wrote ${addr}` : `drive ${fmtNum(v)}, through the SHAL gate`;
   }
   if (e.kind === "call") {
     const op = e.detail && e.detail.op, args = (e.detail && e.detail.args) || [];
     if (op === "set_relay") return `Switched ${addr} ${args[1] === "true" ? "on" : "off"}`;
     if (op === "read_relay") return `Read ${addr}`;
     return `Called ${op} on ${addr}`;
+  }
+  if (e.kind === "exchange") {
+    // issue #457: the real bus-layer exchange, never invented -- Modbus's
+    // own structured message (addr/value or addr/bits), or raw bytes
+    // already hex-encoded (I2C, via `shal.log.redact`).
+    const fam = e.detail && e.detail.bus_family, req = e.detail && e.detail.request;
+    if (fam === "sim_msg" && req) {
+      if (req.fc === 5) return `Switched ${addr} ${req.value ? "on" : "off"}`;
+      if (req.fc === 1) return `Read ${addr}`;
+    }
+    return `Exchanged with ${addr}`;
   }
   if (e.kind === "refused") {
     const v = e.detail && e.detail.volts;
@@ -242,6 +252,18 @@ function stepDetail(e) {
   if (e.kind === "damage") return "card destroyed";
   if (e.kind === "reading") return fmtNum(e.detail.value, e.detail.unit);
   if (e.kind === "measure") return "attempted";
+  // a SCPI query/write row (issue #457 round 2 nit): show the command and
+  // its real answer, the same way an `exchange` row already does -- a
+  // bare "Read dmm0" with no detail at all left out the cmd/reply the
+  // data has carried since #457.
+  if ((e.kind === "query" || e.kind === "write") && e.detail.cmd !== undefined) {
+    const reply = e.detail.reply;
+    return reply === undefined || reply === "" ? e.detail.cmd : `${e.detail.cmd} -> ${reply}`;
+  }
+  if (e.kind === "exchange") {
+    const req = JSON.stringify(e.detail.request), res = JSON.stringify(e.detail.response);
+    return res === undefined || res === '""' ? req : `${req} -> ${res}`;
+  }
   return "";
 }
 
@@ -418,6 +440,38 @@ function stepRowHtml(e, i) {
 // moved out of its own timeline into this section or relabeled as one of
 // these two. Everything the agent actually did stays in the timeline, in
 // its own order, in full.
+// issue #457 (scope added): the page shows each instrument's role as
+// plain words BUILT from the task yaml's own `drives:`/`probe:` field and
+// the rail/temp-point data already in the payload -- "powers VIN",
+// "measures the 3V3 rail", "measures the regulator temperature" -- never
+// hand-written text. The agent-facing JSON (`payload.instruments[].role`,
+// `drives`/`probe` themselves) is untouched; this is display only, and no
+// diagram change (the card, visual and layout stay with #447).
+function instrumentRoleText(payload, inst) {
+  if (inst.drives) {
+    const name = inst.drives.split(".")[1] || inst.drives;
+    return `powers ${name.toUpperCase()}`;
+  }
+  if (inst.probe) {
+    const tp = inst.probe.split(".")[1] || inst.probe;
+    const rail = (payload.rails || []).find(r => r.test_point === tp);
+    if (rail) return `measures the ${rail.name} rail`;
+    const temp = (payload.temp_points || []).find(t => t.test_point === tp);
+    if (temp) return `measures the ${temp.name} temperature`;
+  }
+  return inst.role;   // fallback: the raw server-built text, never blank
+}
+
+function renderRoles(payload) {
+  const section = document.getElementById("roles-section");
+  const rows = payload.instruments.map(i =>
+    `<p class="plain-line" style="margin-left:0">`
+    + `<span class="mono">${escapeHtml(i.address)}</span> `
+    + `${escapeHtml(instrumentRoleText(payload, i))}</p>`
+  ).join("");
+  section.innerHTML = rows;
+}
+
 function renderTimeline(payload) {
   const list = document.getElementById("timeline-list");
   const entries = payload.timeline;
@@ -523,6 +577,7 @@ function render(payload) {
   renderPlainLine(payload);
   renderBench(payload);
   renderDriverCode(payload);
+  renderRoles(payload);
   renderTimeline(payload);
   renderScriptedSection(payload);
   renderResult(payload);
@@ -614,6 +669,7 @@ def _shell(run_id: str, *, banner: str = "") -> str:
   <p class="plain-line" id="bench-caption"></p>
   <div class="bench">{_BENCH_SVG}</div>
   <div id="driver-code-section"></div>
+  <div id="roles-section"></div>
   <div class="section-label">Timeline</div>
   <div class="timeline" id="timeline-list"></div>
   <div id="scripted-section"></div>

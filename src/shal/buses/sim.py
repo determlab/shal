@@ -18,7 +18,7 @@ from ..capabilities import TemperatureSensor
 from ..driver import Driver, idempotent
 from ..driver import op as _op  # `op` is the loop name in every model below
 from ..errors import HopError, LoadError
-from ..log import bus_logger, current_txn, redact, redact_url
+from ..log import bus_logger, current_txn, record_exchange, redact, redact_url
 from ..node import Node
 from ..transport import ByteTransport, Op, Read, Transport, Write
 from .sim_fault import SimFaultMixin
@@ -173,6 +173,7 @@ class SimI2cBus(SimFaultMixin, Driver, Transport, ByteTransport):
             if self.log.isEnabledFor(logging.DEBUG):  # hot path costs nothing when off
                 self.log.debug("txn -> %s", redact(result),
                                event="txn", addr=hex(addr))
+            record_exchange("sim_i2c", self.host.path, addr, ops, result)
             return result
 
 
