@@ -119,11 +119,21 @@ def test_play_routes_never_leak_the_fault_before_the_run_ends(tmp_path: Path) ->
         status, driven_refused = _post(httpd, "/api/play/drive",
                                        {"address": "psu0", "volts": 30.0})
         responses.append((status, driven_refused))
+        assert status == 200, driven_refused
         status, driven_sent = _post(httpd, "/api/play/drive", {"address": "psu0", "volts": 5.0})
         responses.append((status, driven_sent))
+        assert status == 200, driven_sent
 
         status, measured = _post(httpd, "/api/play/measure", {"address": "dmm0"})
         responses.append((status, measured))
+        assert status == 200, measured
+
+        # a body-schema 400 (must-fix 3's own validation, not a runner
+        # refusal) -- the leak scan must cover this shape too, not only a
+        # runner-level refusal.
+        status, drive_no_volts = _post(httpd, "/api/play/drive", {"address": "psu0"})
+        responses.append((status, drive_no_volts))
+        assert status == 400, drive_no_volts
 
         # the relay-rail-only switch control is not on this task's one
         # instrument list, so this is the real refusal `call_op` gives for

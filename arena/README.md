@@ -342,8 +342,10 @@ task picker, then the same write routes a person's buttons call
 function the CLI calls. A server serves one run at a time: `POST
 /api/play/start` again while a run is still open is refused ("finish
 (Answer) before starting another"); once `answer` closes it, the next
-`start` opens a fresh one on the SAME server -- no restart needed. Mobile-
-first — a 360 px wide screen, tap targets at least 44 px, no drag.
+`start` opens a fresh one on the SAME server -- no restart needed. Restarting
+the server itself loses whatever Play run was still open; Play cannot resume
+a run across a restart, so finish (Answer) before stopping it. Mobile-first —
+a 360 px wide screen, tap targets at least 44 px, no drag.
 
 ## Task and card format (v1)
 

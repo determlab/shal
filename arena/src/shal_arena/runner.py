@@ -823,10 +823,12 @@ def has_any_measurement(run_id: str, state_dir: str | Path = DEFAULT_STATE_DIR) 
     second one).
 
     CTO review on #407 round 2, must-fix 4: `bool(probe_addresses) and
-    any(...)` made a probe-less task (drive-only, e.g. relay-rail) always
-    disqualified -- there being nothing to measure is not the same as the
-    player having skipped measuring something. A probe-less task's
-    requirement is vacuously satisfied."""
+    any(...)` made a probe-less task (drive-only, e.g. `conftest.py`'s
+    `minimal_task` fixture -- relay-rail actually has 2 probes, dmm0 and
+    temp0, so that was the wrong example) always disqualified -- there
+    being nothing to measure is not the same as the player having skipped
+    measuring something. A probe-less task's requirement is vacuously
+    satisfied."""
     store = RunStore(state_dir)
     state = store.load(run_id)
     loaded = load_task(state.task_path)

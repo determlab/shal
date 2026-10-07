@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import json
 import math
+import threading
 import webbrowser
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
@@ -54,13 +55,22 @@ def _error_body(e: ArenaError) -> bytes:
     return json.dumps({"ok": False, "error": e.to_dict()}).encode("utf-8")
 
 
+#: CTO review on #407 round 3, must-fix 1: `answer`'s own record also
+#: carries `task_path`/`card_path` (`store.answer`'s `record`, `store.py`),
+#: both real filesystem paths on this machine -- round 2 only caught
+#: `path` (the task list) and `sim_log`. Named here, in one place, so a
+#: future field gets a deliberate decision instead of silently passing
+#: through.
+_PATH_FIELDS = ("path", "sim_log", "task_path", "card_path")
+
+
 def _strip_paths(doc: dict[str, Any]) -> dict[str, Any]:
     """must-fix 5c: nothing this server sends over HTTP carries a real
-    filesystem path -- `/`'s own task list (`loader.list_tasks`'s `path`)
-    and `answer`'s `sim_log` are the 2 fields that did. Both are for a
-    trusted local caller (the CLI, a script on this machine); a browser
-    never needs either to play."""
-    return {k: v for k, v in doc.items() if k not in ("path", "sim_log")}
+    filesystem path -- a browser never needs one to play. Both this run's
+    own files (for the CLI, or a script on this machine) and anything a
+    browser needs are in `run_payload`/the Play routes' own result dicts
+    some other way (an id, a case name, a reading)."""
+    return {k: v for k, v in doc.items() if k not in _PATH_FIELDS}
 
 
 def _make_handler(run_id: str | None, state_dir: str | Path,
@@ -74,6 +84,12 @@ def _make_handler(run_id: str | None, state_dir: str | Path,
     # `current["run_id"] is None` cannot tell the 2 modes apart on its own.
     current = {"run_id": run_id}
     play_mode = run_id is None
+    # CTO review on #407 round 3 nit: `current["run_id"]` was check-then-set
+    # with no lock, on a `ThreadingHTTPServer` -- 2 concurrent
+    # `POST /api/play/start` calls (a phone double-tap) both see no run
+    # open and both start one, orphaning every run but the last to bind.
+    # One lock around the whole check-and-bind closes the window.
+    start_lock = threading.Lock()
 
     class Handler(BaseHTTPRequestHandler):
         protocol_version = "HTTP/1.1"
@@ -102,22 +118,29 @@ def _make_handler(run_id: str | None, state_dir: str | Path,
                 self._send(404, _error_body(e), "application/json; charset=utf-8")
                 return None
 
+        def _check_host(self) -> str:
+            """must-fix 5a (round 3 nit): shared by GET and POST alike --
+            without a Host check on GET too, a DNS-rebound foreign page
+            could still read `GET /`/`/api/run/<id>` even though no POST
+            route was ever reachable from it."""
+            want_host = f"{HOST}:{self.server.server_address[1]}"
+            host = self.headers.get("Host", "")
+            if host != want_host:
+                raise _Forbidden(f"play: unexpected Host header {host!r}",
+                                 fix=f"send requests to {want_host} only")
+            return want_host
+
         def _same_origin_check(self) -> None:
-            """must-fix 5a. `Host` must name this server; a present
-            `Origin` must too -- absent (a non-browser client: the CLI's
-            own future use, curl, an agent's HTTP client) is allowed,
+            """must-fix 5a. `Host` must name this server (`_check_host`); a
+            present `Origin` must too -- absent (a non-browser client: the
+            CLI's own future use, curl, an agent's HTTP client) is allowed,
             since there is no browser trust model to enforce there."""
             content_type = self.headers.get("Content-Type", "")
             if content_type.split(";")[0].strip().lower() != "application/json":
                 raise _Forbidden(
                     f"play: Content-Type must be application/json, got {content_type!r}",
                     fix='send the request with header Content-Type: application/json')
-            port = self.server.server_address[1]
-            want_host = f"{HOST}:{port}"
-            host = self.headers.get("Host", "")
-            if host != want_host:
-                raise _Forbidden(f"play: unexpected Host header {host!r}",
-                                 fix=f"send requests to {want_host} only")
+            want_host = self._check_host()
             origin = self.headers.get("Origin")
             if origin is not None and origin != f"http://{want_host}":
                 raise _Forbidden(f"play: unexpected Origin header {origin!r}",
@@ -143,6 +166,11 @@ def _make_handler(run_id: str | None, state_dir: str | Path,
             return doc
 
         def do_GET(self) -> None:  # noqa: N802 - BaseHTTPRequestHandler's own name
+            try:
+                self._check_host()
+            except _Forbidden as e:
+                self._send_json(403, {"ok": False, "error": e.to_dict()})
+                return
             if self.path == "/" or self.path == "":
                 if current["run_id"] is None:
                     # issue #407: no run yet -- the task-picker's own data
@@ -206,15 +234,16 @@ def _make_handler(run_id: str | None, state_dir: str | Path,
 
         def _dispatch(self, body: dict[str, Any]) -> None:
             if self.path == "/api/play/start":
-                if current["run_id"] is not None:
-                    raise ArenaError(
-                        "play: a run is already open on this page",
-                        fix="finish (Answer) before starting another")
-                task = _require_str(body, "task", example='{"task": "rail-3v3"}')
-                seed = _require_optional_int(body, "seed")
-                result = play.start(task, state_dir=state_dir, seed=seed)
-                current["run_id"] = result["run_id"]
-                self._send_json(200, result)
+                with start_lock:
+                    if current["run_id"] is not None:
+                        raise ArenaError(
+                            "play: a run is already open on this page",
+                            fix="finish (Answer) before starting another")
+                    task = _require_str(body, "task", example='{"task": "rail-3v3"}')
+                    seed = _require_optional_int(body, "seed")
+                    result = play.start(task, state_dir=state_dir, seed=seed)
+                    current["run_id"] = result["run_id"]
+                self._send_json(200, _strip_paths(result))
                 return
             if current["run_id"] is None:
                 raise ArenaError("play: no run is open yet",
@@ -223,20 +252,21 @@ def _make_handler(run_id: str | None, state_dir: str | Path,
             if self.path == "/api/play/measure":
                 address = _require_str(body, "address", example='{"address": "dmm0"}')
                 case_name = _case_for(run_id, address, state_dir)
-                self._send_json(200, play.measure(run_id, address, case_name,
-                                                  state_dir=state_dir))
+                self._send_json(200, _strip_paths(play.measure(
+                    run_id, address, case_name, state_dir=state_dir)))
                 return
             if self.path == "/api/play/drive":
                 address = _require_str(body, "address", example='{"address": "psu0"}')
                 volts = _require_finite_number(body, "volts")
-                self._send_json(200, play.drive(run_id, address, volts, state_dir=state_dir))
+                self._send_json(200, _strip_paths(
+                    play.drive(run_id, address, volts, state_dir=state_dir)))
                 return
             if self.path == "/api/play/switch":
                 address = _require_str(body, "address", example='{"address": "relay0"}')
                 on = _require_bool(body, "on")
-                self._send_json(200, play.switch(run_id, address, _case_for(run_id, address,
-                                                                            state_dir),
-                                                  on, state_dir=state_dir))
+                self._send_json(200, _strip_paths(play.switch(
+                    run_id, address, _case_for(run_id, address, state_dir),
+                    on, state_dir=state_dir)))
                 return
             if self.path == "/api/play/answer":
                 value = _require_str(body, "value", example='{"value": "ok"}')
@@ -340,18 +370,24 @@ def serve(run_id: str | None = None, *, state_dir: str | Path = DEFAULT_STATE_DI
     # ("claimed by 2 drivers"). Cache the import by resolved path for as
     # long as THIS server is alive -- the same `loader.once_per_path` tool
     # `bench.py`'s `_driver_imported_once` already uses for the same
-    # reason, scoped the same way: restored on `server_close()`, so it
-    # never leaks into another server or another test sharing this
-    # process.
-    original_import = _runner._import_driver_file
-    _runner._import_driver_file = once_per_path(original_import)
+    # reason, scoped the same way: restored on `server_close()`.
+    #
+    # round 3 nit: only PLAY mode (`run_id is None`) ever imports a driver
+    # -- WATCH mode never calls `measure`/`drive`/`switch`, so swapping
+    # this process-wide function there patches nothing real and only risks
+    # 2 servers closing out of order leaving the wrong one installed. PLAY
+    # mode itself still serves one run at a time, so this remains scoped
+    # to "the one server that could possibly need it."
     real_server_close = httpd.server_close
+    if run_id is None:
+        original_import = _runner._import_driver_file
+        _runner._import_driver_file = once_per_path(original_import)
 
-    def _server_close() -> None:
-        _runner._import_driver_file = original_import
-        real_server_close()
+        def _server_close() -> None:
+            _runner._import_driver_file = original_import
+            real_server_close()
 
-    httpd.server_close = _server_close
+        httpd.server_close = _server_close
 
     url = f"http://{HOST}:{httpd.server_address[1]}/"
     if run_id is not None:

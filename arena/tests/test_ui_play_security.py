@@ -19,6 +19,7 @@ network, from whatever a browser (or an attacker's page) POSTs.
 from __future__ import annotations
 
 import json
+import re
 import threading
 import urllib.error
 import urllib.request
@@ -224,26 +225,55 @@ def test_a_cross_origin_origin_header_is_rejected(play_server):
 
 
 # --------------------------------------------------------------------------- #
-# must-fix 5c: no filesystem path in a response
+# must-fix 5c: no filesystem path in a response -- round 3 must-fix 1: the
+# answer response also carried `task_path`/`card_path` (round 2 named
+# these exact fields), missed because the check below only looked for
+# "sim_log". One regex-based helper, applied to every Play response, so a
+# NEW field can't slip past the same way.
 # --------------------------------------------------------------------------- #
+
+#: a JSON string value that is a POSIX absolute path ("/...") or a Windows
+#: one ("C:\\...") -- a run id ("run-2026...") or a case name ("dmm")
+#: never matches either shape.
+_PATH_VALUE_RE = re.compile(r'": "(?:/[^"]+|[A-Za-z]:\\\\[^"]*)"')
+
+
+def _assert_no_filesystem_path(doc) -> None:
+    dumped = json.dumps(doc)
+    match = _PATH_VALUE_RE.search(dumped)
+    assert match is None, f"filesystem path leaked ({match.group(0)!r}): {dumped}"
+
 
 def test_task_list_carries_no_filesystem_path(play_server):
     httpd, _state_dir = play_server
     status, doc = _get(httpd, "/")
     assert status == 200
-    for task in doc["tasks"]:
-        assert "/" not in json.dumps(task) and "\\" not in json.dumps(task)
+    _assert_no_filesystem_path(doc)
 
 
-def test_answer_response_carries_no_filesystem_path(play_server):
+def test_every_play_response_carries_no_filesystem_path(play_server):
     httpd, _state_dir = play_server
-    run_id = _started_run(httpd)
+    status, started = _post(httpd, "/api/play/start", {"task": "relay-rail", "seed": 1})
+    assert status == 200, started
+    _assert_no_filesystem_path(started)
+
     status, measured = _post(httpd, "/api/play/measure", {"address": "dmm0"})
     assert status == 200, measured
+    _assert_no_filesystem_path(measured)
+
+    status, driven = _post(httpd, "/api/play/drive", {"address": "psu0", "volts": 1.0})
+    assert status == 200, driven  # psu0 drives card.vin on relay-rail
+    _assert_no_filesystem_path(driven)
+
+    status, switched = _post(httpd, "/api/play/switch", {"address": "relay0", "on": True})
+    assert status == 200, switched
+    _assert_no_filesystem_path(switched)
+
     status, answered = _post(httpd, "/api/play/answer", {"value": "ok"})
     assert status == 200, answered
+    _assert_no_filesystem_path(answered)
     assert "sim_log" not in answered
-    assert run_id  # the run id itself is not a path and stays visible
+    assert "task_path" not in answered and "card_path" not in answered
 
 
 # --------------------------------------------------------------------------- #
