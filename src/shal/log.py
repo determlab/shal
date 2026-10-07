@@ -110,7 +110,18 @@ def redact_secret_args(argv: Sequence[str]) -> list[str]:
 #: no `@` left to redact, logging the password in full. The trailing-
 #: punctuation strip has to happen AFTER the match, not as part of it --
 #: see `redact_url_in_text`.
-_URL_SUBSTRING_RE = re.compile(r"[A-Za-z][\w+.-]*://\S+")
+#:
+#: round 5 security fix: plain greedy `\S+` has its own leak when a SECOND
+#: url follows the first with no whitespace between them (a normal SCPI
+#: comma-list reply: `http://a:b@h1,http://c:d@h2`) -- the first match
+#: swallows the second URL whole, and `redact_url` on that combined string
+#: keeps everything past the first host as path/query, so the second
+#: URL's userinfo rides through untouched. The negative lookahead below
+#: stops the match the instant a NEW `scheme://` begins, wherever that
+#: falls (even mid-token, e.g. `b=http://`), so every URL in the string
+#: gets its own match and its own redaction.
+_URL_SUBSTRING_RE = re.compile(
+    r"[A-Za-z][\w+.-]*://(?:(?![A-Za-z][\w+.-]*://)\S)+")
 
 #: A trailing run of closing/punctuation characters a URL is commonly
 #: wrapped or followed by in free text -- peeled off the END of a matched

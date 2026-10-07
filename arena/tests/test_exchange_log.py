@@ -492,6 +492,16 @@ _URL_TABLE = [
     ("http://u:p;w@h", "http://h"),
     ("http://u:pa)ss@h:80", "http://h:80"),
     ("http://bob:it's@h/", "http://h/"),
+    # CTO review round 5 (security): plain greedy `\S+` swallows a SECOND
+    # url that follows the first with no whitespace between them (a normal
+    # SCPI comma-list reply) -- the match must stop the instant a new
+    # `scheme://` begins, wherever that falls, so each URL gets its own
+    # redaction instead of the first one's match hiding the second's
+    # userinfo inside what `redact_url` then treats as path/query.
+    ("http://a:b@h1,http://c:d@h2", "http://h1,http://h2"),
+    ("http://h1/x,http://c:d@h2", "http://h1/x,http://h2"),
+    ("a=http://u:p@h;b=http://c:d@k", "a=http://h;b=http://k"),
+    ("http://h:80/;http://u:p@x", "http://h:80/;http://x"),
 ]
 
 
@@ -606,15 +616,19 @@ def test_a_comma_in_the_userinfo_does_not_leak_through_sim_msg() -> None:
     assert exc.response["endpoint"] == "ftp://host"
 
 
-# -- the 2 byte-carrying buses (sim-i2c, and i2c_cli in core `tests/`) never
-# reach `redact_url_in_text` at all: their request/response is bytes or an
-# Op sequence, routed through `shal.log.redact` (hex-encoded) by
-# `_clean_payload`, never through the structured/text rule. The existing
-# test below (predating this round) already proves that categorically --
-# the comma-in-userinfo regex bug could never have reached a byte
-# transport's payload in the first place. Only the `address` argument
-# (always a plain `redact_url` call, a different and unaffected code path)
-# is shared with every bus, including these two.
+# -- the 2 byte-carrying buses (sim-i2c here; i2c_cli in core
+# `tests/test_buses.py`) never reach `redact_url_in_text` at all: their
+# request/response is bytes or an Op sequence, routed through
+# `shal.log.redact` (hex-encoded) by `_clean_payload`, never through the
+# structured/text rule -- the comma-in-userinfo regex bug could never have
+# reached a byte transport's payload in the first place. The existing
+# `test_a_secret_i2c_payload_is_logged_only_in_redacted_form` below
+# predates this round and already proves that categorically for sim-i2c;
+# `test_i2c_cli_long_payload_is_capped_at_redacts_64_byte_limit`
+# (`tests/test_buses.py`, added this round, not predating) proves the same
+# for i2c_cli, plus the 64-byte cap. Only the `address` argument (always a
+# plain `redact_url` call, a different and unaffected code path) is shared
+# with every bus, including these two.
 
 def test_a_secret_i2c_payload_is_logged_only_in_redacted_form() -> None:
     topo = {"shal_version": 1, "root": {"bench": {
