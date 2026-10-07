@@ -64,9 +64,10 @@ def _label(agent: str | None, date: str, seed: int | None) -> str:
     # issue #427 CMO review: the replayed-run line names the seed -- the
     # public part of a run's identity, written to the state file before
     # the run even closes (never the hidden fault).
-    seed_part = f" · seed {seed}" if seed is not None else ""
-    return (f"Replay of a recorded run · {safe_agent} · {safe_date}{seed_part} "
-            "· simulated instruments")
+    # issue #447 page text: the footer reads "Replay of a recorded run ·
+    # <agent>, <date>, seed <n>", after the fixed simulated-instruments line.
+    seed_part = f", seed {seed}" if seed is not None else ""
+    return f"Replay of a recorded run · {safe_agent}, {safe_date}{seed_part}"
 
 
 def render_export_page(payload: dict[str, Any], *, agent: str | None = None) -> str:
@@ -81,7 +82,8 @@ def render_export_page(payload: dict[str, Any], *, agent: str | None = None) -> 
     script_tag = (
         f'<script id="run-data" type="application/json">{payload_json}</script>\n'
         f"<script>{_SCRIPT}\n{_EXPORT_SCRIPT}\n"
-        f"startExport(JSON.parse(document.getElementById('run-data').textContent));</script>\n"
+        f"startExport(withLog(JSON.parse(document.getElementById('run-data').textContent)));"
+        f"</script>\n"
     )
     return shell.replace("</body>", script_tag + "</body>")
 

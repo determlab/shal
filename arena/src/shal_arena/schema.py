@@ -268,6 +268,21 @@ class Fault:
 
 
 @dataclass(frozen=True)
+class Block:
+    """One block of the card's block diagram (issue #447): the page draws
+    the diagram from these, never by hand per card. `from_block` is the
+    link (the block this one is fed by); `input`/`switch` name the card
+    input a `drives:`/`switches:` instrument attaches to; `test_point` is
+    the measure point a `probe:` instrument attaches to."""
+    id: str
+    label: str
+    from_block: str | None = None
+    input: str | None = None
+    switch: str | None = None
+    test_point: str | None = None
+
+
+@dataclass(frozen=True)
 class Card:
     id: str
     description: str
@@ -276,12 +291,14 @@ class Card:
     damage: tuple[Damage, ...]
     faults: tuple[Fault, ...]
     temp_points: tuple[TempPoint, ...] = ()
+    blocks: tuple[Block, ...] = ()
 
 
 def validate_card(doc: Any) -> Card:
     _require_dict(doc, "card")
     _require_keys(doc, required={"arena_card", "id", "description", "inputs", "rails",
-                                  "damage", "faults"}, optional={"temp_points"}, where="card")
+                                  "damage", "faults"}, optional={"temp_points", "blocks"},
+                  where="card")
     version = doc.get("arena_card")
     if version != CARD_VERSION:
         _fail(f"card.arena_card: this shal-arena supports version {CARD_VERSION}, "
@@ -297,8 +314,10 @@ def validate_card(doc: Any) -> Card:
     temp_points = _validate_temp_points(doc.get("temp_points"), rail_test_points)
     damage = _validate_damage(doc.get("damage"), input_names)
     faults = _validate_faults(doc.get("faults"))
+    test_points = set(rail_test_points) | {t.test_point for t in temp_points}
+    blocks = _validate_blocks(doc.get("blocks"), input_names, test_points)
     return Card(id=card_id, description=description, inputs=inputs, rails=rails,
-                damage=damage, faults=faults, temp_points=temp_points)
+                damage=damage, faults=faults, temp_points=temp_points, blocks=blocks)
 
 
 def _validate_inputs(value: Any) -> tuple[Input, ...]:
@@ -368,6 +387,36 @@ def _validate_temp_points(value: Any, reserved_test_points: dict[str, str]
         tol_source = _require_str(entry, "tol_source", where) if "tol_source" in entry else None
         out.append(TempPoint(name=name, nominal_c=_require_number(entry, "nominal_c", where),
                              test_point=test_point, high_c=high_c, tol_source=tol_source))
+    return tuple(out)
+
+
+def _validate_blocks(value: Any, input_names: set[str], test_points: set[str]
+                     ) -> tuple[Block, ...]:
+    """``card.blocks`` (optional, issue #447): the card's block diagram, in
+    order. Each block may name the block that feeds it (``from``, an
+    earlier block), and what attaches to it: a card ``input``, the input a
+    relay ``switch``es, or a ``test_point`` (a rail's or temp point's)."""
+    d = _require_dict(value if value is not None else {}, "card.blocks")
+    out: list[Block] = []
+    for name, entry in d.items():
+        where = f"card.blocks.{name}"
+        _require_dict(entry, where)
+        _require_keys(entry, required=set(),
+                      optional={"label", "from", "input", "switch", "test_point"}, where=where)
+        label = _require_str(entry, "label", where) if "label" in entry else str(name).upper()
+        from_block = _require_str(entry, "from", where) if "from" in entry else None
+        if from_block is not None and from_block not in {b.id for b in out}:
+            _fail(f"{where}.from: {from_block!r} is not an earlier card.blocks name",
+                  f"set {where}.from to one of {[b.id for b in out]}")
+        refs = {}
+        for key, allowed in (("input", input_names), ("switch", input_names),
+                             ("test_point", test_points)):
+            ref = _require_str(entry, key, where) if key in entry else None
+            if ref is not None and ref not in allowed:
+                _fail(f"{where}.{key}: {ref!r} is not one of {sorted(allowed)}",
+                      f"set {where}.{key} to one of {sorted(allowed)}")
+            refs[key] = ref
+        out.append(Block(id=str(name), label=label, from_block=from_block, **refs))
     return tuple(out)
 
 

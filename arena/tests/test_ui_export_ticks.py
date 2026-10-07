@@ -1,9 +1,10 @@
 """issue #481: the exported replay ticks once per row the timeline really
 shows (never on an `exchange` row, nor on a `measure`/`query` row a later
 `reading` folds away), its "N step(s) so far" count matches the rows on
-screen at every tick, the closed verdict bar carries the answer sentence
-(as text, once on the page), and the power step reads "Powered the card at
-12.00 V, through the SHAL gate".
+screen at every tick, the closed verdict bar carries the measured result
+(as text, once on the page -- issue #447 replaced #481's answer sentence
+there with the "Fault found: ..." line), and the power step reads
+"Powered the card at 12.00 V, through the SHAL gate".
 
 No browser here: the same Node DOM stub `test_ui_timeline_no_exchange.py`
 uses runs the shipped `_SCRIPT` plus the export's own `startExport`, with
@@ -79,8 +80,8 @@ def _rows(frame: dict) -> int:
 
 
 def _page_text(frame: dict) -> str:
-    # every element's own rendered markup, unescaped -- what a reader sees
-    return "\n".join(html.unescape(v["html"]) for v in frame.values())
+    # every element's own rendered text, tags dropped -- what a reader sees
+    return "\n".join(html.unescape(re.sub(r"<[^>]+>", "", v["html"])) for v in frame.values())
 
 
 def test_export_ticks_once_per_visible_row(tmp_path: Path) -> None:
@@ -116,47 +117,53 @@ def test_every_tick_count_matches_rows_and_never_flashes_attempted(tmp_path: Pat
         assert "attempted" not in frame["timeline-list"]["html"]
 
 
-def test_closed_verdict_bar_holds_the_answer_sentence(tmp_path: Path) -> None:
-    _, _, payload = _closed_relay_rail_payload(tmp_path)
-    sentence = payload["answer_sentence"]
-    assert sentence
+# issue #447 (built on #481): the closed verdict bar's top line is the
+# measured result -- "Fault found: <part> <what>, <value>, limit <limit>" --
+# then the agent's answer as a chip; the Result box at the bottom is gone.
+_RESULT_LINE = "Fault found: 3V3 rail low, 2.90 V, limit 3.20 V"
 
+
+def _big_line(bar_html: str) -> str:
+    m = re.match(r'<div class="big">(.*?)</div>', bar_html)
+    assert m is not None, bar_html
+    return html.unescape(re.sub(r"<[^>]+>", "", m.group(1)))
+
+
+def test_closed_verdict_bar_holds_the_measured_result_line(tmp_path: Path) -> None:
+    _, _, payload = _closed_relay_rail_payload(tmp_path)
     live = _render_with_node(payload)
-    assert sentence in html.unescape(live["verdict-bar"]["html"])
+    assert _big_line(live["verdict-bar"]["html"]) == _RESULT_LINE
     export_last = _export_frames(payload)[-1]
-    assert sentence in html.unescape(export_last["verdict-bar"]["html"])
+    assert _big_line(export_last["verdict-bar"]["html"]) == _RESULT_LINE
 
 
-def test_verdict_bar_shows_a_markup_sentence_as_text(tmp_path: Path) -> None:
+def test_verdict_bar_shows_a_markup_result_as_text(tmp_path: Path) -> None:
     _, _, payload = _closed_relay_rail_payload(tmp_path)
-    payload["answer_sentence"] = "<b>x</b>"
+    payload["result"]["items"][0]["what"] = "<b>x</b>"
     bar = _render_with_node(payload)["verdict-bar"]["html"]
     assert "&lt;b&gt;x&lt;/b&gt;" in bar
-    assert "<b>x</b>" not in bar
+    assert "<b><b>x</b></b>" not in bar
 
 
-def test_verdict_bar_keeps_the_short_reason_with_no_sentence(tmp_path: Path) -> None:
+def test_verdict_bar_keeps_the_short_reason_with_no_result(tmp_path: Path) -> None:
     _, _, payload = _closed_relay_rail_payload(tmp_path)
-    payload["answer_sentence"] = None
+    payload["result"] = None
     payload["card"] = dict(payload["card"], destroyed=True)
     bar = _render_with_node(payload)["verdict-bar"]["html"]
     assert "card destroyed" in bar
 
 
-def test_answer_sentence_appears_once_live_and_in_export(tmp_path: Path) -> None:
+def test_result_line_appears_once_live_and_in_export(tmp_path: Path) -> None:
     run_id, state_dir, payload = _closed_relay_rail_payload(tmp_path)
-    sentence = payload["answer_sentence"]
 
     live = _render_with_node(payload)
-    assert _page_text(live).count(sentence) == 1
-    assert sentence not in html.unescape(live["result-section"]["html"])
-    assert "answer-sentence" not in live["result-section"]["html"]
-    # the Result box keeps its other rows
-    assert "answered <b>ok</b>" in live["result-section"]["html"]
+    assert _page_text(live).count(_RESULT_LINE) == 1
+    assert "result-section" not in live
+    # the agent's own answer, as the chip under the line
+    assert "Agent's answer: ok · Wrong" in html.unescape(live["verdict-bar"]["html"])
 
     export_last = _export_frames(payload)[-1]
-    assert _page_text(export_last).count(sentence) == 1
-    assert sentence in html.unescape(export_last["verdict-bar"]["html"])
+    assert _page_text(export_last).count(_RESULT_LINE) == 1
 
     # the real export file runs this same script on the same payload
     assert "startExport(" in build_export(run_id, state_dir=state_dir)

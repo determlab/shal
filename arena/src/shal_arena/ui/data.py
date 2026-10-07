@@ -14,6 +14,9 @@ import re
 from pathlib import Path
 from typing import Any
 
+import yaml
+
+from ..cases import CASES
 from ..errors import TaskFormatError
 from ..loader import load_task, resolve_task
 from ..replay.card import _timeline  # issue #406: reuse, not a second copy
@@ -121,21 +124,15 @@ def _measured_clause(name: str, rail: dict[str, Any] | None, temp: dict[str, Any
     return None
 
 
-def _answer_sentence(payload: dict[str, Any], rails: list[dict[str, Any]],
-                     temp_points: list[dict[str, Any]]) -> str | None:
-    """issue #427 CTO review: built server-side (not in the page's own JS)
-    so a hostile reading value can never reach `innerHTML` at all -- the
-    page only ever sets this string via `textContent`. The verdict comes
-    from `record["correct"]`, computed by `store.answer`, never
-    re-derived here from the agent's own answer text."""
-    record = payload["record"]
-    if record is None:
-        return None
+def _probed(payload: dict[str, Any], rails: list[dict[str, Any]],
+            temp_points: list[dict[str, Any]]) -> list[tuple[str, Any, Any, list[float], Any]]:
+    """Per probing instrument with a rail or temp point: its name, the
+    rail/temp spec, every reading it logged, and the failed-read cause (if
+    any) -- the one walk of the timeline both the answer sentence and the
+    result line (issue #447) are built from."""
     rails_by_tp = {r["test_point"]: r for r in rails}
     temps_by_tp = {t["test_point"]: t for t in temp_points}
-    timeline = payload["timeline"]
-
-    clauses = []
+    out = []
     for instrument in payload["instruments"]:
         probe = instrument["probe"]
         if probe is None:
@@ -146,15 +143,84 @@ def _answer_sentence(payload: dict[str, Any], rails: list[dict[str, Any]],
         if rail is None and temp is None:
             continue
         readings, cause = [], None
-        for e in timeline:
+        for e in payload["timeline"]:
             if e.get("address") != instrument["address"]:
                 continue
             if e.get("kind") == "reading":
                 readings.append(e["detail"]["value"])
             elif e.get("kind") == "failed":
                 cause = e["detail"].get("cause")
-        clause = _measured_clause(
-            _name_for_address(instrument["address"]), rail, temp, readings, cause)
+        out.append((_name_for_address(instrument["address"]), rail, temp, readings, cause))
+    return out
+
+
+def _result_item(name: str, rail: dict[str, Any] | None, temp: dict[str, Any] | None,
+                 readings: list[float], cause: str | None) -> dict[str, Any] | None:
+    """One measurement for the page's result line (issue #447: "Fault
+    found: <part> <what>, <value>, limit <limit>"), from the same public
+    card spec the answer sentence reads. `None`: nothing to say (no
+    reading, or the agent's own driver failed -- not a card measurement)."""
+    if not readings:
+        if cause == "transport":
+            part = f"{rail['name']} rail" if rail is not None else temp["name"]
+            return {"what": f"{part}: no answer from the {name}", "value": None,
+                    "limit": None, "failing": True}
+        return None
+    if rail is not None:
+        part, lo, hi = f"{rail['name']} rail", rail["lo"], rail["hi"]
+        window = f"{lo:.2f}-{hi:.2f} V"
+        if _varies(readings, 2):
+            return {"what": f"{part} unstable",
+                    "value": f"{min(readings):.2f}-{max(readings):.2f} V",
+                    "limit": window, "failing": True}
+        v = readings[-1]
+        if v < lo:
+            return {"what": f"{part} low", "value": f"{v:.2f} V", "limit": f"{lo:.2f} V",
+                    "failing": True}
+        if v > hi:
+            return {"what": f"{part} high", "value": f"{v:.2f} V", "limit": f"{hi:.2f} V",
+                    "failing": True}
+        return {"what": part, "value": f"{v:.2f} V", "limit": window, "failing": False}
+    part, high = temp["name"], temp["high_c"]
+    if _varies(readings, 1):
+        return {"what": f"{part} unstable",
+                "value": f"{min(readings):.1f}-{max(readings):.1f} °C",
+                "limit": f"{high:.0f} °C", "failing": True}
+    v = readings[-1]
+    if v > high:
+        return {"what": f"{part} overheating", "value": f"{v:.1f} °C",
+                "limit": f"{high:.0f} °C", "failing": True}
+    return {"what": part, "value": f"{v:.1f} °C", "limit": f"{high:.0f} °C", "failing": False}
+
+
+def _result(payload: dict[str, Any], rails: list[dict[str, Any]],
+            temp_points: list[dict[str, Any]]) -> dict[str, Any] | None:
+    """The page's top result line (issue #447), as data: the failing
+    measurements when there are any (`found`), else every measurement.
+    Built only once the run is closed -- same rule as the answer
+    sentence -- and rendered with `escapeHtml`, never as markup."""
+    if payload["record"] is None:
+        return None
+    items = [i for i in (_result_item(*m) for m in _probed(payload, rails, temp_points))
+             if i is not None]
+    failing = [i for i in items if i["failing"]]
+    return {"found": bool(failing), "destroyed": payload["card"]["destroyed"],
+            "items": failing or items}
+
+
+def _answer_sentence(payload: dict[str, Any], rails: list[dict[str, Any]],
+                     temp_points: list[dict[str, Any]]) -> str | None:
+    """issue #427 CTO review: built server-side (not in the page's own JS)
+    so a hostile reading value can never reach `innerHTML` at all -- the
+    page only ever sets this string via `textContent`. The verdict comes
+    from `record["correct"]`, computed by `store.answer`, never
+    re-derived here from the agent's own answer text."""
+    record = payload["record"]
+    if record is None:
+        return None
+    clauses = []
+    for name, rail, temp, readings, cause in _probed(payload, rails, temp_points):
+        clause = _measured_clause(name, rail, temp, readings, cause)
         if clause is not None:
             clauses.append(clause)
 
@@ -195,6 +261,21 @@ def _answer_sentence(payload: dict[str, Any], rails: list[dict[str, Any]],
     return f"{prefix}The agent's answer: {given_label}. {verdict}"
 
 
+#: issue #447: the protocol label an instrument card shows, from the case's
+#: own harness topology (the bus it really talks over), never hand-written.
+_PROTOCOLS = {"shal,sim-scpi": "SCPI", "shal,sim-msg": "Modbus", "shal,sim-i2c": "I2C"}
+
+
+def _protocol(case: str) -> str | None:
+    try:
+        topology = yaml.safe_load(CASES[case].harness_topology.read_text(encoding="utf-8"))
+    except (KeyError, OSError, yaml.YAMLError):
+        return None
+    buses = [node.get("driver") for node in (topology.get("root") or {}).values()
+             if isinstance(node, dict)]
+    return next((_PROTOCOLS[b] for b in buses if b in _PROTOCOLS), None)
+
+
 def _role(instrument: Any) -> str:
     """The server role string (issue #457), one per wiring key (#473)."""
     if instrument.drives is not None:
@@ -215,7 +296,7 @@ def run_payload(run_id: str, *, state_dir: str | Path = DEFAULT_STATE_DIR) -> di
 
     instruments = [
         {"address": str(i.address), "case": i.case, "drives": i.drives, "probe": i.probe,
-         "switches": i.switches,
+         "switches": i.switches, "protocol": _protocol(i.case),
          # issue #457: the instrument's role, straight from the task yaml's
          # own `drives:`/`probe:`/`switches:` field -- never hand-written text.
          "role": _role(i)}
@@ -269,9 +350,19 @@ def run_payload(run_id: str, *, state_dir: str | Path = DEFAULT_STATE_DIR) -> di
         "tiles": tiles,
         "card": {"applied": dict(state.card_applied), "destroyed": state.card_destroyed,
                 "power_on": state.card_power_on},
+        # issue #447: the card section is drawn from the run's own card yaml
+        # (its id, inputs and `blocks:` diagram) -- public spec, never the fault.
+        "card_id": loaded.card.id,
+        "inputs": [{"name": i.name, "nominal_v": i.nominal_v} for i in loaded.card.inputs],
+        "card_blocks": [
+            {"id": b.id, "label": b.label, "from": b.from_block, "input": b.input,
+             "switch": b.switch, "test_point": b.test_point}
+            for b in loaded.card.blocks
+        ],
         "timeline": _timeline(run_id, store),
         "record": record,
         "score": score,
     }
     payload["answer_sentence"] = _answer_sentence(payload, rails, temp_points)
+    payload["result"] = _result(payload, rails, temp_points)
     return payload

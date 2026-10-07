@@ -7,6 +7,14 @@ rails:
   3v3: {from: vin, nominal_v: 3.3, tol_pct: 3, test_point: tp_3v3, min_input_v: 10.5, tol_source: "buck-12v-relay datasheet 3.2 output accuracy (fictional datasheet)"}
 temp_points:
   regulator: {nominal_c: 45.0, test_point: tp_reg_temp, high_c: 85.0, tol_source: "buck-12v-relay datasheet 5.1 thermal derating (fictional datasheet)"}
+# issue #447: the card's block diagram -- the demo page draws it from this,
+# never by hand. `from` is the link; `input`/`switch`/`test_point` are where
+# the task's drives:/switches:/probe: instruments attach.
+blocks:
+  vin: {label: VIN, input: vin}
+  relay: {label: Relay, from: vin, switch: vin}
+  regulator: {label: Regulator, from: relay, test_point: tp_reg_temp}
+  3v3: {label: 3V3, from: regulator, test_point: tp_3v3}
 damage:
   - {input: vin, above_v: 13.0, effect: protection, source: "datasheet 7.3 OVP (fictional datasheet)"}
   - {input: vin, above_v: 14.0, effect: destroyed, source: "datasheet 6.1 abs max (fictional datasheet)"}
