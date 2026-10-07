@@ -159,11 +159,11 @@ def test_each_instrument_shows_its_role_from_the_task_yaml(tmp_path: Path) -> No
     run_id = start_run(str(RELAY_RAIL_TASK), seed=1, state_dir=tmp_path)["run_id"]
     payload = run_payload(run_id, state_dir=tmp_path)
     by_addr = {i["address"]: i["role"] for i in payload["instruments"]}
-    # the agent-facing JSON (the raw drives:/probe: fields, and this role
+    # the agent-facing JSON (the raw drives:/probe:/switches: fields, and this role
     # string built from them) is unchanged by the scope add below.
     assert by_addr["psu0"] == "drives card.vin"
     assert by_addr["dmm0"] == "probes card.tp_3v3"
-    assert by_addr["relay0"] == "drives card.vin"
+    assert by_addr["relay0"] == "switches card.vin"  # issue #473
     assert by_addr["temp0"] == "probes card.tp_reg_temp"
 
 

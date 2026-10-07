@@ -447,7 +447,7 @@ the card shows is `score["turns"]` — the field that already counts
 that refuses or otherwise fails still costs its turn; `answer` never does).
 
 The `relay-rail` task adds a fourth instrument on a third protocol: `psu0`
-and `dmm0` as above, plus `relay0` (a Modbus-framed relay switching the
+and `dmm0` as above, plus `relay0` (a Modbus-framed relay that `switches` the
 card's own power, over `shal,sim-msg`, request/reply as plain dicts — no
 `pymodbus`, no TCP) and `temp0` (an `sht31`-style temperature sensor on
 `shal,sim-i2c`, probing the regulator) — with a fourth fault, `overheat`

@@ -441,7 +441,7 @@ function stepRowHtml(e, i) {
 // these two. Everything the agent actually did stays in the timeline, in
 // its own order, in full.
 // issue #457 (scope added): the page shows each instrument's role as
-// plain words BUILT from the task yaml's own `drives:`/`probe:` field and
+// plain words BUILT from the task yaml's own `drives:`/`probe:`/`switches:` field and
 // the rail/temp-point data already in the payload -- "powers VIN",
 // "measures the 3V3 rail", "measures the regulator temperature" -- never
 // hand-written text. The agent-facing JSON (`payload.instruments[].role`,
@@ -451,6 +451,10 @@ function instrumentRoleText(payload, inst) {
   if (inst.drives) {
     const name = inst.drives.split(".")[1] || inst.drives;
     return `powers ${name.toUpperCase()}`;
+  }
+  if (inst.switches) {   // issue #473: a relay only turns the input on/off
+    const name = inst.switches.split(".")[1] || inst.switches;
+    return `switches ${name.toUpperCase()} on/off`;
   }
   if (inst.probe) {
     const tp = inst.probe.split(".")[1] || inst.probe;
