@@ -207,4 +207,5 @@ def test_drive_row_still_reads_exactly_through_the_shal_gate(tmp_path: Path) -> 
     payload = run_payload(run_id, state_dir=state_dir)
     elements = _render_with_node(payload)
 
-    assert "drive 12.00 V, through the SHAL gate" in elements["timeline-list"]["html"]
+    assert ("Powered the card at 12.00 V, through the SHAL gate"
+            in elements["timeline-list"]["html"])
