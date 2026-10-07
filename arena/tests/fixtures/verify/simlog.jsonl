@@ -1,1 +1,4 @@
-{"ts": "2026-10-06T07:04:21Z", "address": "dmm0", "kind": "measure"}
+{"ts": "2026-10-07T09:29:32Z", "address": "psu0", "kind": "write", "input": "vin", "volts": 5.0}
+{"ts": "2026-10-07T09:29:32Z", "address": "dmm0", "kind": "measure"}
+{"ts": "2026-10-07T09:29:32Z", "address": "dmm0", "kind": "query", "cmd": "MEAS:VOLT:DC?", "reply": "0.000647"}
+{"ts": "2026-10-07T09:29:32Z", "address": "dmm0", "kind": "reading", "value": 0.000647, "unit": "volt"}

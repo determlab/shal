@@ -2,14 +2,16 @@
 the weekly seed and say whether its score file holds up.
 
 A player opens a PR with their run's three files sitting next to each other —
-``<stem>.score.json``, ``<stem>.record.json`` and ``<stem>.simlog.jsonl``
+``<stem>.score.json``, ``<stem>.arena-record.json`` and ``<stem>.simlog.jsonl``
 (``<stem>`` is whatever prefix the score file has: ``RunStore`` writes
-``<run_id>.score.json`` and the matching ``<run_id>.record.json`` /
+``<run_id>.score.json`` and the matching ``<run_id>.arena-record.json`` /
 ``<run_id>.simlog.jsonl``, so a player who commits their own ``.shal-arena/``
 output already has this layout for free; the packaged sample under
 ``arena/tests/fixtures/verify/`` uses the empty stem, ``score.json`` /
-``record.json`` / ``simlog.jsonl``, to show the simplest case). ``verify``
-takes the score file's path and finds the other two beside it.
+``arena-record.json`` / ``simlog.jsonl``, to show the simplest case).
+``verify`` takes the score file's path and finds the other two beside it. A
+capture made before issue #435's rename has ``<stem>.record.json`` instead;
+``verify`` reads that name when the new one is absent.
 
 Which week: ``--week yyyy-ww`` if given; else the nearest ``yyyy-ww``-looking
 ancestor directory name in the score file's own path (a real submission's
@@ -46,6 +48,9 @@ Trust model (the sim is open-source, so only the keys below are load-bearing):
   one specific probe address) -- deliberate, because a replay has no live
   instrument list to check addresses against, only the log; flagged here
   for CTO review the same way ``score.py``'s own ambiguous fields are.
+- ``game_version`` must equal this package's ``score.GAME_VERSION``: the
+  replay recomputes under the current game rules, so a score made under
+  other rules is ``refused`` (re-run it under the current version).
 
 Replay never executes anything from the PR: no player code runs, and no
 network call is made. Every file this module opens is read-only.
@@ -65,7 +70,7 @@ import yaml
 
 from .fault import realized_fault
 from .loader import LoadedTask, load_task
-from .score import validate_score
+from .score import ERROR_CLASS_FAULTS, GAME_VERSION, validate_score
 
 # TASKS_DIR travels WITH the installed package (same pattern runner.py's own
 # task resolution already uses) -- a player needs no source checkout to run
@@ -183,6 +188,12 @@ def verify(score_path: str | Path, *, week: str | None = None) -> dict[str, Any]
         return _refused(f"score file does not match the score schema: {e.message}",
                         week).as_dict()
 
+    if score["game_version"] != GAME_VERSION:
+        return _refused(
+            f"wrong_game_version: the score was made under game {score['game_version']!r}, "
+            f"this verify replays game {GAME_VERSION!r} -- re-run the challenge with "
+            f"shal-arena {GAME_VERSION}", week).as_dict()
+
     challenge = _load_challenge(week)
     if challenge is None:
         return _refused(
@@ -205,7 +216,9 @@ def verify(score_path: str | Path, *, week: str | None = None) -> dict[str, Any]
             f"unknown_task_id: {challenge['task_id']!r} (named by arena/challenges/"
             f"{week}.yaml) matches no task under {TASKS_DIR}", week).as_dict()
 
-    record_path = _sibling(score_path, "record.json")
+    record_path = _sibling(score_path, "arena-record.json")
+    if not record_path.is_file() and _sibling(score_path, "record.json").is_file():
+        record_path = _sibling(score_path, "record.json")  # pre-#435 capture
     if not record_path.is_file():
         return _refused(f"missing_record: {record_path} not found beside {score_path}",
                         week).as_dict()
@@ -251,7 +264,7 @@ def verify(score_path: str | Path, *, week: str | None = None) -> dict[str, Any]
     disqualified = not measured  # always False here; kept explicit for build_score parity
     caught = (not disqualified) and fault_id != "ok" and correct
     false_fail = fault_id == "ok" and given != "ok"
-    error_correct = (not disqualified) and fault_id == "open" and correct
+    error_correct = (not disqualified) and fault_id in ERROR_CLASS_FAULTS and correct
     expected = {
         "faults_caught": 1 if caught else 0,
         "false_fails": 1 if false_fail else 0,

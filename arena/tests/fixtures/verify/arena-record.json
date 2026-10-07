@@ -1,0 +1,9 @@
+{
+  "run_id": "run-20261007T092919Z-e8299e54",
+  "task_path": "arena/src/shal_arena/tasks/easy.yaml",
+  "card_path": "arena/src/shal_arena/cards/ldo-5v-3v3.yaml",
+  "given": "open",
+  "fault_id": "open",
+  "correct": true,
+  "closed_at": "2026-10-07T09:29:38Z"
+}

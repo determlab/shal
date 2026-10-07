@@ -1,9 +1,0 @@
-{
-  "run_id": "run-20261006T070421Z-554987b5",
-  "task_path": "arena\\src\\shal_arena\\tasks\\easy.yaml",
-  "card_path": "C:\\Users\\hemip\\AppData\\Local\\Temp\\claude\\C--PlayGround-shal\\e40e1473-026d-4543-8fa3-4c55fc0b767a\\scratchpad\\shal390\\arena\\src\\shal_arena\\cards\\ldo-5v-3v3.yaml",
-  "given": "open",
-  "fault_id": "open",
-  "correct": true,
-  "closed_at": "2026-10-06T07:04:21Z"
-}

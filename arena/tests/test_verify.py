@@ -1,11 +1,14 @@
 """``shal-arena verify`` (issue #390, leaderboard part 1): replay a closed
 run from the weekly seed and say whether its score file holds up.
 
-``arena/tests/fixtures/verify/{score,record,simlog}.json(l)`` is a REAL run:
-``shal-arena run arena/src/shal_arena/tasks/easy.yaml --seed 20261006``, a
-real ``measure`` attempt (the realized fault is ``open``, so it raises --
-the sim log still gets the neutral marker), then ``answer open`` (correct).
-No hand-written fixture replaces it. ``arena/challenges/2026-41.yaml`` names
+``arena/tests/fixtures/verify/{score.json,arena-record.json,simlog.jsonl}``
+is a REAL run under game 0.4.1: ``shal-arena run
+arena/src/shal_arena/tasks/easy.yaml --seed 20261006``, ``drive psu0 5.0``,
+``measure dmm0`` (the realized fault is ``open``: the DMM reads about 0 V),
+then ``answer open`` (correct). No hand-written fixture replaces it. One edit
+only (CTO review on #393, privacy): the runner wrote ``card_path`` as an
+absolute local path; it is rewritten repo-relative and ``record_sha256``
+recomputed over the edited bytes. ``arena/challenges/2026-41.yaml`` names
 the same task and seed, so the packaged sample verifies against the real,
 current-week challenge file.
 """
@@ -22,11 +25,12 @@ from shal_arena.verify import verify
 
 FIXTURES = Path(__file__).resolve().parent / "fixtures" / "verify"
 WEEK = "2026-41"
+RECORD = "arena-record.json"
 
 
 def _copy_fixtures(dest: Path) -> None:
     dest.mkdir(parents=True, exist_ok=True)
-    for name in ("score.json", "record.json", "simlog.jsonl"):
+    for name in ("score.json", RECORD, "simlog.jsonl"):
         shutil.copy(FIXTURES / name, dest / name)
 
 
@@ -37,10 +41,14 @@ def test_real_sample_verifies(tmp_path: Path) -> None:
                       "week": WEEK, "side_effect": "none"}
 
 
-def test_real_sample_verifies_with_default_week_from_todays_date() -> None:
+def test_real_sample_verifies_with_default_week_from_todays_date(monkeypatch) -> None:
     # Agent path (issue #390): the plain invocation, no --week, must verify
     # the packaged sample -- it checks against the CURRENT ISO week, and the
-    # fixture was made against this week's own challenge file.
+    # fixture was made against this week's own challenge file. "Today" is
+    # pinned to that week so the test does not start failing next week.
+    import shal_arena.verify as verify_mod
+
+    monkeypatch.setattr(verify_mod, "_current_week", lambda: WEEK)
     result = verify(FIXTURES / "score.json")
     assert result["result"] == "verified"
     assert result["week"] == WEEK
@@ -72,10 +80,10 @@ def test_no_measurements_is_disqualified(tmp_path: Path) -> None:
 
 def test_edited_answer_without_recomputing_the_hash_is_disqualified(tmp_path: Path) -> None:
     _copy_fixtures(tmp_path)
-    record = json.loads((tmp_path / "record.json").read_text())
+    record = json.loads((tmp_path / RECORD).read_text())
     record["given"] = "ok"
     record["correct"] = False
-    (tmp_path / "record.json").write_text(json.dumps(record))  # old record_sha256 now stale
+    (tmp_path / RECORD).write_text(json.dumps(record))  # old record_sha256 now stale
 
     result = verify(tmp_path / "score.json", week=WEEK)
     assert result["ok"] is False
@@ -90,11 +98,11 @@ def test_a_self_consistent_forged_record_is_still_caught(tmp_path: Path) -> None
     # independently from the seed, never read from the record -- so a
     # fault_id that disagrees with that computation is still caught.
     _copy_fixtures(tmp_path)
-    record = json.loads((tmp_path / "record.json").read_text())
+    record = json.loads((tmp_path / RECORD).read_text())
     record["fault_id"] = "low_voltage"
     record["given"] = "low_voltage"
     record["correct"] = True
-    record_path = tmp_path / "record.json"
+    record_path = tmp_path / RECORD
     record_path.write_text(json.dumps(record, indent=2))
     score = json.loads((tmp_path / "score.json").read_text())
     score["record_sha256"] = hashlib.sha256(record_path.read_bytes()).hexdigest()
@@ -134,7 +142,7 @@ def test_verified_exits_0_and_others_exit_nonzero():
     assert _VERIFY_EXIT["refused"] != 0
 
 
-@pytest.mark.parametrize("name", ["score.json", "record.json", "simlog.jsonl"])
+@pytest.mark.parametrize("name", ["score.json", RECORD, "simlog.jsonl"])
 def test_sample_fixtures_exist(name: str) -> None:
     assert (FIXTURES / name).is_file()
 
@@ -142,3 +150,32 @@ def test_sample_fixtures_exist(name: str) -> None:
 def test_current_week_challenge_file_exists() -> None:
     challenges_dir = Path(__file__).resolve().parent.parent / "challenges"
     assert (challenges_dir / f"{WEEK}.yaml").is_file()
+
+
+def test_a_score_from_another_game_version_is_refused(tmp_path: Path) -> None:
+    _copy_fixtures(tmp_path)
+    score = json.loads((tmp_path / "score.json").read_text())
+    score["game_version"] = "0.4.0"
+    (tmp_path / "score.json").write_text(json.dumps(score))
+
+    result = verify(tmp_path / "score.json", week=WEEK)
+    assert result["result"] == "refused"
+    assert result["reason"].startswith("wrong_game_version")
+
+
+def test_a_pre_435_record_json_name_still_verifies(tmp_path: Path) -> None:
+    # issue #435 CTO review: verify must still read old captures, whose
+    # record is the bare record.json name.
+    _copy_fixtures(tmp_path)
+    (tmp_path / RECORD).rename(tmp_path / "record.json")
+    assert verify(tmp_path / "score.json", week=WEEK)["result"] == "verified"
+
+
+def test_sample_record_names_no_local_path() -> None:
+    # CTO review on #393 (privacy): the public sample must carry no local
+    # username or absolute path -- only repo-relative ones.
+    record = json.loads((FIXTURES / RECORD).read_text(encoding="utf-8"))
+    for field in ("task_path", "card_path"):
+        value = record[field]
+        assert not Path(value).is_absolute() and ":" not in value and "\\" not in value, value
+        assert value.startswith("arena/src/shal_arena/"), value
