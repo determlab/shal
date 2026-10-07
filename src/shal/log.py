@@ -255,11 +255,19 @@ def record_exchange(bus_family: str, path: str, address: Any, request: Any,
 
     issue #466: the sink is someone else's code, called from inside a real
     bus call -- a bug in it (or in an observer's own storage) must never
-    fail or change that call. `sink(...)` is the only thing guarded: the
-    bus's own result, or its own exception, is unaffected either way, and
-    a broken sink is one WARNING, not a crash, with no exchange data in
-    the message (it may itself be unsanitized if the sink raised before
-    finishing with it)."""
+    fail or change that call, in particular a DELIVERED write (`scpi_raw`/
+    `sim_msg` call this after the device has already acted): a raising
+    sink must never turn a change that really happened into a reported
+    failure. `sink(exchange)` is the only thing guarded -- the `Exchange`
+    above it is built, and fully sanitized, before the `try`, so a
+    redaction bug still fails loudly instead of handing the sink
+    unredacted data. The bus's own result, or its own exception, is
+    unaffected either way; `KeyboardInterrupt`/`SystemExit` are not
+    `Exception` subclasses, so they already propagate with no special
+    case. A broken sink is one WARNING naming it (never the exchange it
+    saw): `exc_info` is safe to include because a sink can only ever have
+    raised from code working with fields `_clean_payload` already
+    sanitized."""
     sink = _exchange_sink.get()
     if sink is None:
         return
@@ -267,11 +275,11 @@ def record_exchange(bus_family: str, path: str, address: Any, request: Any,
                         request=_clean_payload(request), response=_clean_payload(response))
     try:
         sink(exchange)
-    except (KeyboardInterrupt, SystemExit):
-        raise
     except Exception:
+        name = getattr(sink, "__qualname__", type(sink).__qualname__)
         logging.getLogger("shal.log").warning(
-            "exchange_sink raised; the bus call it observed is unaffected", exc_info=True)
+            "exchange_sink %s raised; the bus call it observed is unaffected",
+            name, exc_info=True)
 
 
 _RESERVED_KWARGS = frozenset({"exc_info", "stack_info", "stacklevel", "extra"})
