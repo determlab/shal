@@ -39,9 +39,15 @@ _TEMP = next(t for t in _CARD.temp_points if t.test_point == "tp_reg_temp")
 # issue #451: `high_c` is now a PUBLIC field in every `start_run`'s own
 # `temp_points` (the card's documented limit, same category as `rails`'
 # already-public `nominal_v`/`tol_pct`) -- dropped from this list, since it
-# never named the fault itself. `shift_c` (the fault's own internal
-# amount) stays banned.
-_FAULT_WORDS = ("low_voltage", "overheat", "shift_v", "shift_c")
+# never named the fault itself.
+# issue #461: `low_voltage`/`overheat` are now PUBLIC too, as the fixed
+# vocabulary of possible answers (`task.answer.values`, the same 4 names on
+# every run regardless of the seed) -- dropped from this list for the same
+# reason: naming a POSSIBLE fault is not the same as leaking the one this
+# run actually drew. `shift_v`/`shift_c` (the fault's own internal
+# magnitude, which DOES vary by seed and WOULD leak which one was drawn)
+# stay banned.
+_FAULT_WORDS = ("shift_v", "shift_c")
 
 
 def _seed_for(fault_id: str, limit: int = 500) -> int:
