@@ -10,6 +10,7 @@ list) is read as the old 4-fault list, and still replays and renders.
 """
 from __future__ import annotations
 
+import hashlib
 import json
 import shutil
 from pathlib import Path
@@ -204,7 +205,11 @@ def test_an_old_relay_rail_run_replays_to_the_same_fault_and_score(tmp_path):
                         closed_at=record["closed_at"], turns=state.turns,
                         record_path=RunStore(state_dir).record_path(run_id))
     assert {k: again[k] for k in _RULE_KEYS} == {k: score[k] for k in _RULE_KEYS}
-    assert again["record_sha256"] == score["record_sha256"]
+    # the stored score still hashes this record (git may check the fixture
+    # out with CRLF on Windows; the run wrote it with LF)
+    record_bytes = RunStore(state_dir).record_path(run_id).read_bytes()
+    assert hashlib.sha256(record_bytes.replace(b"\r\n", b"\n")).hexdigest() == (
+        score["record_sha256"])
 
     html = build_result_card(run_id, state_dir=state_dir)
     assert "1 of 1 faults caught." in html
