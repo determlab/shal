@@ -25,6 +25,7 @@ from __future__ import annotations
 
 import importlib.util
 import inspect
+import math
 import re
 import sys
 import typing
@@ -119,6 +120,8 @@ def _instrument_view(instrument: Instrument) -> dict[str, Any]:
     }
     if instrument.drives is not None:
         view["drives"] = instrument.drives
+    elif instrument.switches is not None:  # issue #473: a relay, not a source
+        view["switches"] = instrument.switches
     else:
         view["probe"] = instrument.probe
     return view
@@ -354,7 +357,19 @@ def drive_input(run_id: str, address: str, volts: float, *,
 
     Protection and damage here are a consequence of the player's own
     'drives' instrument, independent of the run's hidden fault — this never
-    reads or reveals it (DoD 4)."""
+    reads or reveals it (DoD 4).
+
+    CTO review on #407 round 2, must-fix 3: ``nan``/``inf`` compare False
+    against every damage limit, so they passed the gate as "sent" and left
+    the card simulation holding a non-finite applied voltage (a later read
+    of it is then invalid JSON) -- refused up front, naming the value,
+    before the gate or the sim ever sees it. This predates #407 (the CLI's
+    own ``shal-arena drive <run> psu0 nan`` has the same gap), but Play's
+    own HTTP route exposes it to any POST, so it is fixed here, the one
+    place both callers go through."""
+    if not math.isfinite(volts):
+        raise CheckCouldNotRun(f"drive: {volts} is not a finite number",
+                               fix="pass a finite voltage, e.g. 5.0")
     store = RunStore(state_dir)
     # one call that reaches the sim is one turn; also refuses a closed run
     # before anything is applied (issue #325).
@@ -366,6 +381,14 @@ def drive_input(run_id: str, address: str, volts: float, *,
         known = ", ".join(str(i.address) for i in loaded.task.instruments)
         raise CheckCouldNotRun(f"no instrument at address {address!r} on run {run_id!r}",
                                fix=f"use one of this run's addresses: {known}")
+    if instrument.switches is not None:
+        # issue #473: a `switches` instrument (relay0) only turns an input on
+        # or off -- its one action goes through `call`, never `drive`.
+        raise CheckCouldNotRun(
+            f"{address}: this instrument switches {instrument.switches} on/off, "
+            "it does not drive an input",
+            fix=f"use `shal-arena call <run> {address} <driver.py> set_relay "
+                "<channel> <true|false>` instead of drive")
     if instrument.drives is None:
         raise CheckCouldNotRun(
             f"{address}: this instrument probes the card, it does not drive an input",
@@ -465,7 +488,10 @@ def raw_scpi(run_id: str, address: str, cmd: str, *,
                                fix=f"use one of this run's addresses: {known}")
     case = resolve_case(instrument.case)
 
-    if instrument.drives is not None:
+    # issue #473: a `switches` instrument keeps the raw path it had as a
+    # `drives` one -- only the key changed, not the behaviour.
+    wired_input = instrument.drives if instrument.drives is not None else instrument.switches
+    if wired_input is not None:
         m = _RAW_SET_V.match(cmd.strip())
         if not m:
             raise CheckCouldNotRun(
@@ -473,7 +499,7 @@ def raw_scpi(run_id: str, address: str, cmd: str, *,
                 "documents for driving an input",
                 fix=f"read {case.docs_dir}/datasheet.md for the write command that "
                     "sets the output voltage, e.g. 'VOLT 5.0'")
-        input_name = instrument.drives.removeprefix("card.")
+        input_name = wired_input.removeprefix("card.")
         card_sim = _load_card_sim(loaded, state, store, run_id)
         result = card_sim.apply_input(input_name, float(m.group(1)), address=str(address))
         store.set_card_state(run_id, applied=card_sim.applied, destroyed=card_sim.destroyed)
@@ -539,6 +565,17 @@ def start_run(task_path: str, *, seed: int | None = None,
             "level": task.level,
             "card_description": card.description,
             "question": task.question.text,
+            # issue #461: the question text itself no longer names which
+            # point to measure or which limit to check -- the possible
+            # answers (the task yaml's own `question.answer.values`) stay
+            # visible here, machine-readable, same as `rails`/`temp_points`
+            # below (#451's precedent): an agent reads the choices from
+            # data, never by guessing from prose. `values` is `[]` for a
+            # `kind: number` task (none ship today) -- `unit`/`tol` live on
+            # `task.question.answer` too but aren't surfaced here, since no
+            # task needs them yet; add them here if one does.
+            "answer": {"kind": task.question.answer.kind,
+                      "values": list(task.question.answer.values)},
         },
         "instruments": [_instrument_view(i) for i in task.instruments],
         # issue #428: the card's own documented limit, in volts -- without
@@ -787,6 +824,32 @@ def take_measurement(run_id: str, address: str, driver_path: str | Path, *,
     return result
 
 
+def has_any_measurement(run_id: str, state_dir: str | Path = DEFAULT_STATE_DIR) -> bool:
+    """True when this run's own measurement requirement is satisfied --
+    either a probe-less task (nothing to measure in the first place, so
+    there is nothing to require), or a probe-ful one where the player has
+    called `take_measurement` at least once on SOME probe instrument
+    (issue #407: the one check both `answer`'s own `disqualified` field
+    below and the Play UI's "Answer is off until you measure" rule share --
+    extracted here so Play can refuse the HTTP call before it closes the
+    run, from the exact same rule `answer` already enforces, never a
+    second one).
+
+    CTO review on #407 round 2, must-fix 4: `bool(probe_addresses) and
+    any(...)` made a probe-less task (drive-only, e.g. `conftest.py`'s
+    `minimal_task` fixture -- relay-rail actually has 2 probes, dmm0 and
+    temp0, so that was the wrong example) always disqualified -- there
+    being nothing to measure is not the same as the player having skipped
+    measuring something. A probe-less task's requirement is vacuously
+    satisfied."""
+    store = RunStore(state_dir)
+    state = store.load(run_id)
+    loaded = load_task(state.task_path)
+    sim_log = SimLog(store.sim_log_path(run_id))
+    probe_addresses = [str(i.address) for i in loaded.task.instruments if i.probe is not None]
+    return not probe_addresses or any(sim_log.has_measure(addr) for addr in probe_addresses)
+
+
 def answer(run_id: str, value: str, *, state_dir: str | Path = DEFAULT_STATE_DIR
           ) -> dict[str, Any]:
     """Close the run: compare ``value`` against the hidden fault and write the
@@ -812,9 +875,7 @@ def answer(run_id: str, value: str, *, state_dir: str | Path = DEFAULT_STATE_DIR
     record = store.answer(run_id, given=value, fault_id=fault_id)
 
     sim_log = SimLog(store.sim_log_path(run_id))
-    probe_addresses = [str(i.address) for i in loaded.task.instruments if i.probe is not None]
-    disqualified = bool(probe_addresses) and not any(
-        sim_log.has_measure(addr) for addr in probe_addresses)
+    disqualified = not has_any_measurement(run_id, state_dir)
     score = build_score(task_id=loaded.task.id, seed=state.seed, fault_id=fault_id,
                         given=value, correct=record["correct"], disqualified=disqualified,
                         created_at=state.created_at, closed_at=record["closed_at"],
@@ -891,7 +952,7 @@ def call_op(run_id: str, address: str, driver_path: str | Path, op_name: str,
     topology = _dead_rail_override(topology, loaded, instrument, case, card_sim, state.seed)
     sim_log = SimLog(store.sim_log_path(run_id))
     try:
-        with _load(topology) as hal:
+        with sim_log.record_for(str(address)), _load(topology) as hal:
             node = next((n for root in hal._roots for n in root.walk()
                         if isinstance(n.driver, cls)), None)
             if node is None:
@@ -911,6 +972,10 @@ def call_op(run_id: str, address: str, driver_path: str | Path, op_name: str,
                 # from the store) — seed its channel 0 coil from the last
                 # persisted power state before this call sees it.
                 _seed_card_power(node, card_sim)
+            # issue #457: `record_for` above is what gives this call's real
+            # Modbus exchange ({fc, address, value}) its own `exchange` row
+            # in the sim log -- captured at the bus layer (`sim_msg.py`),
+            # not guessed here.
             result = hal.call_tool(f"{node.id or 'unit'}__{op_name}", kwargs)
             if case.power_switch:
                 _sync_card_power(node, card_sim, store, run_id)

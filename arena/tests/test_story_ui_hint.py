@@ -1,0 +1,150 @@
+"""issue #408: `run_story.py` prints `shal-arena ui --run <id>` -- the real
+run id, before the first step -- so whoever is watching can open the live
+WATCH page while the rest of the story plays. `--json` keeps stdout as one
+JSON document (CTO review on #383, `tests/test_story_script.py`); the hint
+goes to stderr and into the JSON's own `ui_hint` field instead."""
+from __future__ import annotations
+
+import contextlib
+import io
+import json
+import re
+import subprocess
+import sys
+from pathlib import Path
+
+REPO_ROOT = Path(__file__).resolve().parents[2]
+SCRIPT = REPO_ROOT / "examples" / "demos" / "story" / "run_story.py"
+
+_HINT_RE = re.compile(r"^shal-arena ui --run (\S+)$")
+
+
+def _run_story(*extra: str) -> subprocess.CompletedProcess:
+    return subprocess.run([sys.executable, str(SCRIPT), "--pause", "0", *extra],
+                          capture_output=True, text=True, timeout=180)
+
+
+def test_plain_mode_prints_the_ui_hint_with_a_real_id_before_the_first_step():
+    proc = _run_story()
+    assert proc.returncode == 0, proc.stderr
+    lines = proc.stdout.splitlines()
+
+    # line 0 is the module's own fixed first line; the hint is the very
+    # next line, before any step's own narration
+    hint_line = lines[1]
+    match = _HINT_RE.match(hint_line)
+    assert match is not None, hint_line
+    run_id = match.group(1)
+    assert run_id.startswith("run-")
+
+    first_step_line = next(ln for ln in lines if ln.startswith("Setting the bench"))
+    assert lines.index(hint_line) == 1
+    assert first_step_line in lines
+
+    # a real, already-open run -- shal-arena ui --run <id> would bind to it
+    from shal_arena.ui.data import run_payload
+
+    state_dir_line = next(ln for ln in lines if ln.startswith("Run state"))
+    state_dir = Path(state_dir_line.split(" is under ", 1)[1]) / "easy"
+    payload = run_payload(run_id, state_dir=state_dir)
+    assert payload["run_id"] == run_id
+
+
+def test_plain_mode_includes_the_port_flag_when_given():
+    proc = _run_story("--port", "9123")
+    assert proc.returncode == 0, proc.stderr
+    hint_line = proc.stdout.splitlines()[1]
+    assert hint_line.endswith(" --port 9123")
+
+
+def test_json_mode_stdout_is_still_one_json_document_with_a_ui_hint_field():
+    proc = _run_story("--json")
+    assert proc.returncode == 0, proc.stderr
+    # CTO review on #383's own regression test: parse the WHOLE of stdout,
+    # nothing stripped off first -- the ui hint must never be mixed in.
+    doc = json.loads(proc.stdout)
+    assert doc["ok"] is True
+    match = _HINT_RE.match(doc["ui_hint"])
+    assert match is not None, doc["ui_hint"]
+    assert match.group(1).startswith("run-")
+    # also on stderr, for a person tailing the log under --json
+    assert doc["ui_hint"] in proc.stderr
+
+
+def test_the_easy_runs_own_duration_grows_by_the_bench_pauses_only():
+    """PM ruling on #408 round 2 (CTO must-fix 1): starting the "easy" run
+    before the step loop means its own `duration_s` (created_at to
+    closed_at) now includes the 3 bench steps' pauses that run before
+    `arena_easy` does -- accepted as a scripted-demo behaviour change, not
+    a regression, so this pins it rather than letting it silently drift
+    back to ~0 (or grow further) unnoticed. `medium`/`hard` start inside
+    their own step, same as before #408 -- their own duration stays tiny,
+    proving only `easy` changed."""
+    from shal_arena.ui.data import run_payload
+
+    # CTO review on #408 round 3, must-fix A: the DoD is "at least the SUM
+    # of the bench pauses" (3 of them), not just "over 1 pause" -- the old
+    # bound would still pass if the pre-start moved to after 2 of the 3
+    # bench steps. pause=1 keeps the margin (3 >= 3, truncated 2.x still
+    # rounds to >= 2... so pause=1 alone is too tight against
+    # second-granularity timestamps; pause=2 keeps 3*2=6 comfortably under
+    # a truncated ~7-8) while halving nothing -- kept at 2 for the safe
+    # margin the reviewer measured (8.0 observed, 6.0 required).
+    pause = 2
+    proc = _run_story("--pause", str(pause), "--json")
+    assert proc.returncode == 0, proc.stderr
+    doc = json.loads(proc.stdout)
+    state_dir = Path(doc["state_dir"])
+
+    def _duration(step_id: str, level: str) -> float:
+        step = next(s for s in doc["steps"] if s["step"] == step_id)
+        run_id = step["result"]["run_id"]
+        payload = run_payload(run_id, state_dir=state_dir / level)
+        return payload["score"]["duration_s"]
+
+    # 3 steps (virtual_bench_pass, virtual_bench_unplug_dmm,
+    # psu_30v_blocked) each sleep `pause` before arena_easy's own sleep and
+    # run -- the DoD's own bound, safely under "something broke and it's
+    # now minutes".
+    easy_duration = _duration("arena_easy", "easy")
+    assert 3 * pause <= easy_duration < 30.0
+
+    # medium/hard still start inside their own step, exactly as before --
+    # their duration never absorbs an earlier step's pauses, so it stays
+    # well under easy's.
+    assert _duration("arena_medium", "medium") < easy_duration / 2
+    assert _duration("arena_hard", "hard") < easy_duration / 2
+
+
+def test_a_pre_start_failure_still_runs_every_step_with_one_json_document(monkeypatch):
+    """CTO review on #408 round 3, must-fix B: the must-fix-2 try/except
+    had no test -- a later refactor that moved the pre-start back out of
+    it would pass CI silently. Raise on the pre-start's own `start_run`
+    call only (the first one); every step's OWN `start_run` call -- same
+    function, same import -- must behave normally, same as the CTO's own
+    manual repro."""
+    import shal_arena.runner as runner_mod
+    from shal_arena.demo import _STEPS, run_story
+
+    real_start_run = runner_mod.start_run
+    calls = {"n": 0}
+
+    def _flaky_start_run(*args, **kwargs):
+        calls["n"] += 1
+        if calls["n"] == 1:
+            raise RuntimeError("simulated pre-start failure")
+        return real_start_run(*args, **kwargs)
+
+    monkeypatch.setattr(runner_mod, "start_run", _flaky_start_run)
+
+    out = io.StringIO()
+    with contextlib.redirect_stdout(out):
+        exit_code = run_story(pause=0, json_mode=True)
+    assert exit_code in (0, 1)
+
+    doc = json.loads(out.getvalue())  # the whole of stdout, one document
+    assert doc["ui_hint"] is None
+    assert doc["ui_hint_fix"]
+
+    seen_steps = {s["step"] for s in doc["steps"]}
+    assert seen_steps == {step_id for step_id, *_ in _STEPS}

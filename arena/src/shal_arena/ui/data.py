@@ -195,6 +195,15 @@ def _answer_sentence(payload: dict[str, Any], rails: list[dict[str, Any]],
     return f"{prefix}The agent's answer: {given_label}. {verdict}"
 
 
+def _role(instrument: Any) -> str:
+    """The server role string (issue #457), one per wiring key (#473)."""
+    if instrument.drives is not None:
+        return f"drives {instrument.drives}"
+    if instrument.switches is not None:
+        return f"switches {instrument.switches}"
+    return f"probes {instrument.probe}"
+
+
 def run_payload(run_id: str, *, state_dir: str | Path = DEFAULT_STATE_DIR) -> dict[str, Any]:
     """Everything the page needs for one run, live or finished. Raises
     `shal_arena.errors.UnknownRun` (same as every other reader) for a run id
@@ -205,7 +214,11 @@ def run_payload(run_id: str, *, state_dir: str | Path = DEFAULT_STATE_DIR) -> di
     task = loaded.task
 
     instruments = [
-        {"address": str(i.address), "case": i.case, "drives": i.drives, "probe": i.probe}
+        {"address": str(i.address), "case": i.case, "drives": i.drives, "probe": i.probe,
+         "switches": i.switches,
+         # issue #457: the instrument's role, straight from the task yaml's
+         # own `drives:`/`probe:`/`switches:` field -- never hand-written text.
+         "role": _role(i)}
         for i in task.instruments
     ]
     # issue #406 follow-up: the rail's/temp point's own documented spec --

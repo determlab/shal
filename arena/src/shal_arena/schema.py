@@ -79,6 +79,7 @@ class Instrument:
     address: Any
     drives: str | None     # "card.<input>"
     probe: str | None      # "card.<test_point>"
+    switches: str | None = None  # "card.<input>" -- a relay on that input (issue #473)
 
 
 @dataclass(frozen=True)
@@ -141,6 +142,9 @@ def validate_task(doc: Any) -> Task:
                 question=question, seed=seed, limits=limits)
 
 
+_WIRING_KEYS = ("drives", "probe", "switches")
+
+
 def _validate_instruments(value: Any) -> tuple[Instrument, ...]:
     if not isinstance(value, list) or not value:
         _fail(f"task.instruments: must be a non-empty list, got {value!r}",
@@ -154,25 +158,28 @@ def _validate_instruments(value: Any) -> tuple[Instrument, ...]:
                   f"remove replacement_usd from {where}; it lives only in "
                   "card_sim/catalogue/instruments.yaml, keyed by case")
         _require_keys(entry, required={"case", "address"},
-                      optional={"drives", "probe"}, where=where)
+                      optional=set(_WIRING_KEYS), where=where)
         case = _require_str(entry, "case", where)
         address = entry.get("address")
         if address is None or isinstance(address, bool) or not isinstance(address, (str, int)):
             _fail(f"{where}.address: must be a string or integer, got {address!r}",
                   f"set {where}.address to the instrument's bus address")
-        has_drives = "drives" in entry
-        has_probe = "probe" in entry
-        if has_drives == has_probe:
-            _fail(f"{where}: must have exactly one of 'drives' or 'probe'",
-                  f"add exactly one of 'drives'/'probe' to {where}")
-        wiring_key = "drives" if has_drives else "probe"
+        # issue #473: `switches` (a relay on a card input) is its own role,
+        # told apart from `drives` (the source that sets that input's voltage)
+        present = [k for k in _WIRING_KEYS if k in entry]
+        if len(present) != 1:
+            _fail(f"{where}: must have exactly one of 'drives', 'probe' or 'switches'"
+                  + (f", got {present}" if present else ""),
+                  f"keep exactly one of 'drives'/'probe'/'switches' in {where}")
+        wiring_key = present[0]
         wiring = _require_str(entry, wiring_key, where)
         if not wiring.startswith("card."):
             _fail(f"{where}.{wiring_key}: must name a card.<name>, got {wiring!r}",
                   f"set {where}.{wiring_key} to 'card.<input or test point>'")
         out.append(Instrument(case=case, address=address,
-                               drives=wiring if has_drives else None,
-                               probe=wiring if has_probe else None))
+                               drives=wiring if wiring_key == "drives" else None,
+                               probe=wiring if wiring_key == "probe" else None,
+                               switches=wiring if wiring_key == "switches" else None))
     return tuple(out)
 
 

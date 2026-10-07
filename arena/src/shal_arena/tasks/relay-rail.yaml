@@ -1,6 +1,6 @@
 arena_task: 1
 id: relay-rail
-title: "Is the 3V3 rail in spec, and is the regulator running hot?"
+title: "A card came back from the line"
 level: medium
 card: ../cards/buck-12v-relay.yaml
 instruments:
@@ -12,12 +12,12 @@ instruments:
     probe: card.tp_3v3
   - case: relay-modbus
     address: relay0
-    drives: card.vin
+    switches: card.vin
   - case: sht31
     address: temp0
     probe: card.tp_reg_temp
 question:
-  text: "Power the card at 12.0 V (relay0 closed). Is the 3V3 rail in spec, and is the regulator running hot? Answer ok, or name the fault."
+  text: "This card came back from the line. Power it at 12.0 V through relay0. Is it good? If not, name the fault."
   answer: {kind: enum, values: [ok, low_voltage, open, overheat]}
 seed: 99
 limits: {max_turns: 60, max_minutes: 30}

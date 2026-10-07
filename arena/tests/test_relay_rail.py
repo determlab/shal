@@ -16,7 +16,7 @@ from pathlib import Path
 import pytest
 
 from shal_arena import fault as fault_mod
-from shal_arena.errors import CheckCouldNotRun, MeasurementFailed
+from shal_arena.errors import CheckCouldNotRun
 from shal_arena.loader import load_task
 from shal_arena.runner import answer, call_op, drive_input, start_run, take_measurement
 from shal_arena.simlog import SimLog
@@ -39,8 +39,20 @@ _TEMP = next(t for t in _CARD.temp_points if t.test_point == "tp_reg_temp")
 # issue #451: `high_c` is now a PUBLIC field in every `start_run`'s own
 # `temp_points` (the card's documented limit, same category as `rails`'
 # already-public `nominal_v`/`tol_pct`) -- dropped from this list, since it
-# never named the fault itself. `shift_c` (the fault's own internal
-# amount) stays banned.
+# never named the fault itself.
+# issue #461 (CTO review, PR #465): `low_voltage`/`overheat` are now public
+# too, as the fixed vocabulary of possible answers (`task.answer.values`,
+# the same 4 names on every run regardless of the seed) -- but these words
+# STAY in this list, not dropped: this list guards every string this test
+# checks, and most of those (the state file, the sim log) have no business
+# naming ANY fault, drawn or not. Dropping them here would have silently
+# let a real leak through -- a per-run `"fault": "overheat"` field, say --
+# anywhere else this list is checked. Only `start_run`'s own result needs
+# the exception, because it now legitimately carries the vocabulary; that
+# one case pops `result["task"]["answer"]` before checking (see below).
+# `shift_v`/`shift_c` (the fault's own internal magnitude, which DOES vary
+# by seed and WOULD leak which one was drawn) were never public and stay
+# banned everywhere.
 _FAULT_WORDS = ("low_voltage", "overheat", "shift_v", "shift_c")
 
 
@@ -62,12 +74,8 @@ def test_each_fault_is_detectable_and_answerable(fault_id: str, tmp_path: Path) 
     result = start_run(str(RELAY_RAIL_TASK), seed=seed, state_dir=state_dir)
     run_id = result["run_id"]
 
-    try:
-        dmm_reading = take_measurement(run_id, "dmm0", PASSING_DMM_DRIVER,
-                                       state_dir=state_dir)["reading"]
-    except MeasurementFailed:
-        assert fault_id == "open", f"seed {seed}: dmm0 failed for fault {fault_id!r}"
-        dmm_reading = None
+    dmm_reading = take_measurement(run_id, "dmm0", PASSING_DMM_DRIVER,
+                                   state_dir=state_dir)["reading"]
 
     temp_reading = take_measurement(run_id, "temp0", PASSING_TEMP_DRIVER,
                                     state_dir=state_dir)["reading"]
@@ -78,8 +86,8 @@ def test_each_fault_is_detectable_and_answerable(fault_id: str, tmp_path: Path) 
     elif fault_id == "low_voltage":
         assert dmm_reading != pytest.approx(_RAIL.nominal_v, abs=1e-6)
         assert temp_reading == pytest.approx(_TEMP.nominal_c, abs=0.01)
-    elif fault_id == "open":
-        assert dmm_reading is None
+    elif fault_id == "open":  # issue #477: an open circuit still answers, ~0 V
+        assert abs(dmm_reading) < 0.05 * _RAIL.nominal_v
         assert temp_reading == pytest.approx(_TEMP.nominal_c, abs=0.01)
     else:  # overheat: temperature is high while the rail still reads nominal
         assert dmm_reading == pytest.approx(_RAIL.nominal_v, abs=1e-6)
@@ -113,6 +121,14 @@ def test_start_run_never_leaks_the_fault_or_its_vocabulary(tmp_path: Path) -> No
         seed = _seed_for(fault_id)
         state_dir = tmp_path / fault_id
         result = start_run(str(RELAY_RAIL_TASK), seed=seed, state_dir=state_dir)
+        # issue #461 (CTO review, PR #465): `task.answer` is the one
+        # legitimate exception -- the fixed, seed-independent vocabulary of
+        # POSSIBLE answers, not the one fault this run drew. Checked
+        # separately below, popped before the blanket scan so dropping
+        # `low_voltage`/`overheat` from `_FAULT_WORDS` was never needed.
+        answer = result["task"].pop("answer")
+        assert answer == {"kind": "enum",
+                          "values": ["ok", "low_voltage", "open", "overheat"]}
         text = json.dumps(result)
         for word in _FAULT_WORDS:
             assert word not in text, (fault_id, word, text)

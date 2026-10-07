@@ -211,7 +211,8 @@ def test_both_sides_produce_a_sim_log_in_the_same_format(tmp_path: Path) -> None
 
     with_query = next(ln for ln in with_lines if ln["kind"] == "query")
     without_query = next(ln for ln in without_lines if ln["kind"] == "query")
-    assert set(with_query) == set(without_query) == {"ts", "address", "kind", "cmd"}
+    # issue #457: a query's own reply, alongside the command
+    assert set(with_query) == set(without_query) == {"ts", "address", "kind", "cmd", "reply"}
     assert with_query["cmd"] == without_query["cmd"] == "MEAS:VOLT:DC?"
     assert with_query["address"] == without_query["address"] == "dmm0"
 
@@ -280,12 +281,25 @@ def test_raw_scpi_bad_drive_command_names_the_fix(tmp_path: Path) -> None:
     assert "datasheet" in ei.value.fix
 
 
-def test_raw_scpi_open_fault_raises_live_never_persisted(tmp_path: Path) -> None:
+def test_raw_scpi_open_fault_reads_near_zero(tmp_path: Path) -> None:
+    """issue #477: `open` is an open circuit on the card -- the raw read
+    answers, about 0 V, same as the typed one."""
     from shal_arena.loader import load_task
 
     card = load_task(SAMPLE_TASK).card
     seed = next(s for s in range(300) if pick_fault(card, s) == "open")
     run_id = start_run(str(SAMPLE_TASK), seed=seed, state_dir=tmp_path)["run_id"]
+    raw_scpi(run_id, "psu0", "VOLT 5.0", state_dir=tmp_path)
+    reply = raw_scpi(run_id, "dmm0", "MEAS:VOLT:DC?", state_dir=tmp_path)["reply"]
+    assert abs(float(reply)) < 0.05 * 3.3
+
+
+def test_raw_scpi_unplugged_dmm_raises_live_never_persisted(
+        tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """A real unplug (issue #477: a broken link, not a card fault) still
+    raises live and still counts the turn."""
+    run_id = start_run(str(SAMPLE_TASK), seed=_seed_not_open(), state_dir=tmp_path)["run_id"]
+    monkeypatch.setenv("SHAL_SIM_UNPLUG", "unit")  # the dmm harness's node id
     with pytest.raises(MeasurementFailed):
         raw_scpi(run_id, "dmm0", "MEAS:VOLT:DC?", state_dir=tmp_path)
     assert RunStore(tmp_path).load(run_id).turns == 1
