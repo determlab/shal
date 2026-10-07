@@ -413,9 +413,13 @@ def run_story(*, pause: float, json_mode: bool, port: int | None = None) -> int:
             ui_hint += f" --port {port}"
     except Exception as e:  # noqa: BLE001 - the hint is a bonus; the story must still run
         traceback.print_exc()
+        # CTO review on #408 round 3 nit: the old wording claimed every
+        # step still ran (not yet true at this point) and "not something a
+        # retry fixes" (wrong for a transient LockTimeout) -- neutral
+        # instead.
         ui_hint_fix = getattr(e, "fix", None) or (
-            "see the traceback on stderr; this is a bug in the story itself, not "
-            "something a retry fixes -- every step still ran")
+            "the ui hint could not be prepared (see the traceback on stderr); "
+            "the story ran without it")
 
     if ui_hint is not None:
         if not json_mode:

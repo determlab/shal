@@ -5,6 +5,8 @@ JSON document (CTO review on #383, `tests/test_story_script.py`); the hint
 goes to stderr and into the JSON's own `ui_hint` field instead."""
 from __future__ import annotations
 
+import contextlib
+import io
 import json
 import re
 import subprocess
@@ -80,6 +82,14 @@ def test_the_easy_runs_own_duration_grows_by_the_bench_pauses_only():
     proving only `easy` changed."""
     from shal_arena.ui.data import run_payload
 
+    # CTO review on #408 round 3, must-fix A: the DoD is "at least the SUM
+    # of the bench pauses" (3 of them), not just "over 1 pause" -- the old
+    # bound would still pass if the pre-start moved to after 2 of the 3
+    # bench steps. pause=1 keeps the margin (3 >= 3, truncated 2.x still
+    # rounds to >= 2... so pause=1 alone is too tight against
+    # second-granularity timestamps; pause=2 keeps 3*2=6 comfortably under
+    # a truncated ~7-8) while halving nothing -- kept at 2 for the safe
+    # margin the reviewer measured (8.0 observed, 6.0 required).
     pause = 2
     proc = _run_story("--pause", str(pause), "--json")
     assert proc.returncode == 0, proc.stderr
@@ -94,14 +104,47 @@ def test_the_easy_runs_own_duration_grows_by_the_bench_pauses_only():
 
     # 3 steps (virtual_bench_pass, virtual_bench_unplug_dmm,
     # psu_30v_blocked) each sleep `pause` before arena_easy's own sleep and
-    # run -- comfortably over 1 pause (timestamps are second-granularity,
-    # so the margin stays well clear of rounding noise), safely under
-    # "something broke and it's now minutes".
+    # run -- the DoD's own bound, safely under "something broke and it's
+    # now minutes".
     easy_duration = _duration("arena_easy", "easy")
-    assert pause < easy_duration < 30.0
+    assert 3 * pause <= easy_duration < 30.0
 
     # medium/hard still start inside their own step, exactly as before --
     # their duration never absorbs an earlier step's pauses, so it stays
     # well under easy's.
     assert _duration("arena_medium", "medium") < easy_duration / 2
     assert _duration("arena_hard", "hard") < easy_duration / 2
+
+
+def test_a_pre_start_failure_still_runs_every_step_with_one_json_document(monkeypatch):
+    """CTO review on #408 round 3, must-fix B: the must-fix-2 try/except
+    had no test -- a later refactor that moved the pre-start back out of
+    it would pass CI silently. Raise on the pre-start's own `start_run`
+    call only (the first one); every step's OWN `start_run` call -- same
+    function, same import -- must behave normally, same as the CTO's own
+    manual repro."""
+    import shal_arena.runner as runner_mod
+    from shal_arena.demo import _STEPS, run_story
+
+    real_start_run = runner_mod.start_run
+    calls = {"n": 0}
+
+    def _flaky_start_run(*args, **kwargs):
+        calls["n"] += 1
+        if calls["n"] == 1:
+            raise RuntimeError("simulated pre-start failure")
+        return real_start_run(*args, **kwargs)
+
+    monkeypatch.setattr(runner_mod, "start_run", _flaky_start_run)
+
+    out = io.StringIO()
+    with contextlib.redirect_stdout(out):
+        exit_code = run_story(pause=0, json_mode=True)
+    assert exit_code in (0, 1)
+
+    doc = json.loads(out.getvalue())  # the whole of stdout, one document
+    assert doc["ui_hint"] is None
+    assert doc["ui_hint_fix"]
+
+    seen_steps = {s["step"] for s in doc["steps"]}
+    assert seen_steps == {step_id for step_id, *_ in _STEPS}
