@@ -400,6 +400,50 @@ def test_i2c_cli_end_to_end_over_local(tmp_path, monkeypatch):
         assert hal.get_device("t").read_celsius() == pytest.approx(25.0)
 
 
+@pytest.mark.skipif(sys.platform == "win32", reason="executable shim needs POSIX")
+def test_i2c_cli_long_payload_is_capped_at_redacts_64_byte_limit(tmp_path, monkeypatch):
+    """CTO ruling (PR #459, 01:22): i2c rows carry raw register bytes, not
+    text, so the URL table does not apply -- but the hex row is still
+    capped at `shal.log.redact`'s 64-byte limit, the same as the audit
+    log, not unbounded."""
+    import os
+
+    from shal.log import exchange_sink, redact
+
+    long_secret = b"s3cr3t-" * 10  # 70 bytes, over the 64-byte cap
+    assert len(long_secret) > 64
+    hex_tokens = " ".join(f"0x{b:02x}" for b in long_secret)
+
+    shim = tmp_path / "bin" / "i2ctransfer"
+    shim.parent.mkdir()
+    shim.write_text(textwrap.dedent(f"""\
+        #!{sys.executable}
+        print("{hex_tokens}")
+    """), encoding="utf-8")
+    shim.chmod(shim.stat().st_mode | stat.S_IEXEC)
+    monkeypatch.setenv("PATH", f"{shim.parent}:{os.environ['PATH']}")
+    p = write(tmp_path, """
+        shal_version: 1
+        root:
+          here:
+            driver: shal,local
+            address: localhost
+            children:
+              i2c0:
+                id: i2c0
+                driver: shal,i2c-cli
+                address: /dev/i2c-1
+    """)
+    captured = []
+    with shal.load(p) as hal, exchange_sink(captured.append):
+        bus = hal.get_node("i2c0").driver
+        bus.txn(0x48, [Write(bytes([0])), Read(len(long_secret))])
+    (exc,) = captured
+    assert exc.response == redact(long_secret)
+    assert exc.response.endswith("…")
+    assert "s3cr3t" not in exc.response  # hex, never the literal text either
+
+
 # ---- ssh ------------------------------------------------------------------------
 
 def test_ssh_argv_is_a_vector_with_separator():
@@ -475,15 +519,36 @@ def test_tcp_exchange_roundtrip(tmp_path):
 
 _COMMA_USERINFO_REPLY = "ftp://admin:1234,5678@host"
 
+# CTO ruling (PR #459, 01:22): the same URL table the arena sim buses run
+# (`arena/tests/test_exchange_log.py`'s `_URL_TABLE`) also runs through
+# `scpi_raw`, the core text-carrying bus -- one shared set of cases, every
+# bus held to the same standard.
+_URL_TABLE = [
+    ("(http://u:p@h:5025)", "(http://h:5025)"),
+    ("see http://u:p@h:5025, ok", "see http://h:5025, ok"),
+    ("(http://u:p@h/x?token=a)", "(http://h/x)"),
+    ("<http://u:p@h>", "<http://h>"),
+    ("http://[::1", "http://<redacted>"),
+    ("http://u:p w@h/", "http://<redacted> w@h/"),
+    ("ftp://admin:1234,5678@host", "ftp://host"),
+    ("http://admin:9999;x@h", "http://h"),
+    ("http://u:p;w@h", "http://h"),
+    ("http://u:pa)ss@h:80", "http://h:80"),
+    ("http://bob:it's@h/", "http://h/"),
+]
+
 
 class _ScpiEcho(socketserver.StreamRequestHandler):
+    """Echoes each line back unchanged -- lets one server run the whole
+    `_URL_TABLE`, parametrized by what the test SENDS."""
+
     def handle(self):
-        for _ in self.rfile:
-            self.wfile.write((_COMMA_USERINFO_REPLY + "\n").encode())
+        for line in self.rfile:
+            self.wfile.write(line)
             self.wfile.flush()
 
 
-def test_scpi_raw_exchange_log_never_leaks_a_comma_in_the_userinfo(tmp_path):
+def _scpi_raw_exchange(tmp_path, cmd: str):
     from shal.log import exchange_sink
 
     server = socketserver.ThreadingTCPServer(("127.0.0.1", 0), _ScpiEcho)
@@ -502,15 +567,32 @@ def test_scpi_raw_exchange_log_never_leaks_a_comma_in_the_userinfo(tmp_path):
         captured = []
         with shal.load(p) as hal, exchange_sink(captured.append):
             bus = hal.get_node("bench").driver
-            reply = bus.exchange("psu1", {"scpi": "GET?", "query": True})
-        assert reply == {"reply": _COMMA_USERINFO_REPLY}  # the real call is untouched
-        (exc,) = captured
-        assert "admin" not in exc.response
-        assert "1234" not in exc.response
-        assert "5678" not in exc.response
-        assert exc.response == "ftp://host"
+            reply = bus.exchange("psu1", {"scpi": cmd, "query": True})
+        return reply, captured
     finally:
         server.shutdown()
+
+
+def test_scpi_raw_exchange_log_never_leaks_a_comma_in_the_userinfo(tmp_path):
+    reply, captured = _scpi_raw_exchange(tmp_path, _COMMA_USERINFO_REPLY)
+    assert reply == {"reply": _COMMA_USERINFO_REPLY}  # the real call is untouched
+    (exc,) = captured
+    assert "admin" not in exc.response
+    assert "1234" not in exc.response
+    assert "5678" not in exc.response
+    assert exc.response == "ftp://host"
+
+
+@pytest.mark.parametrize("text,expected", _URL_TABLE)
+def test_url_table_through_a_real_scpi_raw_bus(tmp_path, text, expected):
+    """CTO ruling (PR #459, 01:22): per-bus tests run the URL table through
+    the real redaction path (`record_exchange` -> `_clean_payload` ->
+    `redact_structured`), not the bare helper called directly."""
+    reply, captured = _scpi_raw_exchange(tmp_path, text)
+    assert reply == {"reply": text}  # the real call result is untouched
+    (exc,) = captured
+    assert exc.request == expected
+    assert exc.response == expected
 
 
 # ---- secret redaction (issue #20): credentials never reach logs/errors -----------
