@@ -127,6 +127,22 @@ def test_checking_only_the_drives_instrument_still_disqualifies(tmp_path: Path) 
     assert out["disqualified"] is True
 
 
+def test_a_probe_less_task_is_never_disqualified(tmp_path: Path, minimal_task: Path) -> None:
+    """CTO review on #407 round 2, must-fix 4: `minimal_task` (conftest.py)
+    has one `drives:` instrument and no `probe:` one at all -- there is
+    nothing to measure, which must never read the same as "skipped
+    measuring something". `has_any_measurement`'s old
+    `bool(probe_addresses) and any(...)` made every probe-less task
+    disqualified for good; it must now score."""
+    state_dir = tmp_path / "state"
+    result = start_run(minimal_task, state_dir=state_dir)
+    run_id = result["run_id"]
+
+    out = answer(run_id, "ok", state_dir=state_dir)
+
+    assert out["disqualified"] is False
+
+
 def test_answer_after_a_measurement_is_not_disqualified(tmp_path: Path) -> None:
     state_dir = tmp_path / "state"
     result = start_run(SAMPLE_TASK, state_dir=state_dir)

@@ -11,10 +11,27 @@ import urllib.request
 from pathlib import Path
 
 import pytest
+from shal import registry
 
 from shal_arena.ui.server import HOST, serve
 
-from .conftest import RELAY_RAIL_TASK, SAMPLE_TASK
+#: CTO review on #407 round 2, must-fix 1: the same clean-slot fixture
+#: test_ui_play.py uses, for the same reason -- Play's own reference
+#: drivers must never collide with another test's fixture class.
+_PLAY_COMPATIBLES = ("arena,bench-psu1", "arena,bench-dmm1",
+                    "arena,bench-relay1", "arena,bench-temp1")
+
+
+@pytest.fixture(autouse=True)
+def _clean_registry_slots():
+    saved = {c: list(registry._entries.get(c, [])) for c in _PLAY_COMPATIBLES}
+    for c in saved:
+        registry._entries[c] = []
+    try:
+        yield
+    finally:
+        for c, candidates in saved.items():
+            registry._entries[c] = candidates
 
 
 def _post(httpd, path: str, body: dict) -> tuple[int, dict]:
@@ -44,7 +61,7 @@ def play_server(tmp_path: Path):
 
 def test_answer_before_any_measurement_is_refused_and_the_run_stays_open(play_server):
     httpd = play_server
-    status, started = _post(httpd, "/api/play/start", {"task": str(SAMPLE_TASK), "seed": 1})
+    status, started = _post(httpd, "/api/play/start", {"task": "rail-3v3", "seed": 1})
     assert status == 200, started
 
     status, refused = _post(httpd, "/api/play/answer", {"value": "ok"})
@@ -61,7 +78,7 @@ def test_answer_before_any_measurement_is_refused_and_the_run_stays_open(play_se
 
 def test_a_gate_refused_drive_shows_nothing_was_sent(play_server):
     httpd = play_server
-    status, started = _post(httpd, "/api/play/start", {"task": str(SAMPLE_TASK), "seed": 1})
+    status, started = _post(httpd, "/api/play/start", {"task": "rail-3v3", "seed": 1})
     assert status == 200, started
 
     # 30 V on rail-3v3's vin is well past the card's documented abs max --
@@ -80,7 +97,7 @@ def test_switch_on_a_non_power_switch_instrument_is_the_runners_own_refusal(play
     gives a player who tried `set_relay` on the wrong address (AGENTS.md:
     no second game logic -- this is that one check, not a new one)."""
     httpd = play_server
-    status, started = _post(httpd, "/api/play/start", {"task": str(RELAY_RAIL_TASK), "seed": 1})
+    status, started = _post(httpd, "/api/play/start", {"task": "relay-rail", "seed": 1})
     assert status == 200, started
 
     status, refused = _post(httpd, "/api/play/switch", {"address": "psu0", "on": True})

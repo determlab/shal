@@ -20,18 +20,24 @@ from ..runner import answer as runner_answer
 from ..runner import call_op, drive_input, has_any_measurement, start_run, take_measurement
 from ..store import DEFAULT_STATE_DIR
 
-_EXAMPLES = Path(__file__).resolve().parents[3] / "examples"
-
 #: CTO review on #407's mock, condition 2: a person playing has no driver.py
 #: of their own, so every control uses the packaged reference driver for
 #: that instrument's case ("using the reference drivers", said once on the
 #: page). All 4 packaged cases (`cases.CASES`) already ship one; if a case
 #: had none, adding it here would be in scope.
+#:
+#: CTO review on #407 round 2, must-fix 2: these must be files `pip install`
+#: actually ships -- `arena/examples/*` is never packaged (it is the
+#: copy-paste template for a PLAYER'S OWN driver.py, not Play's), so the
+#: wheel had no `examples/` at all and every Play control 400'd with "driver
+#: file not found". `shal_arena.reference_drivers` is an in-package module,
+#: shipped like any other.
+_REFERENCE_DRIVERS_DIR = Path(__file__).resolve().parents[1] / "reference_drivers"
 REFERENCE_DRIVERS: dict[str, Path] = {
-    "scpi-psu": _EXAMPLES / "reference_driver" / "driver.py",
-    "dmm": _EXAMPLES / "minimal_dmm_driver.py",
-    "relay-modbus": _EXAMPLES / "minimal_relay_driver.py",
-    "sht31": _EXAMPLES / "minimal_temp_driver.py",
+    "scpi-psu": _REFERENCE_DRIVERS_DIR / "psu_driver.py",
+    "dmm": _REFERENCE_DRIVERS_DIR / "dmm_driver.py",
+    "relay-modbus": _REFERENCE_DRIVERS_DIR / "relay_driver.py",
+    "sht31": _REFERENCE_DRIVERS_DIR / "temp_driver.py",
 }
 
 #: One label per CASE (condition 1: never per address -- nothing hardcoded
@@ -88,8 +94,18 @@ def list_play_tasks() -> list[dict[str, str]]:
 
 def start(task: str, *, state_dir: str | Path = DEFAULT_STATE_DIR,
          seed: int | None = None) -> dict[str, Any]:
-    """"Start task": the CLI's own `start_run`, given a packaged name or a
-    path the same way `shal-arena run` takes one."""
+    """"Start task": the CLI's own `start_run`, but -- unlike `shal-arena
+    run`, a trusted local command line -- `task` here comes off the
+    network, from whatever a browser POSTs. CTO review on #407 round 2,
+    must-fix 5b: `resolve_task` also accepts an arbitrary file path, so a
+    body like `{"task": "/etc/passwd"}` was opened and parsed as YAML, and
+    an absolute path could start a real run. Only a name `shal-arena tasks`
+    already lists is accepted; anything else is a `PlayError` naming the
+    valid names, never a path lookup."""
+    known = {t["name"] for t in list_tasks()}
+    if task not in known:
+        raise PlayError(f"play: no packaged task named {task!r}",
+                        fix=f"use one of: {', '.join(sorted(known))}")
     return start_run(str(resolve_task(task)), seed=seed, state_dir=state_dir)
 
 
