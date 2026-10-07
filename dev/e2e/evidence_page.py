@@ -28,12 +28,22 @@ gate is 3 DAILY runs in a row, never one run. This page prints the one-run
 verdict as `this run: N/M gating cells pass (day D of 3)`; `gate met` is
 printed only when this run and the 2 immediately preceding daily runs (read
 from `--history FILE`, a JSON list of past runs oldest-first) were each a
-scheduled run, attempt 1, every gating cell green. With no `--history`,
-day is always 1 (nothing to look back on) and the gate is never met from a
-single run.
+scheduled run, attempt 1, every gating cell green, on 3 distinct, exactly
+consecutive calendar days ending today. With no `--history`, day is always
+1 (nothing to look back on) and the gate is never met from a single run.
+
+Round 2 (CTO review on PR #467): TODAY's own run is held to the same 3
+conditions as a history entry, not just its cell counts -- `--event` names
+today's own trigger (the workflow passes `${{ github.event_name }}`) and
+every gating cell's own `run_attempt` must be 1; without `--event`, today
+can never be more than day 1 (clean, but it cannot anchor a streak). Without
+`--date` (today's own UTC date, `YYYY-MM-DD` -- never `datetime.now()`,
+so this is deterministic and testable), the streak can't be verified against
+history either, for the same reason: day stays at most 1.
 
 Usage:
-    evidence_page.py DIR --out evidence.html [--history runs.json] [--json]
+    evidence_page.py DIR --out evidence.html [--history runs.json]
+                      [--event schedule] [--date 2026-01-02] [--json]
 
 Exit 0 if every gating cell passed, 1 if a gating check failed or a gating
 cell is missing (a macOS-only failure never sets this) -- unchanged by the
@@ -46,7 +56,8 @@ import html
 import json
 import re
 import sys
-from datetime import datetime, timezone
+from datetime import date as date_cls
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
 
@@ -126,9 +137,21 @@ def _is_retry(run_attempt: Any) -> bool:
         return False
 
 
-#: shal#402: the shape --history takes, named in every error about it.
-HISTORY_FORMAT = ('a JSON list of prior runs, oldest first, each '
-                  '{"event": <str>, "attempt": <int>, "gating_passed": <bool>}')
+#: shal#402/#467: the shape --history takes, named in every error about it.
+HISTORY_FORMAT = (
+    'a JSON list of prior runs, oldest first, each {"date": <"YYYY-MM-DD">, '
+    '"run_id": <non-empty str>, "event": <str>, "attempt": <int, not bool>, '
+    '"gating_passed": <bool>}')
+
+
+def _history_error(path: Path, message: str, *, index: int | None = None) -> ValueError:
+    """CTO review on #467, must-fix 4: name which entry is bad, and the
+    next step -- fix that entry, or drop --history entirely (this run then
+    shows day 1 of 3 on its own, never an error)."""
+    where = f"entry {index}" if index is not None else "the file"
+    return ValueError(
+        f"--history {path}: {where}: {message}; expected {HISTORY_FORMAT}. "
+        f"Fix that entry, or drop --history (this run then shows day 1 of 3).")
 
 
 def load_history(path: Path) -> list[dict[str, Any]]:
@@ -136,9 +159,15 @@ def load_history(path: Path) -> list[dict[str, Any]]:
     first, ending with the most recent run before this one. Never a
     dashboard of every run ever -- only enough to look back 2 days (the gate
     needs 3 in a row including today). Raises ValueError, naming
-    `HISTORY_FORMAT`, for anything that cannot be read as that shape (shal#402
-    Agent path: "an error for a bad history file names the expected
-    format")."""
+    `HISTORY_FORMAT` and the bad entry's own index, for anything that
+    cannot be read as that shape (shal#402 Agent path: "an error for a bad
+    history file names the expected format").
+
+    CTO review on #467, must-fix 3: types are checked, not just presence --
+    `"gating_passed": "false"` is a real string, not the boolean `False`,
+    and must not be read as truthy; `"attempt": true`/`1.0` must not pass as
+    the int `1` (`bool` is a subclass of `int` in Python, so `isinstance`
+    alone is not enough -- excluded explicitly)."""
     try:
         doc = json.loads(path.read_text(encoding="utf-8"))
     except OSError as e:
@@ -150,38 +179,89 @@ def load_history(path: Path) -> list[dict[str, Any]]:
     if not isinstance(doc, list):
         raise ValueError(f"--history {path}: expected {HISTORY_FORMAT}, "
                          f"got {type(doc).__name__}")
-    for entry in doc:
-        if not (isinstance(entry, dict) and {"event", "attempt", "gating_passed"} <= entry.keys()):
-            raise ValueError(f"--history {path}: every entry must have "
-                             f"event/attempt/gating_passed; expected {HISTORY_FORMAT}")
+    required = {"date", "run_id", "event", "attempt", "gating_passed"}
+    for i, entry in enumerate(doc):
+        if not (isinstance(entry, dict) and required <= entry.keys()):
+            raise _history_error(path, "missing one of date/run_id/event/attempt/"
+                                       "gating_passed", index=i)
+        if not isinstance(entry["date"], str) or not _is_iso_date(entry["date"]):
+            raise _history_error(path, f'"date" must be "YYYY-MM-DD", got '
+                                       f'{entry["date"]!r}', index=i)
+        if not isinstance(entry["run_id"], str) or not entry["run_id"]:
+            raise _history_error(path, f'"run_id" must be a non-empty string, got '
+                                       f'{entry["run_id"]!r}', index=i)
+        if not isinstance(entry["event"], str):
+            raise _history_error(path, f'"event" must be a string, got '
+                                       f'{entry["event"]!r}', index=i)
+        if isinstance(entry["attempt"], bool) or not isinstance(entry["attempt"], int):
+            raise _history_error(path, f'"attempt" must be an int, got '
+                                       f'{entry["attempt"]!r}', index=i)
+        if not isinstance(entry["gating_passed"], bool):
+            raise _history_error(path, f'"gating_passed" must be true or false, got '
+                                       f'{entry["gating_passed"]!r}', index=i)
     return doc
 
 
+def _is_iso_date(text: str) -> bool:
+    try:
+        date_cls.fromisoformat(text)
+        return True
+    except ValueError:
+        return False
+
+
 def _qualifies(entry: dict[str, Any]) -> bool:
-    """One history entry counts towards the streak only if it was a
-    scheduled run (not a manual/PR run), green on the first attempt, and
-    every gating cell passed -- the exact 3 conditions #402's gate rule
-    names."""
+    """One entry (today's own, or a history one) counts towards the streak
+    only if it was a scheduled run (not a manual/PR run), green on the
+    first attempt, and every gating cell passed -- the exact 3 conditions
+    #402's gate rule names. `is True`, not `bool(...)` (CTO review on #467,
+    must-fix 3): a truthy non-bool must never have reached this point --
+    `load_history` already rejected it for a history entry, and today's own
+    value is built by this module, never parsed from untrusted JSON."""
     return (entry.get("event") == "schedule" and entry.get("attempt") == 1
-            and bool(entry.get("gating_passed")))
+            and entry.get("gating_passed") is True)
 
 
-def gate_status(today_gating_passed: bool, history: list[dict[str, Any]]) -> tuple[int, bool]:
+def gate_status(today: dict[str, Any], history: list[dict[str, Any]]) -> tuple[int, bool]:
     """``(day, gate_met)``: ``day`` counts consecutive qualifying daily runs
     ending with today, capped at 3 for display; ``gate_met`` is true only at
-    3. A single failing or non-qualifying day anywhere in the 3 (today, or
-    either of the 2 history entries immediately before it) resets the count
-    -- it never partially credits a streak that broke."""
-    if not today_gating_passed:
+    3. ``today`` has the same shape `_qualifies` reads (`event`/`attempt`/
+    `gating_passed`), plus ``date``/``run_id`` (either may be `None`).
+
+    CTO review on #467, must-fix 1: a run whose gating cells actually
+    FAILED is day 0 -- not day 1, which would read as progress for a red
+    run. must-fix 2: extending past day 1 needs today's own `date` AND a
+    history entry whose `date` is EXACTLY one calendar day earlier (not a
+    duplicate of today's date, not a gap of more than one day) and whose
+    `run_id` is distinct from every run_id already counted in this streak
+    -- a pasted-twice entry or a run a week apart no longer passes."""
+    if today.get("gating_passed") is not True:
+        return 0, False
+    if not _qualifies(today) or today.get("date") is None:
+        # clean today, but it cannot anchor or extend a streak: no --event,
+        # an attempt > 1 somewhere, or no --date to check contiguity with
         return 1, False
-    streak = 1
+    seen_run_ids = {today["run_id"]} if today.get("run_id") else set()
+    expected_date = today["date"]
+    day = 1
     for entry in reversed(history):
-        if streak >= 3:
+        if day >= 3:
             break
+        expected_date = _previous_date(expected_date)
         if not _qualifies(entry):
             break
-        streak += 1
-    return streak, streak >= 3
+        if entry.get("date") != expected_date:
+            break
+        run_id = entry.get("run_id")
+        if not run_id or run_id in seen_run_ids:
+            break
+        seen_run_ids.add(run_id)
+        day += 1
+    return day, day >= 3
+
+
+def _previous_date(iso_date: str) -> str:
+    return (date_cls.fromisoformat(iso_date) - timedelta(days=1)).isoformat()
 
 
 def _render_versions(versions: dict[str, Any]) -> str:
@@ -267,11 +347,12 @@ def _render_summary(counts: dict[str, Any], day: int, gate_met: bool) -> str:
     gating = counts["gating"]
     # shal#402: "gate met" is produced from the 3-daily-run check alone
     # (`gate_status`, via `day`/`gate_met` here) -- never from this run's
-    # own cell counts, which is what the one-run verdict below reports
-    # instead.
-    verdict = ("gate met" if gate_met else
-              f"this run: {gating['passed']}/{gating['cells']} gating cells "
-              f"pass (day {day} of 3)")
+    # own cell counts. CTO review on #467 nit: keep the "this run: N/M"
+    # line even when the gate is met, so the page never drops this run's
+    # own numbers just because the streak reached 3.
+    this_run = (f"this run: {gating['passed']}/{gating['cells']} gating cells "
+               f"pass (day {day} of 3)")
+    verdict = f"{this_run} — gate met" if gate_met else this_run
     return (
         "<table class=\"summary\">"
         "<tr><th></th><th>cells</th><th>passed</th><th>failed</th><th>missing</th></tr>"
@@ -305,12 +386,24 @@ pre { white-space: pre-wrap; word-break: break-word; margin: 0.3rem 0 0; }
 """
 
 
-def render_page(cells: list[dict[str, Any]],
-                history: list[dict[str, Any]] | None = None) -> str:
-    counts = summarize(cells)
+def today_entry(cells: list[dict[str, Any]], counts: dict[str, Any], *,
+                event: str | None, date: str | None) -> dict[str, Any]:
+    """This run, in the same shape a history entry takes -- CTO review on
+    #467, must-fix 1: today is held to the SAME 3 conditions
+    (`event`=="schedule", every gating cell's own `run_attempt` == 1,
+    every gating cell green), not just its cell counts. `run_id` is the
+    same one `_render_header` already shows."""
     gating = counts["gating"]
-    today_gating_passed = gating["failed"] == 0 and gating["missing"] == 0
-    day, gate_met = gate_status(today_gating_passed, history or [])
+    gating_passed = gating["failed"] == 0 and gating["missing"] == 0
+    gating_cells = [c for c in cells if c["gating"]]
+    attempt_ok = all(not _is_retry(c["run_attempt"]) for c in gating_cells)
+    run_id = next((c["run_id"] for c in cells if c.get("run_id")), None)
+    return {"event": event, "attempt": 1 if attempt_ok else 2, "gating_passed": gating_passed,
+           "date": date, "run_id": run_id}
+
+
+def render_page(cells: list[dict[str, Any]], day: int, gate_met: bool) -> str:
+    counts = summarize(cells)
     header = _render_header(cells)
     summary = _render_summary(counts, day, gate_met)
     body = "".join(_render_cell(c) for c in cells)
@@ -332,8 +425,21 @@ def main(argv: list[str] | None = None) -> int:
                         help="JSON list of the runs immediately before this one, oldest "
                              f"first ({HISTORY_FORMAT}) -- without it, this run is always "
                              "day 1 of 3 and the gate is never met from one run (shal#402)")
+    parser.add_argument("--event", default=None, metavar="NAME",
+                        help="this run's own trigger, e.g. the workflow's "
+                             "${{ github.event_name }} -- without it, today can never "
+                             "anchor or extend a streak past day 1 (shal#402 round 2)")
+    parser.add_argument("--date", default=None, metavar="YYYY-MM-DD",
+                        help="this run's own UTC date -- never guessed from the clock, so "
+                             "the gate stays deterministic; without it, today can never "
+                             "extend a streak past day 1 (shal#402 round 2)")
     parser.add_argument("--json", action="store_true", help="print the cell counts as JSON")
     args = parser.parse_args(argv)
+
+    if args.date is not None and not _is_iso_date(args.date):
+        print(f'evidence_page.py: --date must be "YYYY-MM-DD", got {args.date!r}',
+             file=sys.stderr)
+        return 2
 
     history: list[dict[str, Any]] = []
     if args.history is not None:
@@ -346,9 +452,9 @@ def main(argv: list[str] | None = None) -> int:
     cells = load_cells(args.dir)
     counts = summarize(cells)
     gating = counts["gating"]
-    today_gating_passed = gating["failed"] == 0 and gating["missing"] == 0
-    day, gate_met = gate_status(today_gating_passed, history)
-    args.out.write_text(render_page(cells, history), encoding="utf-8")
+    day, gate_met = gate_status(
+        today_entry(cells, counts, event=args.event, date=args.date), history)
+    args.out.write_text(render_page(cells, day, gate_met), encoding="utf-8")
 
     if args.json:
         print(json.dumps({**counts, "day": day, "gate_met": gate_met,

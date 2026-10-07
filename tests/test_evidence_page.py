@@ -118,9 +118,9 @@ def test_json_output_counts_and_page_path(matrix_dir, tmp_path):
     assert doc == {
         "cells": 3, "passed": 1, "failed": 1, "missing": 1,
         "gating": {"cells": 2, "passed": 1, "failed": 1, "missing": 0},
-        # shal#402: a failing run is never "day 1" towards the gate --
-        # today's own gating failure resets the streak outright.
-        "day": 1, "gate_met": False,
+        # CTO review on #467, must-fix 1: a run whose gating cells actually
+        # FAILED is day 0, not day 1 (day 1 would read as progress).
+        "day": 0, "gate_met": False,
         "page": str(out), "side_effect": "write",
     }
 
@@ -203,7 +203,18 @@ def test_one_passing_run_shows_day_1_of_3_and_never_gate_met(tmp_path):
     assert "gate met" not in page
 
 
-_QUALIFYING = {"event": "schedule", "attempt": 1, "gating_passed": True}
+#: "today" for every gate test below (CTO review on #467: never
+#: `datetime.now()` -- deterministic, so --date's own 2 preceding calendar
+#: days are fixed too).
+_TODAY = "2026-01-10"
+_YESTERDAY = "2026-01-09"
+_DAY_BEFORE = "2026-01-08"
+_TODAY_RUN_ID = "37398801816"  # _sample()'s own run_id
+
+
+def _qualifying(date: str, run_id: str) -> dict:
+    return {"date": date, "run_id": run_id, "event": "schedule", "attempt": 1,
+           "gating_passed": True}
 
 
 def test_three_consecutive_daily_passing_scheduled_runs_meet_the_gate(tmp_path):
@@ -212,20 +223,74 @@ def test_three_consecutive_daily_passing_scheduled_runs_meet_the_gate(tmp_path):
     _four_cell_passing_matrix(ev_dir)
 
     history = tmp_path / "runs.json"
-    history.write_text(json.dumps([_QUALIFYING, _QUALIFYING]), encoding="utf-8")
+    history.write_text(json.dumps([
+        _qualifying(_DAY_BEFORE, "hist-1"), _qualifying(_YESTERDAY, "hist-2"),
+    ]), encoding="utf-8")
 
     out = tmp_path / "evidence.html"
     assert evidence_page.main(
-        [str(ev_dir), "--out", str(out), "--history", str(history)]) == 0
+        [str(ev_dir), "--out", str(out), "--history", str(history),
+         "--event", "schedule", "--date", _TODAY]) == 0
     page = out.read_text(encoding="utf-8")
     assert "gate met" in page
-    assert "this run:" not in page
+    # CTO review on #467 nit: the "this run: N/M" line stays even when met.
+    assert "this run: 4/4 gating cells pass (day 3 of 3)" in page
+
+
+def test_todays_own_run_must_qualify_too_not_only_history(tmp_path):
+    """CTO review on #467, must-fix 1: today's own attempt/event were never
+    checked before -- only its cell counts. 2 good history days plus a
+    retried (attempt 2) today must NOT meet the gate, even though every
+    cell happens to have passed on that retry."""
+    ev_dir = tmp_path / "ev"
+    ev_dir.mkdir()
+    _four_cell_passing_matrix(ev_dir)
+    # make every gating cell a retry
+    for cell_dir in sorted(ev_dir.iterdir()):
+        doc = json.loads((cell_dir / "evidence.json").read_text(encoding="utf-8"))
+        doc["run_attempt"] = 2
+        (cell_dir / "evidence.json").write_text(json.dumps(doc), encoding="utf-8")
+
+    history = tmp_path / "runs.json"
+    history.write_text(json.dumps([
+        _qualifying(_DAY_BEFORE, "hist-1"), _qualifying(_YESTERDAY, "hist-2"),
+    ]), encoding="utf-8")
+
+    out = tmp_path / "evidence.html"
+    evidence_page.main([str(ev_dir), "--out", str(out), "--history", str(history),
+                        "--event", "schedule", "--date", _TODAY])
+    page = out.read_text(encoding="utf-8")
+    assert "gate met" not in page
+    assert "day 1 of 3" in page
+
+
+def test_todays_own_event_must_be_schedule_too(tmp_path):
+    """CTO review on #467, must-fix 1: a workflow_dispatch run today, with
+    2 good history days, must not meet the gate either."""
+    ev_dir = tmp_path / "ev"
+    ev_dir.mkdir()
+    _four_cell_passing_matrix(ev_dir)
+
+    history = tmp_path / "runs.json"
+    history.write_text(json.dumps([
+        _qualifying(_DAY_BEFORE, "hist-1"), _qualifying(_YESTERDAY, "hist-2"),
+    ]), encoding="utf-8")
+
+    out = tmp_path / "evidence.html"
+    evidence_page.main([str(ev_dir), "--out", str(out), "--history", str(history),
+                        "--event", "workflow_dispatch", "--date", _TODAY])
+    page = out.read_text(encoding="utf-8")
+    assert "gate met" not in page
+    assert "day 1 of 3" in page
 
 
 @pytest.mark.parametrize("bad_entry", [
-    {"event": "schedule", "attempt": 2, "gating_passed": True},    # retry
-    {"event": "schedule", "attempt": 1, "gating_passed": False},   # failed
-    {"event": "workflow_dispatch", "attempt": 1, "gating_passed": True},  # not scheduled
+    {"date": _YESTERDAY, "run_id": "hist-2b", "event": "schedule", "attempt": 2,
+     "gating_passed": True},    # retry
+    {"date": _YESTERDAY, "run_id": "hist-2b", "event": "schedule", "attempt": 1,
+     "gating_passed": False},   # failed
+    {"date": _YESTERDAY, "run_id": "hist-2b", "event": "workflow_dispatch", "attempt": 1,
+     "gating_passed": True},    # not scheduled
 ])
 def test_a_failed_or_retried_or_manual_run_in_the_3_breaks_the_gate(tmp_path, bad_entry):
     ev_dir = tmp_path / "ev"
@@ -236,13 +301,106 @@ def test_a_failed_or_retried_or_manual_run_in_the_3_breaks_the_gate(tmp_path, ba
     # first, per HISTORY_FORMAT), so it is the very first one looked back
     # on and breaks the streak immediately: day stays 1.
     history = tmp_path / "runs.json"
-    history.write_text(json.dumps([_QUALIFYING, bad_entry]), encoding="utf-8")
+    history.write_text(json.dumps([_qualifying(_DAY_BEFORE, "hist-1"), bad_entry]),
+                       encoding="utf-8")
 
     out = tmp_path / "evidence.html"
-    evidence_page.main([str(ev_dir), "--out", str(out), "--history", str(history)])
+    evidence_page.main([str(ev_dir), "--out", str(out), "--history", str(history),
+                        "--event", "schedule", "--date", _TODAY])
     page = out.read_text(encoding="utf-8")
     assert "gate met" not in page
     assert "this run: 4/4 gating cells pass (day 1 of 3)" in page
+
+
+def test_a_duplicate_date_in_history_breaks_the_gate(tmp_path):
+    """CTO review on #467, must-fix 2: two history entries from the SAME
+    day (date never advances) must not be read as 2 distinct daily runs."""
+    ev_dir = tmp_path / "ev"
+    ev_dir.mkdir()
+    _four_cell_passing_matrix(ev_dir)
+
+    history = tmp_path / "runs.json"
+    history.write_text(json.dumps([
+        _qualifying(_YESTERDAY, "hist-1"), _qualifying(_YESTERDAY, "hist-2"),
+    ]), encoding="utf-8")
+
+    out = tmp_path / "evidence.html"
+    evidence_page.main([str(ev_dir), "--out", str(out), "--history", str(history),
+                        "--event", "schedule", "--date", _TODAY])
+    page = out.read_text(encoding="utf-8")
+    assert "gate met" not in page
+
+
+def test_a_one_day_gap_in_history_breaks_the_gate(tmp_path):
+    """CTO review on #467, must-fix 2: a run from 2 days before yesterday
+    (a missed day in between) must not extend the streak."""
+    ev_dir = tmp_path / "ev"
+    ev_dir.mkdir()
+    _four_cell_passing_matrix(ev_dir)
+
+    history = tmp_path / "runs.json"
+    history.write_text(json.dumps([
+        _qualifying("2026-01-06", "hist-1"), _qualifying(_YESTERDAY, "hist-2"),
+    ]), encoding="utf-8")
+
+    out = tmp_path / "evidence.html"
+    evidence_page.main([str(ev_dir), "--out", str(out), "--history", str(history),
+                        "--event", "schedule", "--date", _TODAY])
+    page = out.read_text(encoding="utf-8")
+    assert "gate met" not in page
+    # the gap is 2 days back, so yesterday (day 2) still counted
+    assert "day 2 of 3" in page
+
+
+def test_a_repeated_run_id_in_history_breaks_the_gate(tmp_path):
+    """CTO review on #467, must-fix 2: the same run pasted in twice (or
+    reused as today's own run_id) must not be counted as 2 separate days,
+    even though its date happens to advance correctly."""
+    ev_dir = tmp_path / "ev"
+    ev_dir.mkdir()
+    _four_cell_passing_matrix(ev_dir)
+
+    history = tmp_path / "runs.json"
+    history.write_text(json.dumps([
+        _qualifying(_DAY_BEFORE, "same-id"), _qualifying(_YESTERDAY, "same-id"),
+    ]), encoding="utf-8")
+
+    out = tmp_path / "evidence.html"
+    evidence_page.main([str(ev_dir), "--out", str(out), "--history", str(history),
+                        "--event", "schedule", "--date", _TODAY])
+    page = out.read_text(encoding="utf-8")
+    assert "gate met" not in page
+    assert "day 2 of 3" in page
+
+
+@pytest.mark.parametrize("bad_field,bad_value", [
+    ("gating_passed", "false"),  # a string, not the bool False -- must not be truthy
+    ("attempt", True),           # bool is an int subclass in Python -- must not == 1
+    ("attempt", 1.0),            # a float -- must not == 1
+])
+def test_a_malformed_history_field_type_is_rejected_not_silently_truthy(tmp_path, bad_field,
+                                                                         bad_value):
+    """CTO review on #467, must-fix 3: a malformed or forged history file
+    must exit 2, never be coerced into passing."""
+    ev_dir = tmp_path / "ev"
+    ev_dir.mkdir()
+    _write_cell(ev_dir, "evidence-ubuntu-latest-3.10", _sample())
+
+    entry = _qualifying(_YESTERDAY, "hist-1")
+    entry[bad_field] = bad_value
+    bad_history = tmp_path / "runs.json"
+    bad_history.write_text(json.dumps([entry]), encoding="utf-8")
+
+    out = tmp_path / "evidence.html"
+    proc = subprocess.run(
+        [sys.executable, str(SCRIPT), str(ev_dir), "--out", str(out),
+         "--history", str(bad_history)],
+        capture_output=True, text=True, check=False)
+    assert proc.returncode == 2
+    # CTO review on #467, must-fix 4: names the bad entry's own index, and
+    # the next step (fix it, or drop --history).
+    assert "entry 0" in proc.stderr
+    assert "drop --history" in proc.stderr
 
 
 def test_help_shows_the_history_option():
