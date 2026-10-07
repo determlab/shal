@@ -210,3 +210,23 @@ def test_an_unknown_or_escaping_run_id_creates_no_cli_log(tmp_path: Path) -> Non
     assert escape_proc.returncode != 0
     assert list(state_dir.glob("*.cli.jsonl")) == []
     assert list(tmp_path.glob("*.cli.jsonl")) == []  # never escaped to the parent either
+
+
+def test_a_userinfo_leak_in_argv_and_json_never_reaches_the_cli_log(tmp_path: Path) -> None:
+    """CMO question on #460, answered by the CTO: this PR's redaction goes
+    through #459's `redact_url_in_text`/`redact_structured`, so it
+    inherits #459's userinfo fix. `answer <run> <value>` puts `value` in
+    both `argv` and the printed `--json` (as `given`), so it's a real
+    carrier for a secret url -- no `.cli.jsonl` line may ever show the
+    userinfo."""
+    state_dir = tmp_path / "state"
+    leaks = ["ftp://admin:1234,5678@host", "http://admin:9999;x@h"]
+    for leak in leaks:
+        run_proc = _run_cli("run", str(SAMPLE_TASK), "--state-dir", str(state_dir), "--json")
+        run_id = json.loads(run_proc.stdout)["run_id"]
+        proc = _run_cli("answer", run_id, leak, "--state-dir", str(state_dir), "--json")
+        assert proc.returncode == 0, proc.stderr
+
+        raw = RunStore(state_dir).cli_log_path(run_id).read_text(encoding="utf-8")
+        for secret in ("admin", "1234", "5678", "9999"):
+            assert secret not in raw, (secret, raw)
