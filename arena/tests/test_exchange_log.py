@@ -437,6 +437,40 @@ def test_a_port_followed_by_a_quote_does_not_raise_and_is_redacted() -> None:
     assert exc.response == 'ftp://10.0.0.1:21"'
 
 
+_COMMA_USERINFO_REPLY = "ftp://admin:1234,5678@host"
+
+
+@scpi_sim_model("test,secret-scpi-comma-userinfo")
+class _SecretScpiCommaUserinfoModel:
+    def scpi(self, cmd: str) -> str:
+        return _COMMA_USERINFO_REPLY
+
+
+_register_dummy_driver("test,secret-scpi-comma-userinfo", MessageTransport)
+
+
+def test_a_comma_in_the_userinfo_does_not_leak_through_sim_scpi() -> None:
+    """CTO review round 4 (security): the round-3 fix stopped the URL match
+    at the first of `"')]}>,;`, which can fall INSIDE the userinfo (RFC
+    3986 allows `,`/`;`/`'`/`)` there unescaped) -- `ftp://admin:1234,5678@host`
+    matched only up to the comma, leaving `redact_url` a bare `admin:1234`
+    with no `@` to redact, and the password rode through in full. Through a
+    real `sim_scpi` bus with a sink active, neither the username nor the
+    password may appear anywhere in the logged response."""
+    topo = {"shal_version": 1, "root": {"bench": {
+        "id": "bench", "driver": "shal,sim-scpi", "address": "sim0",
+        "children": {"p": {"id": "p", "driver": "test,secret-scpi-comma-userinfo",
+                           "address": "psu1"}}}}}
+    captured: list = []
+    with shal.load(topo) as hal, shal_log.exchange_sink(captured.append):
+        hal.get_node("bench").driver.exchange("psu1", {"scpi": "GET?", "query": True})
+    (exc,) = captured
+    assert "admin" not in exc.response
+    assert "1234" not in exc.response
+    assert "5678" not in exc.response
+    assert exc.response == "ftp://host"
+
+
 @pytest.mark.parametrize("text,expected", [
     ("(http://u:p@h:5025)", "(http://h:5025)"),
     ("see http://u:p@h:5025, ok", "see http://h:5025, ok"),
@@ -444,12 +478,24 @@ def test_a_port_followed_by_a_quote_does_not_raise_and_is_redacted() -> None:
     ("<http://u:p@h>", "<http://h>"),
     ("http://[::1", "http://<redacted>"),
     ("http://u:p w@h/", "http://<redacted> w@h/"),
+    # CTO review round 4 (security): RFC 3986 allows ' ) , ; unescaped in a
+    # URL's userinfo as sub-delims -- stopping the match AT one of them (the
+    # round-3 fix's own mistake) cut inside the userinfo and left the
+    # password raw. These must come out with NO userinfo at all, same as
+    # every other case, and keep the wrapper/trailing character untouched.
+    ("ftp://admin:1234,5678@host", "ftp://host"),
+    ("http://admin:9999;x@h", "http://h"),
+    ("http://u:p;w@h", "http://h"),
+    ("http://u:pa)ss@h:80", "http://h:80"),
+    ("http://bob:it's@h/", "http://h/"),
 ])
 def test_redact_url_in_text_table(text: str, expected: str) -> None:
-    """A direct table test of the helper (CTO review round 3): trailing
-    punctuation a URL is normally wrapped in is never swallowed, and a
+    """A direct table test of the helper (CTO review rounds 3-4): trailing
+    punctuation a URL is normally wrapped in is never swallowed, a
     substring `redact_url` cannot parse never raises -- it becomes a
-    placeholder instead of leaking or propagating."""
+    placeholder instead of leaking or propagating -- and no sub-delimiter
+    legal inside a URL's own userinfo (round 4) is ever treated as the end
+    of the match."""
     assert shal_log.redact_url_in_text(text) == expected
 
 
@@ -464,6 +510,44 @@ def test_a_secret_modbus_value_is_logged_only_in_redacted_form() -> None:
     assert "s3cr3t-token" not in exc.response["endpoint"]
     assert exc.response["endpoint"] == shal_log.redact_url(_SECRET_URL)
 
+
+@msg_sim_model("test,secret-msg-comma-userinfo")
+class _SecretMsgCommaUserinfoModel:
+    def handle(self, msg: dict) -> dict:
+        return {"endpoint": _COMMA_USERINFO_REPLY}
+
+
+_register_dummy_driver("test,secret-msg-comma-userinfo", MessageTransport)
+
+
+def test_a_comma_in_the_userinfo_does_not_leak_through_sim_msg() -> None:
+    """The same round-4 security case as `sim_scpi` above, through the
+    structured-message bus: a dict VALUE is still free text that may merely
+    contain a URL, so it goes through the same `redact_url_in_text` rule
+    (`redact_structured` recurses into every string value)."""
+    topo = {"shal_version": 1, "root": {"bench": {
+        "id": "bench", "driver": "shal,sim-msg", "address": "sim0",
+        "children": {"r": {"id": "r", "driver": "test,secret-msg-comma-userinfo",
+                           "address": "svc1"}}}}}
+    captured: list = []
+    with shal.load(topo) as hal, shal_log.exchange_sink(captured.append):
+        hal.get_node("bench").driver.exchange("svc1", {"cmd": "status"})
+    (exc,) = captured
+    assert "admin" not in exc.response["endpoint"]
+    assert "1234" not in exc.response["endpoint"]
+    assert "5678" not in exc.response["endpoint"]
+    assert exc.response["endpoint"] == "ftp://host"
+
+
+# -- the 2 byte-carrying buses (sim-i2c, and i2c_cli in core `tests/`) never
+# reach `redact_url_in_text` at all: their request/response is bytes or an
+# Op sequence, routed through `shal.log.redact` (hex-encoded) by
+# `_clean_payload`, never through the structured/text rule. The existing
+# test below (predating this round) already proves that categorically --
+# the comma-in-userinfo regex bug could never have reached a byte
+# transport's payload in the first place. Only the `address` argument
+# (always a plain `redact_url` call, a different and unaffected code path)
+# is shared with every bus, including these two.
 
 def test_a_secret_i2c_payload_is_logged_only_in_redacted_form() -> None:
     topo = {"shal_version": 1, "root": {"bench": {
