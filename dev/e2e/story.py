@@ -76,6 +76,10 @@ def _reference_dmm_driver_path():
 #: JSON must never leak).
 _N_READS = 8
 
+#: issue #477: a rail reading below this fraction of its nominal is `open`
+#: (same threshold as `shal_arena.demo.OPEN_FRACTION`).
+OPEN_FRACTION = 0.05
+
 
 def _diagnose(nominal_v: float, tol_pct: float, readings: list[float],
              allowed: set[str]) -> str:
@@ -83,13 +87,17 @@ def _diagnose(nominal_v: float, tol_pct: float, readings: list[float],
     own `_diagnose`, parametrized on the rail's numbers instead of a `Rail`
     object this script has no import for, and on several readings instead of
     one): the rail's own documented nominal voltage and tolerance, never the
-    hidden fault. `readings` empty means every measure call failed (the
-    `open` fault). A spread across readings wider than the tolerance band is
-    `noise`, checked before anything else -- a single one of those readings
-    can still land inside the band by chance. Otherwise, the last reading
-    outside the band but not clearly low or high falls back to `noise` when
-    the task even offers it."""
+    hidden fault. `readings` empty means a measure call failed: a broken
+    link to the bench, `error` -- never `open`, never a card fault (issue
+    #477). A last reading near 0 V is `open` (an open circuit on the card
+    still answers), never `low_voltage`. A spread across readings wider
+    than the tolerance band is `noise`, checked before the band itself -- a
+    single one of those readings can still land inside the band by chance.
+    Otherwise, the last reading outside the band but not clearly low or high
+    falls back to `noise` when the task even offers it."""
     if not readings:
+        return "error"
+    if abs(readings[-1]) < OPEN_FRACTION * nominal_v and "open" in allowed:
         return "open"
     band = nominal_v * tol_pct / 100
     if max(readings) - min(readings) > band and "noise" in allowed:
@@ -311,11 +319,17 @@ def run_arena_task_score_file(venv_python: str, level: str, state_dir: Path, *,
         for _ in range(_N_READS):
             measure_doc, measure_ec = _run_json(venv_python, measure_argv)
             if measure_ec != EXIT_PASS:
-                readings = []   # the `open` fault: every read fails, consistently
+                readings = []   # a broken link to the bench, not a card fault (#477)
                 break
             readings.append(measure_doc["reading"])
 
     given = _diagnose(rail["nominal_v"], rail["tol_pct"], readings, allowed)
+    if given == "error":
+        # issue #477: nothing to answer -- the run is an `error` (cause:
+        # transport), never scored as a correct `fail`
+        return _result(f"arena_{level}_score_file", False, json.dumps(
+            {"verdict": "error", "cause": "transport", "measure": measure_doc}),
+            f"{venv_python} {_argv_str(measure_argv)}")
     answer_argv = ["-m", "shal_arena.cli", "answer", run_id, given,
                   "--state-dir", str(state_dir), "--json"]
     answer_doc, _ = _run_json(venv_python, answer_argv)

@@ -188,29 +188,13 @@ is yours to change.
 `arena/tests/test_readme_examples.py` runs both minimal examples this same
 way, in CI, so copying them keeps working.
 
-**What `open` looks like.** One of the faults a card can hide is `open`: the
-instrument simply does not answer — every hop to it raises, the same as a
-cut cable. Your driver does not need to detect this itself; just let the
-exchange raise, same as `minimal_dmm_driver.py` above already does. `measure`
-reports it as a normal failure, never a crash:
+**What `open` looks like.** One of the faults a card can hide is `open`: an
+open circuit on the card. The instrument still answers, and the rail reads
+near 0 V — a normal reading, not an error; answer `open` from it.
 
-```
-$ shal-arena measure <run-id> dmm0 examples/minimal_dmm_driver.py --json
-shal-arena: measure_voltage raised HopError: no answer from the instrument
-at 'dmm0' (hop: sim-scpi, delivered=no)
-{
-  "ok": false,
-  "error": {
-    "type": "MeasurementFailed",
-    "message": "measure_voltage raised HopError: no answer from the instrument at 'dmm0' (hop: sim-scpi, delivered=no)",
-    "fix": "the instrument did not answer this call — if that's unexpected, check your driver.py's handling of the case's SCPI dialect"
-  }
-}
-```
-
-Exit code 1 — the op failed, same family as `shal call`'s own "op failed"
-outcome, not a crash in the check machinery. A failure shaped exactly like
-this, on an otherwise-correct driver, is itself the signal: answer `open`.
+A DMM that does not answer at all is a different thing: a broken link to the
+bench, not a card fault. `measure` reports it as a normal failure (exit code
+1, `"ok": false`, `MeasurementFailed`), never a crash — and never as `open`.
 
 Answer and close the run. `ok` below is a placeholder answer to show the
 command's shape — the real method for picking a value is reading the
@@ -363,8 +347,8 @@ Issue #312 adds the rest of what it takes to actually score a run:
   fault; the probing instrument's reading is bound to a topology generated
   **in memory only** (never written to any file) that wires the realized
   fault into the sim: `low_voltage`/`noise` shift or add ripple to the
-  reading, `open` sets `fault: unplugged` (the same sim-only mechanism
-  `shal` core ships for issue #304) so the instrument is simply unreachable.
+  reading, and `open` (an open circuit on the card, issue #477) makes the
+  rail read near 0 V — the instrument still answers.
   `noise`'s own ripple sample is seeded from the run's own seed mixed with
   the run's own `turns` count at the moment of that call (issue #431) — so
   a replay of a `noise` run depends on the FULL call order, not just which
@@ -382,14 +366,11 @@ Issue #312 adds the rest of what it takes to actually score a run:
   format whether it came from the CLI, MCP, or Python — captured at `shal`'s
   own structured bus log). An unreachable instrument (or a driver bug)
   raises `MeasurementFailed` live, to you, after that `measure` entry is
-  already written — a file naming *how* a read failed would, in practice,
-  name the `open` fault, since nothing else makes a correct driver fail to
-  read, so nothing about the failure itself is ever written down.
+  already written; nothing about the failure itself is ever written down.
 - **Disqualification.** `shal-arena answer` refuses to credit an answer with
   no `measure` entry at any probe instrument's address: `"disqualified":
   true` means you never called `measure` for one, full stop — not whether
-  the read that followed succeeded, so a fault like `open`, unreachable by
-  design, can still be answered correctly and counted.
+  the read that followed succeeded.
 - **Score file.** `shal-arena answer` also writes `<run_id>.score.json`
   (13 fields — `task_id`, `seed`, `fault_type`, `faults_total`,
   `faults_caught`, `false_fails`, `error_fail_correct`, `duration_s`,

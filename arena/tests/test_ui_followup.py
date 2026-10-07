@@ -334,24 +334,25 @@ def test_answer_sentence_on_a_wrong_answer_names_the_real_fault(tmp_path: Path) 
     assert sentence.endswith("Wrong: the card has a fault.")
 
 
-def test_answer_sentence_covers_the_open_fault_with_no_reading(tmp_path: Path) -> None:
+def test_answer_sentence_covers_the_open_fault_with_a_near_zero_reading(
+        tmp_path: Path) -> None:
+    """issue #477: `open` is an open circuit on the card -- the DMM answers,
+    about 0 V, so the sentence names a reading, never "No answer"."""
     from shal_arena import fault as fault_mod
     from shal_arena.loader import load_task
 
     card = load_task(str(SAMPLE_TASK)).card
     seed = next(s for s in range(200)
                if fault_mod.realized_fault(card, s).fault_id == "open")
-    from shal_arena.errors import MeasurementFailed
 
     run_id = start_run(str(SAMPLE_TASK), seed=seed, state_dir=tmp_path)["run_id"]
     drive_input(run_id, "psu0", 5.0, state_dir=tmp_path)
-    with pytest.raises(MeasurementFailed):  # open means no answer at all
-        take_measurement(run_id, "dmm0", PASSING_DMM_DRIVER, state_dir=tmp_path)
+    take_measurement(run_id, "dmm0", PASSING_DMM_DRIVER, state_dir=tmp_path)
     answer(run_id, "open", state_dir=tmp_path)
 
     payload = run_payload(run_id, state_dir=tmp_path)
     sentence = payload["answer_sentence"]
-    assert "No answer from the DMM" in sentence
+    assert "No answer" not in sentence
     assert sentence.endswith("Correct.")
 
 
@@ -413,21 +414,20 @@ def test_a_query_with_no_reading_and_no_failed_line_has_no_measured_clause(
     assert sentence == "The agent's answer: ok. Correct."
 
 
-def test_a_measure_with_no_query_at_all_is_a_real_no_answer(tmp_path: Path) -> None:
-    """The `open` fault: the read never reaches the bus at all -- only the
-    neutral `measure` marker is logged. This is the one real failure."""
-    from shal_arena import fault as fault_mod
+def test_a_measure_with_no_query_at_all_is_a_real_no_answer(
+        tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """An unplugged DMM (issue #477: a broken link, not the `open` card
+    fault): the read never reaches the bus at all -- only the neutral
+    `measure` marker is logged. This is the one real failure."""
     from shal_arena.errors import MeasurementFailed
-    from shal_arena.loader import load_task
 
-    card = load_task(str(SAMPLE_TASK)).card
-    seed = next(s for s in range(200)
-               if fault_mod.realized_fault(card, s).fault_id == "open")
-    run_id = start_run(str(SAMPLE_TASK), seed=seed, state_dir=tmp_path)["run_id"]
+    run_id = start_run(str(SAMPLE_TASK), seed=2, state_dir=tmp_path)["run_id"]
     drive_input(run_id, "psu0", 5.0, state_dir=tmp_path)
+    monkeypatch.setenv("SHAL_SIM_UNPLUG", "unit")  # the dmm harness's node id
     with pytest.raises(MeasurementFailed):
         take_measurement(run_id, "dmm0", PASSING_DMM_DRIVER, state_dir=tmp_path)
-    answer(run_id, "open", state_dir=tmp_path)
+    monkeypatch.delenv("SHAL_SIM_UNPLUG")
+    answer(run_id, "ok", state_dir=tmp_path)
 
     payload = run_payload(run_id, state_dir=tmp_path)
     entries = [e for e in payload["timeline"] if e["address"] == "dmm0"]
@@ -457,21 +457,20 @@ def test_failure_cause_driver_bug_gives_a_driver_cause_sentence(tmp_path: Path) 
     assert "No answer" not in sentence
 
 
-def test_failure_cause_open_fault_gives_a_transport_cause_sentence(tmp_path: Path) -> None:
-    """The `open` fault never reaches the bus at all -- the real transport
-    failure, logged with cause="transport"."""
-    from shal_arena import fault as fault_mod
+def test_failure_cause_unplugged_dmm_gives_a_transport_cause_sentence(
+        tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """An unplugged DMM never reaches the bus at all -- the real transport
+    failure, logged with cause="transport" (issue #477: no longer the
+    `open` card fault, which reads ~0 V)."""
     from shal_arena.errors import MeasurementFailed
-    from shal_arena.loader import load_task
 
-    card = load_task(str(SAMPLE_TASK)).card
-    seed = next(s for s in range(200)
-               if fault_mod.realized_fault(card, s).fault_id == "open")
-    run_id = start_run(str(SAMPLE_TASK), seed=seed, state_dir=tmp_path)["run_id"]
+    run_id = start_run(str(SAMPLE_TASK), seed=2, state_dir=tmp_path)["run_id"]
     drive_input(run_id, "psu0", 5.0, state_dir=tmp_path)
+    monkeypatch.setenv("SHAL_SIM_UNPLUG", "unit")  # the dmm harness's node id
     with pytest.raises(MeasurementFailed):
         take_measurement(run_id, "dmm0", PASSING_DMM_DRIVER, state_dir=tmp_path)
-    answer(run_id, "open", state_dir=tmp_path)
+    monkeypatch.delenv("SHAL_SIM_UNPLUG")
+    answer(run_id, "ok", state_dir=tmp_path)
 
     payload = run_payload(run_id, state_dir=tmp_path)
     entries = [e for e in payload["timeline"] if e["address"] == "dmm0"]

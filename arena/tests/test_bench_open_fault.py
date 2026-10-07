@@ -1,14 +1,21 @@
-"""issue #395: ``shal-arena bench`` records a `MeasurementFailed` (the `open`
-fault, unreachable by construction) as a failed measurement and keeps going,
-instead of the whole benchmark crashing.
+"""issue #395: ``shal-arena bench`` records a `MeasurementFailed` (a DMM
+that does not answer) as a failed measurement and keeps going, instead of
+the whole benchmark crashing.
 
 A naive policy (the normal thing to write — see ``README.md``'s own worked
-example) calls `take_measurement`/`raw_scpi` without wrapping it; on a task
-whose only fault is `open`, EVERY seed realizes it, so this used to crash on
-the very first run of either side.
+example) calls `take_measurement`/`raw_scpi` without wrapping it; on a bench
+whose DMM never answers, EVERY seed hits that, so this used to crash on the
+very first run of either side.
+
+issue #477: the `open` fault is now an open circuit on the card — the DMM
+answers, about 0 V — so the no-answer case here is a real unplug of the
+DMM (`SHAL_SIM_UNPLUG`, set around the read only: the PSU harness's node
+shares the same id), a broken link to the bench rather than a card fault.
 """
 from __future__ import annotations
 
+import contextlib
+import os
 from pathlib import Path
 
 import pytest
@@ -62,20 +69,35 @@ def open_fault_task(tmp_path: Path) -> Path:
     return task_path
 
 
+#: the dmm harness's own node id (adk/dmm/harness/topology.yaml)
+_DMM_NODE_ID = "unit"
+
+
+@contextlib.contextmanager
+def _dmm_unplugged():
+    os.environ["SHAL_SIM_UNPLUG"] = _DMM_NODE_ID
+    try:
+        yield
+    finally:
+        os.environ.pop("SHAL_SIM_UNPLUG", None)
+
+
 def _play_naive_with_shal(task_path: str, seed: int, state_dir: str) -> tuple[str, dict]:
     """A policy that does NOT wrap `take_measurement` -- the normal, naive
-    thing to write; bench itself must survive the `open` fault, not the
-    policy author."""
+    thing to write; bench itself must survive a DMM that never answers,
+    not the policy author."""
     run_id = start_run(task_path, seed=seed, state_dir=state_dir)["run_id"]
     drive_input(run_id, "psu0", 5.0, state_dir=state_dir)
-    take_measurement(run_id, "dmm0", PASSING_DMM_DRIVER, state_dir=state_dir)
+    with _dmm_unplugged():
+        take_measurement(run_id, "dmm0", PASSING_DMM_DRIVER, state_dir=state_dir)
     return run_id, answer(run_id, "ok", state_dir=state_dir)
 
 
 def _play_naive_without_shal(task_path: str, seed: int, state_dir: str) -> tuple[str, dict]:
     run_id = start_run(task_path, seed=seed, state_dir=state_dir)["run_id"]
     raw_scpi(run_id, "psu0", "VOLT 5.0", state_dir=state_dir)
-    raw_scpi(run_id, "dmm0", "MEAS:VOLT:DC?", state_dir=state_dir)
+    with _dmm_unplugged():
+        raw_scpi(run_id, "dmm0", "MEAS:VOLT:DC?", state_dir=state_dir)
     return run_id, answer(run_id, "ok", state_dir=state_dir)
 
 
@@ -91,8 +113,8 @@ def test_run_side_survives_measurement_failed_and_counts_it(
 
 
 def test_bench_cli_json_counts_measurement_failures(tmp_path: Path) -> None:
-    """Agent path: `shal-arena bench --runs 10 --json` with the `open` fault
-    active, reading the failure count straight from --json."""
+    """Agent path: `shal-arena bench --runs 10 --json` with the DMM unplugged
+    for every read, reading the failure count straight from --json."""
     import json
     import subprocess
     import sys
@@ -102,17 +124,25 @@ def test_bench_cli_json_counts_measurement_failures(tmp_path: Path) -> None:
     task_path.write_text(_OPEN_ONLY_TASK, encoding="utf-8")
     policy_path = tmp_path / "policy.py"
     policy_path.write_text(
+        "import os\n"
         "from shal_arena.runner import answer, drive_input, raw_scpi, start_run, take_measurement\n"
         f"PASSING_DMM_DRIVER = {str(PASSING_DMM_DRIVER)!r}\n"
+        "def _unplugged(fn, *args, **kwargs):\n"
+        f"    os.environ['SHAL_SIM_UNPLUG'] = {_DMM_NODE_ID!r}\n"
+        "    try:\n"
+        "        return fn(*args, **kwargs)\n"
+        "    finally:\n"
+        "        os.environ.pop('SHAL_SIM_UNPLUG', None)\n"
         "def play_with_shal(task_path, seed, state_dir):\n"
         "    run_id = start_run(task_path, seed=seed, state_dir=state_dir)['run_id']\n"
         "    drive_input(run_id, 'psu0', 5.0, state_dir=state_dir)\n"
-        "    take_measurement(run_id, 'dmm0', PASSING_DMM_DRIVER, state_dir=state_dir)\n"
+        "    _unplugged(take_measurement, run_id, 'dmm0', PASSING_DMM_DRIVER, "
+        "state_dir=state_dir)\n"
         "    return run_id, answer(run_id, 'ok', state_dir=state_dir)\n"
         "def play_without_shal(task_path, seed, state_dir):\n"
         "    run_id = start_run(task_path, seed=seed, state_dir=state_dir)['run_id']\n"
         "    raw_scpi(run_id, 'psu0', 'VOLT 5.0', state_dir=state_dir)\n"
-        "    raw_scpi(run_id, 'dmm0', 'MEAS:VOLT:DC?', state_dir=state_dir)\n"
+        "    _unplugged(raw_scpi, run_id, 'dmm0', 'MEAS:VOLT:DC?', state_dir=state_dir)\n"
         "    return run_id, answer(run_id, 'ok', state_dir=state_dir)\n",
         encoding="utf-8",
     )

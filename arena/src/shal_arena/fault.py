@@ -10,11 +10,11 @@ the run is closed (``runner.answer``), same discipline as ``store.py``.
 Three fault *types* ship today, matching ``card.yaml``'s ``faults:`` ids
 (the CTO's task/card format ruling, issue #310): ``low_voltage`` and
 ``noise`` shift/perturb the probing instrument's reading (wired onto the sim
-model via ``harness_for_run``'s generated ``config:``); ``open`` makes the
-instrument unreachable by setting the node's ``fault: unplugged`` — the same
-sim-only mechanism ``shal`` core already ships (issue #304) — so "open
-component" *extends* `fault: unplugged` rather than inventing a second way to
-say "no answer."
+model via ``harness_for_run``'s generated ``config:``); ``open`` is an open
+circuit on the card (issue #477, CTO decision: an ``open`` card is measured,
+not unreachable): the instrument still answers, and the rail reads about
+0 V. A broken link to the bench (shal core's ``fault: unplugged`` /
+``SHAL_SIM_UNPLUG``) is a different thing — an ``error``, never a card fault.
 """
 from __future__ import annotations
 
@@ -32,6 +32,20 @@ from .schema import Card, Rail, TempPoint
 # pick 'noise' still realize two different ripples (Done-when: "a different
 # seed differs"), while the SAME seed always rescales it the same way.
 _NOISE_SCALE_RANGE = (0.7, 1.3)
+
+# issue #477: an ``open`` rail reads a small residual, at most this fraction
+# of the rail's nominal (well below the 5% that names ``open``) -- drawn from
+# its own seed-only RNG, so it never shifts the `realized_fault` sequence
+# above and the same seed reads the same value on every call and every OS.
+_OPEN_RESIDUAL_FRACTION = 0.005
+
+
+def open_residual_v(rail: Rail, seed: int) -> float:
+    """The reading an ``open`` ``rail`` gives for ``seed``: about 0 V, the
+    same for every call of the same seed (no ``nonce``), rounded to the
+    DMM's own 6 decimals so it formats identically everywhere."""
+    rng = random.Random(f"open:{seed}")
+    return round(rng.uniform(0.0, _OPEN_RESIDUAL_FRACTION) * rail.nominal_v, 6)
 
 
 @dataclass(frozen=True)
@@ -79,8 +93,9 @@ def harness_for_run(case: Any, *, rail: Rail, realized: RealizedFault, seed: int
     agent can read") — with ``realized`` wired onto the one child node under
     test:
 
-    - ``open``: the node gets ``fault: unplugged`` (extends shal core's #304
-      mechanism: every hop to it raises, exactly as if the link were cut).
+    - ``open`` (issue #477): the node gets a ``config:`` with ``open_v``, the
+      seed's own `open_residual_v` -- the sim model reads it instead of the
+      rail's nominal, so the instrument answers about 0 V. No hop raises.
     - ``low_voltage`` / ``noise``: the node gets a ``config:`` carrying the
       rail's nominal voltage plus the realized shift/ripple, read by the
       case's sim model at bind time (``bind_sim``, the same hook shal core's
@@ -106,7 +121,8 @@ def harness_for_run(case: Any, *, rail: Rail, realized: RealizedFault, seed: int
     _child_key, child = next(iter(bench["children"].items()))
 
     if realized.fault_id == "open":
-        child["fault"] = "unplugged"
+        child["config"] = {"nominal_v": rail.nominal_v,
+                           "open_v": open_residual_v(rail, seed)}
         return doc
 
     config: dict[str, Any] = {"nominal_v": rail.nominal_v}

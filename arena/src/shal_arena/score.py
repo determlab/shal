@@ -9,12 +9,14 @@ Two of the issue's 13 field names are genuinely ambiguous from the ticket
 text alone; their semantics are made explicit here for CTO review on the PR
 rather than guessed silently:
 
-- ``error_fail_correct``: credit for correctly naming an ERROR-class fault —
-  today only ``open`` (no answer reaches the instrument at all; see
-  ``fault.harness_for_run``'s "extends `fault: unplugged`") — as opposed to a
-  VALUE-class fault (``low_voltage``, ``noise``), which changes a reading
-  rather than breaking the link. 1 when the realized fault is ``open`` AND
-  the player named it AND the run was not disqualified; 0 otherwise.
+- ``error_fail_correct``: the run hit a real transport error (no answer
+  reaches the instrument, a cut cable) and the player did not blame the
+  card. 1 when the realized fault is one of `ERROR_CLASS_FAULTS` AND the
+  player named it AND the run was not disqualified; 0 otherwise. Issue #477
+  (CTO): ``open`` is an open circuit on the card — the instrument still
+  answers, about 0 V — so it is a card fault (``fail``), counted in
+  ``faults_caught`` like ``low_voltage``, never here. No packaged fault is a
+  cut cable today, so this stays 0.
 - ``gate_stops``: 0 for every run this ticket can produce. `shal-arena`
   invokes no gated (``config``/``actuator``) op of its own yet — wired for a
   later arena ticket that plays a task through SHAL's own approval gate.
@@ -66,6 +68,10 @@ SCORE_SCHEMA = {
 
 _VALIDATOR = jsonschema.Draft202012Validator(SCORE_SCHEMA)
 
+#: realized faults that break the link to the instrument rather than change
+#: what the card reads (issue #477: none today -- `open` reads about 0 V).
+ERROR_CLASS_FAULTS: frozenset[str] = frozenset()
+
 
 def validate_score(doc: dict[str, Any]) -> None:
     """Raise `jsonschema.ValidationError` if ``doc`` is not a valid score
@@ -86,7 +92,7 @@ def build_score(*, task_id: str, seed: int, fault_id: str, given: str, correct: 
     validates it before returning."""
     caught = (not disqualified) and fault_id != "ok" and correct
     false_fail = fault_id == "ok" and given != "ok"
-    error_correct = (not disqualified) and fault_id == "open" and correct
+    error_correct = (not disqualified) and fault_id in ERROR_CLASS_FAULTS and correct
     record_bytes = Path(record_path).read_bytes()
     score = {
         "task_id": task_id,
