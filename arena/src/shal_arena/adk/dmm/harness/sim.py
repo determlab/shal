@@ -10,7 +10,10 @@ not probing the run's faulted rail) it reads the fixed 3.3 V it always has,
 same as issue #310 shipped it.
 
 issue #477: an ``open_v`` in that ``config:`` is the ``open`` fault (an open
-circuit on the card): the DMM still answers, with that near-0 V value."""
+circuit on the card): the DMM still answers, with that near-0 V value.
+
+issue #478: a ``probe_v`` is the ``broken_probe`` fault: the probe itself is
+broken, so the DMM answers that near-0 V value whatever the card does."""
 from __future__ import annotations
 
 import random
@@ -28,6 +31,7 @@ class BenchDmm1Model:
         self._ripple_vpp = 0.0
         self._rng: random.Random | None = None
         self._open_v: float | None = None
+        self._probe_v: float | None = None
 
     def bind_sim(self, bus, node) -> None:  # noqa: ARG002 - bus unused, same hook shape as core's
         config = node.spec.get("config") or {}
@@ -35,6 +39,7 @@ class BenchDmm1Model:
         self._shift_v = config.get("shift_v", 0.0)
         self._ripple_vpp = config.get("ripple_vpp", 0.0)
         self._open_v = config.get("open_v")
+        self._probe_v = config.get("probe_v")
         if self._ripple_vpp:
             self._rng = random.Random(config.get("seed"))
 
@@ -43,6 +48,8 @@ class BenchDmm1Model:
             return ""
         if self._open_v is not None:
             return f"{self._open_v:.6f}"
+        if self._probe_v is not None:
+            return f"{self._probe_v:.6f}"
         value = self._nominal_v + self._shift_v
         if self._ripple_vpp and self._rng is not None:
             value += self._rng.uniform(-self._ripple_vpp / 2, self._ripple_vpp / 2)

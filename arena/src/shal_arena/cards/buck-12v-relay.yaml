@@ -15,3 +15,4 @@ faults:
   - {id: low_voltage, rail: 3v3, shift_v: -0.40}
   - {id: open, rail: 3v3}
   - {id: overheat, temp_point: regulator, shift_c: 45.0}
+  - {id: broken_probe, rail: 3v3, answer: probe}

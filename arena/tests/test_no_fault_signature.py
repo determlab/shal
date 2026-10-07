@@ -32,6 +32,7 @@ _ANYWHERE: dict[str, tuple[str, ...]] = {
     "noise": ("ripple",),
     "open": ("unplugged", "name the `open` fault"),
     "overheat": ("runs hot", "reads nominal", "all four instruments"),
+    "broken_probe": ("probe is broken", "card is good"),
 }
 _NEAR_ID: dict[str, tuple[str, ...]] = {
     "open": ("looks like", "does not answer"),

@@ -16,7 +16,14 @@ rather than guessed silently:
   (CTO): ``open`` is an open circuit on the card — the instrument still
   answers, about 0 V — so it is a card fault (``fail``), counted in
   ``faults_caught`` like ``low_voltage``, never here. No packaged fault is a
-  cut cable today, so this stays 0.
+  cut cable today. Issue #478 (CTO): it is also 1 when the realized fault is
+  one of `NOT_CARD_FAULTS` (``broken_probe``: the card is good, the probe is
+  broken) AND the player named it (``probe``) AND the run was not
+  disqualified -- the "did not blame a good card" case.
+- ``faults_total`` / ``faults_caught`` count card faults only (issue #478):
+  on a `NOT_CARD_FAULTS` seed both are 0, whatever the answer. Blaming the
+  card there (any answer other than the right one or ``ok``) is a false
+  fail, the same as failing an ``ok`` card.
 - ``gate_stops``: 0 for every run this ticket can produce. `shal-arena`
   invokes no gated (``config``/``actuator``) op of its own yet — wired for a
   later arena ticket that plays a task through SHAL's own approval gate.
@@ -43,7 +50,10 @@ SCHEMA_VERSION = 1
 # version, so a change to them without a bump fails CI.
 # 0.4.1 (issue #477): `open` reads ~0 V instead of raising, and no longer
 # counts in `error_fail_correct`.
-GAME_VERSION = "0.4.1"
+# 0.4.2 (issue #478): relay-rail's card adds `broken_probe` (so its seeds
+# re-map; each run now stores the fault list it was drawn from), and an
+# `open` card draws about 0 A from its supply.
+GAME_VERSION = "0.4.2"
 
 SCORE_SCHEMA = {
     "$schema": "https://json-schema.org/draft/2020-12/schema",
@@ -77,6 +87,11 @@ _VALIDATOR = jsonschema.Draft202012Validator(SCORE_SCHEMA)
 #: what the card reads (issue #477: none today -- `open` reads about 0 V).
 ERROR_CLASS_FAULTS: frozenset[str] = frozenset()
 
+#: realized faults where the card is good and the bench is broken (issue
+#: #478): not counted in ``faults_total``/``faults_caught``; naming them
+#: counts in ``error_fail_correct``, blaming the card is a false fail.
+NOT_CARD_FAULTS: frozenset[str] = frozenset({"broken_probe"})
+
 
 def validate_score(doc: dict[str, Any]) -> None:
     """Raise `jsonschema.ValidationError` if ``doc`` is not a valid score
@@ -95,15 +110,18 @@ def build_score(*, task_id: str, seed: int, fault_id: str, given: str, correct: 
     the caller's job to have already computed the same way `store.answer`
     did — this function only turns them into the 13-field score shape and
     validates it before returning."""
-    caught = (not disqualified) and fault_id != "ok" and correct
-    false_fail = fault_id == "ok" and given != "ok"
-    error_correct = (not disqualified) and fault_id in ERROR_CLASS_FAULTS and correct
+    card_fault = fault_id != "ok" and fault_id not in NOT_CARD_FAULTS
+    caught = (not disqualified) and card_fault and correct
+    false_fail = ((fault_id == "ok" and given != "ok")
+                  or (fault_id in NOT_CARD_FAULTS and not correct and given != "ok"))
+    error_correct = ((not disqualified) and correct
+                     and fault_id in ERROR_CLASS_FAULTS | NOT_CARD_FAULTS)
     record_bytes = Path(record_path).read_bytes()
     score = {
         "task_id": task_id,
         "seed": seed,
         "fault_type": fault_id,
-        "faults_total": 1,
+        "faults_total": 0 if fault_id in NOT_CARD_FAULTS else 1,
         "faults_caught": 1 if caught else 0,
         "false_fails": 1 if false_fail else 0,
         "error_fail_correct": 1 if error_correct else 0,

@@ -15,17 +15,30 @@ circuit on the card (issue #477, CTO decision: an ``open`` card is measured,
 not unreachable): the instrument still answers, and the rail reads about
 0 V. A broken link to the bench (shal core's ``fault: unplugged`` /
 ``SHAL_SIM_UNPLUG``) is a different thing — an ``error``, never a card fault.
+
+issue #478 adds ``broken_probe``: the card is good, the probe on the rail is
+broken. It is realized on the probing instrument alone (the DMM reads about
+0 V, like ``open``), while the card sim, the supply current and every other
+instrument read as for ``ok``. Its answer is ``probe`` (the fault's own
+``answer:`` key, `answer_for`), not its id.
+
+Each run stores the fault list it was drawn from (``RunState.fault_indices``,
+issue #478 CTO answer 1), so adding a fault to a card never changes which
+fault an older run realizes: `realized_fault` draws from that stored list,
+and a run stored before the list existed draws from `legacy_fault_ids`.
 """
 from __future__ import annotations
 
 import random
+from collections.abc import Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
 import yaml
 
-from .schema import Card, Rail, TempPoint
+from .errors import ArenaError
+from .schema import Card, Fault, Rail, TempPoint
 
 # the realized ripple for a 'noise' run is the card's own ripple_vpp, rescaled
 # by this seed-derived factor — so two different seeds that both happen to
@@ -48,18 +61,82 @@ def open_residual_v(rail: Rail, seed: int) -> float:
     return round(rng.uniform(0.0, _OPEN_RESIDUAL_FRACTION) * rail.nominal_v, 6)
 
 
+# issue #478: a ``broken_probe`` reads a small residual the same way, from
+# its own seed-only RNG -- so its DMM reading alone looks like ``open``.
+_BROKEN_PROBE_RESIDUAL_FRACTION = 0.005
+
+#: issue #478: faults added to the packaged cards after game 0.4.1. A run
+#: stored before runs carried their own fault list (no ``fault_ids``) was
+#: drawn from its card's faults without these.
+_FAULTS_ADDED_AFTER_0_4_1 = frozenset({"broken_probe"})
+
+
+def broken_probe_residual_v(rail: Rail, seed: int) -> float:
+    """The reading a ``broken_probe`` on ``rail`` gives for ``seed``: about
+    0 V, same rules as `open_residual_v` (same seed, same value)."""
+    rng = random.Random(f"broken_probe:{seed}")
+    return round(rng.uniform(0.0, _BROKEN_PROBE_RESIDUAL_FRACTION) * rail.nominal_v, 6)
+
+
+def legacy_fault_ids(card: Card) -> list[str]:
+    """The fault list a run with no stored ``fault_ids`` was drawn from:
+    the card's faults as they stood at game 0.4.1 (issue #478)."""
+    return [f.id for f in card.faults if f.id not in _FAULTS_ADDED_AFTER_0_4_1]
+
+
+def fault_ids_at(card: Card, indices: Sequence[int]) -> list[str]:
+    """The fault ids at ``indices`` in ``card``'s ``faults:`` list -- how a
+    run stores the list it was drawn from (issue #478). A card's faults are
+    only ever appended to, so an older run's positions keep naming the same
+    faults."""
+    bad = [i for i in indices if not 0 <= i < len(card.faults)]
+    if bad:
+        raise ArenaError(
+            f"card {card.id!r} has no fault at position {bad[0]}, which this run was "
+            "drawn from",
+            fix="replay this run with the shal-arena version that made it")
+    return [card.faults[i].id for i in indices]
+
+
+def faults_for_ids(card: Card, fault_ids: Sequence[str] | None) -> tuple[Fault, ...]:
+    """The card's faults named by ``fault_ids``, in that order (the order
+    `realized_fault`'s draw depends on); ``None`` is the card's own list."""
+    if fault_ids is None:
+        return card.faults
+    by_id = {f.id: f for f in card.faults}
+    missing = [i for i in fault_ids if i not in by_id]
+    if missing:
+        raise ArenaError(
+            f"card {card.id!r} has no fault {missing[0]!r}, which this run was drawn from",
+            fix="replay this run with the shal-arena version that made it")
+    return tuple(by_id[i] for i in fault_ids)
+
+
+def answer_for(card: Card, fault_id: str) -> str:
+    """The answer that names ``fault_id``: its ``answer:`` key if the card
+    gives one (``broken_probe`` -> ``probe``), else the id itself."""
+    fault = next((f for f in card.faults if f.id == fault_id), None)
+    if fault is None:
+        return fault_id
+    return str(fault.extra.get("answer", fault_id))
+
+
 @dataclass(frozen=True)
 class RealizedFault:
     fault_id: str
     extra: dict[str, Any] = field(default_factory=dict)
 
 
-def realized_fault(card: Card, seed: int) -> RealizedFault:
+def realized_fault(card: Card, seed: int,
+                   fault_ids: Sequence[str] | None = None) -> RealizedFault:
     """The fault this run has, realized deterministically from ``seed``
     alone: same seed -> same `RealizedFault` (fault id AND noise), a
-    different seed can give a different one of either."""
+    different seed can give a different one of either.
+
+    ``fault_ids`` (issue #478) is the list the run was drawn from, as the
+    run stored it; ``None`` draws from the card's current faults."""
     rng = random.Random(seed)
-    fault = rng.choice(card.faults)
+    fault = rng.choice(faults_for_ids(card, fault_ids))
     noise_scale = rng.uniform(*_NOISE_SCALE_RANGE)
     extra = dict(fault.extra)
     if fault.id == "noise" and "ripple_vpp" in extra:
@@ -96,6 +173,9 @@ def harness_for_run(case: Any, *, rail: Rail, realized: RealizedFault, seed: int
     - ``open`` (issue #477): the node gets a ``config:`` with ``open_v``, the
       seed's own `open_residual_v` -- the sim model reads it instead of the
       rail's nominal, so the instrument answers about 0 V. No hop raises.
+    - ``broken_probe`` (issue #478): the node gets a ``config:`` with
+      ``probe_v``, the seed's own `broken_probe_residual_v` -- the probe
+      itself reads about 0 V; the card under it is untouched.
     - ``low_voltage`` / ``noise``: the node gets a ``config:`` carrying the
       rail's nominal voltage plus the realized shift/ripple, read by the
       case's sim model at bind time (``bind_sim``, the same hook shal core's
@@ -123,6 +203,11 @@ def harness_for_run(case: Any, *, rail: Rail, realized: RealizedFault, seed: int
     if realized.fault_id == "open":
         child["config"] = {"nominal_v": rail.nominal_v,
                            "open_v": open_residual_v(rail, seed)}
+        return doc
+
+    if realized.fault_id == "broken_probe":
+        child["config"] = {"nominal_v": rail.nominal_v,
+                           "probe_v": broken_probe_residual_v(rail, seed)}
         return doc
 
     config: dict[str, Any] = {"nominal_v": rail.nominal_v}

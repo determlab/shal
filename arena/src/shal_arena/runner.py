@@ -45,7 +45,7 @@ from .cases import CaseSpec, resolve_case
 from .errors import ArenaError, CheckCouldNotRun, MeasurementFailed
 from .loader import LoadedTask, load_task
 from .schema import Card, Instrument, Task
-from .score import build_score
+from .score import GAME_VERSION, build_score
 from .simlog import SimLog
 from .store import DEFAULT_STATE_DIR, RunState, RunStore
 
@@ -66,7 +66,18 @@ def _read_datasheet(case: CaseSpec) -> str:
     return "\n\n".join(f.read_text(encoding="utf-8") for f in files)
 
 
-def pick_fault(card: Card, seed: int) -> str:
+def run_fault_ids(card: Card, state: RunState) -> list[str]:
+    """issue #478: the fault ids ``state``'s fault was drawn from -- the
+    list the run stored when it started (`RunState.fault_indices`), or, for
+    a run stored before runs kept one, the card's faults as they stood then
+    (`fault.legacy_fault_ids`). Replaying an older run draws from the same
+    list it was made with, so a fault added later never changes it."""
+    if state.fault_indices is None:
+        return _fault.legacy_fault_ids(card)
+    return _fault.fault_ids_at(card, state.fault_indices)
+
+
+def pick_fault(card: Card, seed: int, fault_ids: list[str] | None = None) -> str:
     """The fault a seed picks, deterministically — the one piece of the
     challenge that must never sit on disk while a run is open. `start_run`
     picks it to know nothing persistent about it; `answer` picks it again,
@@ -76,12 +87,15 @@ def pick_fault(card: Card, seed: int) -> str:
 
     Delegates to `fault.realized_fault` (issue #312), which draws from the
     exact same `random.Random(seed).choice(card.faults)` call this used to
-    make directly — same seed, same id, for every existing caller."""
-    return _fault.realized_fault(card, seed).fault_id
+    make directly — same seed, same id, for every existing caller.
+    ``fault_ids`` (issue #478): the run's own stored list (`run_fault_ids`);
+    ``None`` draws from the card's current faults."""
+    return _fault.realized_fault(card, seed, fault_ids).fault_id
 
 
 def _topology_for_instrument(task: Task, card: Card, instrument: Instrument,
-                             seed: int, case: CaseSpec, *, nonce: int = 0) -> str | dict:
+                             seed: int, case: CaseSpec, *, nonce: int = 0,
+                             fault_ids: list[str] | None = None) -> str | dict:
     """issue #312: the harness this instrument's `check` runs against for
     THIS run. An instrument with no `probe:` (it `drives:` a card input
     instead) never carries a fault — always the case's static harness.  A
@@ -93,11 +107,12 @@ def _topology_for_instrument(task: Task, card: Card, instrument: Instrument,
 
     ``nonce`` (issue #431): forwarded to `fault.harness_for_run` unchanged —
     see its own docstring for why a fresh value per call matters for the
-    `noise` fault."""
+    `noise` fault. ``fault_ids`` (issue #478): the run's own stored list,
+    see `run_fault_ids`."""
     static = str(case.harness_topology)
     if instrument.probe is None:
         return static
-    realized = _fault.realized_fault(card, seed)
+    realized = _fault.realized_fault(card, seed, fault_ids)
     rail = _fault.rail_for_fault(card, realized)
     if rail is None or instrument.probe != f"card.{rail.test_point}":
         return static
@@ -141,6 +156,10 @@ def _load_card_sim(loaded: LoadedTask, state: RunState, store: RunStore, run_id:
         card_sim.applied = dict(state.card_applied)
     card_sim.destroyed = state.card_destroyed
     card_sim.power_on = state.card_power_on
+    # issue #478: an `open` card is an open circuit -- it draws about 0 A,
+    # where a `broken_probe` (a good card) draws its normal current.
+    realized = _fault.realized_fault(loaded.card, state.seed, run_fault_ids(loaded.card, state))
+    card_sim.open_circuit = realized.fault_id == "open"
     return card_sim
 
 
@@ -506,7 +525,8 @@ def raw_scpi(run_id: str, address: str, cmd: str, *,
         return {"run_id": run_id, "address": instrument.address, "cmd": cmd, **result.as_dict()}
 
     topology = _topology_for_instrument(loaded.task, loaded.card, instrument, state.seed, case,
-                                        nonce=state.turns)
+                                        nonce=state.turns,
+                                        fault_ids=run_fault_ids(loaded.card, state))
     card_sim = _load_card_sim(loaded, state, store, run_id)
     topology = _dead_rail_override(topology, loaded, instrument, case, card_sim, state.seed)
     sim_log = SimLog(store.sim_log_path(run_id))
@@ -553,8 +573,11 @@ def start_run(task_path: str, *, seed: int | None = None,
     seed_used = task.seed if seed is None else seed
 
     store = RunStore(state_dir)
+    # issue #478: the run stores the fault list it is drawn from and the
+    # game rules it starts under, so a later card change never re-draws it.
     state = store.create(task_path=str(loaded.task_path), card_path=str(loaded.card_path),
-                         seed=seed_used)
+                         seed=seed_used, fault_indices=list(range(len(card.faults))),
+                         game_version=GAME_VERSION)
     return {
         "ok": True,
         "side_effect": "write",
@@ -658,7 +681,8 @@ def check_instrument_driver(run_id: str, address: str, driver_path: str | Path, 
     case = resolve_case(instrument.case)
     _import_driver_file(driver_path)
     topology = _topology_for_instrument(loaded.task, loaded.card, instrument, state.seed, case,
-                                        nonce=state.turns)
+                                        nonce=state.turns,
+                                        fault_ids=run_fault_ids(loaded.card, state))
     try:
         report = _conformance_check_driver(case.compatible, topology=topology)
     except Exception as e:  # noqa: BLE001 - the check itself could not run
@@ -759,7 +783,8 @@ def take_measurement(run_id: str, address: str, driver_path: str | Path, *,
                 "params — measuring it needs a different driver shape")
 
     topology = _topology_for_instrument(loaded.task, loaded.card, instrument, state.seed, case,
-                                        nonce=state.turns)
+                                        nonce=state.turns,
+                                        fault_ids=run_fault_ids(loaded.card, state))
     card_sim = _load_card_sim(loaded, state, store, run_id)
     topology = _dead_rail_override(topology, loaded, instrument, case, card_sim, state.seed)
     sim_log = SimLog(store.sim_log_path(run_id))
@@ -774,7 +799,8 @@ def take_measurement(run_id: str, address: str, driver_path: str | Path, *,
                         "if you see this, file a shal-arena issue")
             if instrument.probe is not None:
                 point = instrument.probe.removeprefix("card.")
-                realized = _fault.realized_fault(loaded.card, state.seed)
+                realized = _fault.realized_fault(loaded.card, state.seed,
+                                                 run_fault_ids(loaded.card, state))
                 card_state = _make_card_state(loaded.card, card_sim, realized)
                 _bind_card_state(node, point, card_state)
             sim_log.mark_measured(str(address))
@@ -871,8 +897,9 @@ def answer(run_id: str, value: str, *, state_dir: str | Path = DEFAULT_STATE_DIR
             f"{loaded.task.question.answer.kind!r} is not scored yet",
             fix="number-kind answers need card simulation, which ships in a later "
                 "arena ticket; this ticket scores enum-kind tasks only")
-    fault_id = pick_fault(loaded.card, state.seed)
-    record = store.answer(run_id, given=value, fault_id=fault_id)
+    fault_id = pick_fault(loaded.card, state.seed, run_fault_ids(loaded.card, state))
+    record = store.answer(run_id, given=value, fault_id=fault_id,
+                          expected=_fault.answer_for(loaded.card, fault_id))
 
     sim_log = SimLog(store.sim_log_path(run_id))
     disqualified = not has_any_measurement(run_id, state_dir)
@@ -947,7 +974,8 @@ def call_op(run_id: str, address: str, driver_path: str | Path, op_name: str,
             fix=f"use `shal-arena drive <run> {address} <volts>` instead of call")
 
     topology = _topology_for_instrument(loaded.task, loaded.card, instrument, state.seed, case,
-                                        nonce=state.turns)
+                                        nonce=state.turns,
+                                        fault_ids=run_fault_ids(loaded.card, state))
     card_sim = _load_card_sim(loaded, state, store, run_id)
     topology = _dead_rail_override(topology, loaded, instrument, case, card_sim, state.seed)
     sim_log = SimLog(store.sim_log_path(run_id))
@@ -962,7 +990,8 @@ def call_op(run_id: str, address: str, driver_path: str | Path, op_name: str,
                         "if you see this, file a shal-arena issue")
             if instrument.probe is not None:
                 point = instrument.probe.removeprefix("card.")
-                realized = _fault.realized_fault(loaded.card, state.seed)
+                realized = _fault.realized_fault(loaded.card, state.seed,
+                                                 run_fault_ids(loaded.card, state))
                 card_state = _make_card_state(loaded.card, card_sim, realized)
                 _bind_card_state(node, point, card_state)
                 sim_log.mark_measured(str(address))

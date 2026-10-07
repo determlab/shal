@@ -95,7 +95,8 @@ def test_no_hint_word_reaches_what_the_agent_actually_receives(tmp_path):
 # the answer values are still visible in the run JSON
 # --------------------------------------------------------------------------- #
 
-def test_cli_run_still_lists_the_four_answer_values(tmp_path):
+def test_cli_run_lists_the_five_answer_values(tmp_path):
+    """issue #478 adds `probe` (the card is good, the probe is broken)."""
     proc = subprocess.run(
         [sys.executable, "-m", "shal_arena.cli", "run", str(RELAY_RAIL_TASK),
          "--state-dir", str(tmp_path / "state"), "--json"],
@@ -104,7 +105,7 @@ def test_cli_run_still_lists_the_four_answer_values(tmp_path):
     doc = json.loads(proc.stdout)
     assert doc["ok"] is True
     assert doc["task"]["answer"]["values"] == [
-        "ok", "low_voltage", "open", "overheat"]
+        "ok", "low_voltage", "open", "overheat", "probe"]
 
 
 # --------------------------------------------------------------------------- #
@@ -151,10 +152,16 @@ def test_an_answer_with_no_measurement_is_disqualified(tmp_path):
 # pins existing behaviour and adds no new fault-draw logic (#461)
 # --------------------------------------------------------------------------- #
 
-def test_at_least_20_percent_of_seeds_0_to_29_are_healthy():
+def test_healthy_seeds_0_to_29_are_pinned_and_a_good_card_is_at_least_20_percent():
+    """issue #478 (game 0.4.2): a fifth fault re-maps relay-rail's seeds, so
+    `ok` alone is now 4/30 (it was 6+). `broken_probe` is a good card too,
+    so the "do not blame a good card" case is 9/30 seeds."""
     healthy = [s for s in range(30) if fault_mod.realized_fault(_CARD, s).fault_id == "ok"]
-    assert len(healthy) >= 6, (  # 20% of 30
-        f"only {len(healthy)}/30 seeds are healthy: {healthy}")
+    assert healthy == [2, 14, 19, 28]
+    good_card = [s for s in range(30)
+                 if fault_mod.realized_fault(_CARD, s).fault_id in ("ok", "broken_probe")]
+    assert len(good_card) >= 6, (  # 20% of 30
+        f"only {len(good_card)}/30 seeds have a good card: {good_card}")
 
 
 @pytest.mark.parametrize("seed", [s for s in range(30)
