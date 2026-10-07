@@ -12,7 +12,7 @@ instruments:
     probe: card.tp_3v3
   - case: relay-modbus
     address: relay0
-    drives: card.vin
+    switches: card.vin
   - case: sht31
     address: temp0
     probe: card.tp_reg_temp

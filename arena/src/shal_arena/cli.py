@@ -143,7 +143,7 @@ def _cmd_run(args: argparse.Namespace) -> int:
         print(f"run {result['run_id']}: {result['task']['title']}")
         print(result['task']['question'])
         for inst in result["instruments"]:
-            wiring = inst.get("drives") or inst.get("probe")
+            wiring = inst.get("drives") or inst.get("switches") or inst.get("probe")
             print(f"  {inst['address']} ({inst['case']}) -> {wiring}")
     return 0
 

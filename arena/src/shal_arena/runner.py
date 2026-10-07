@@ -119,6 +119,8 @@ def _instrument_view(instrument: Instrument) -> dict[str, Any]:
     }
     if instrument.drives is not None:
         view["drives"] = instrument.drives
+    elif instrument.switches is not None:  # issue #473: a relay, not a source
+        view["switches"] = instrument.switches
     else:
         view["probe"] = instrument.probe
     return view
@@ -366,6 +368,14 @@ def drive_input(run_id: str, address: str, volts: float, *,
         known = ", ".join(str(i.address) for i in loaded.task.instruments)
         raise CheckCouldNotRun(f"no instrument at address {address!r} on run {run_id!r}",
                                fix=f"use one of this run's addresses: {known}")
+    if instrument.switches is not None:
+        # issue #473: a `switches` instrument (relay0) only turns an input on
+        # or off -- its one action goes through `call`, never `drive`.
+        raise CheckCouldNotRun(
+            f"{address}: this instrument switches {instrument.switches} on/off, "
+            "it does not drive an input",
+            fix=f"use `shal-arena call <run> {address} <driver.py> set_relay "
+                "<channel> <true|false>` instead of drive")
     if instrument.drives is None:
         raise CheckCouldNotRun(
             f"{address}: this instrument probes the card, it does not drive an input",
@@ -465,7 +475,10 @@ def raw_scpi(run_id: str, address: str, cmd: str, *,
                                fix=f"use one of this run's addresses: {known}")
     case = resolve_case(instrument.case)
 
-    if instrument.drives is not None:
+    # issue #473: a `switches` instrument keeps the raw path it had as a
+    # `drives` one -- only the key changed, not the behaviour.
+    wired_input = instrument.drives if instrument.drives is not None else instrument.switches
+    if wired_input is not None:
         m = _RAW_SET_V.match(cmd.strip())
         if not m:
             raise CheckCouldNotRun(
@@ -473,7 +486,7 @@ def raw_scpi(run_id: str, address: str, cmd: str, *,
                 "documents for driving an input",
                 fix=f"read {case.docs_dir}/datasheet.md for the write command that "
                     "sets the output voltage, e.g. 'VOLT 5.0'")
-        input_name = instrument.drives.removeprefix("card.")
+        input_name = wired_input.removeprefix("card.")
         card_sim = _load_card_sim(loaded, state, store, run_id)
         result = card_sim.apply_input(input_name, float(m.group(1)), address=str(address))
         store.set_card_state(run_id, applied=card_sim.applied, destroyed=card_sim.destroyed)
