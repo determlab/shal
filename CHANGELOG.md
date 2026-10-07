@@ -37,14 +37,23 @@ All notable changes to this project are documented here. The format follows
 ### Added
 - **Every call result and log/audit line carries the instrument's identity**
   (#347): `device` (the node id, or its path if it has none), `address` (the
-  node's configured address — a string goes through `shal.log.redact_url`,
-  issue #20) and `simulated` (`True`/`False`, read from the driver's own new
-  `simulated` class attribute, default `False` — never inferred from the id or
-  `compatible`, so a mixed bench of a real PSU and a sim DMM reports each
+  address of the route that actually carried the call — the main route by
+  default, or the pinned/active one on a node with `routes:` — a string goes
+  through `shal.log.redact_url`, issue #20) and `simulated` (`True`/`False`:
+  the driver's own `simulated` class attribute, default `False`, OR'd with
+  the `simulated` flag of the transport that carried the call — a real driver
+  run on a `shal,sim-*` bus for local testing is still a sim, even though the
+  driver itself never declares it; neither half is ever inferred from the id
+  or `compatible`, so a mixed bench of a real PSU and a sim DMM reports each
   truthfully). `Hal.call_tool()` adds all three to every outcome, success or
-  refusal; the op wrapper (`driver.py`) adds them to its own DEBUG `call` line
-  and to every `shal.audit` line. `shal,sim-sensor`, `shal,sim-psu` and
-  `shal,sim-dmm` are the first drivers to set `simulated = True`.
+  refusal, including `shal call`'s own pre-I/O limits/approval refusals; the
+  op wrapper (`driver.py`) adds them, computed from the route that actually
+  carried the call, to its own DEBUG `call` line and to every `shal.audit`
+  line. `shal,sim-i2c`, `shal,sim-scpi`, `shal,sim-msg`, `shal,sim-sensor`,
+  `shal,sim-psu` and `shal,sim-dmm` all set `simulated = True`.
+  `shal.log.redact_url` also now strips a query/fragment from a scheme-less
+  (bare `host:port`) address, not only the userinfo — it could otherwise
+  still carry a secret as a query parameter.
 - **`record_version` 3 reserves `Step.ops`, `Measurement.instrument_id`/
   `instrument_simulated`/`limit_source` and `Record.repeatability`** (#409,
   `record.md` §2.1). All new keys are always present in a v3 record, `null`

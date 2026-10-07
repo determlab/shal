@@ -56,6 +56,7 @@ class SimDeebotModel:
 class SimEcovacsCloud(Driver, Transport, MessageTransport):
     compatible = "playground,sim-cloud"
     kind = None
+    simulated = True  # issue #347: a transport-level sim, same as shal's own sim buses
 
     def __init__(self, node: Node) -> None:
         Transport.__init__(self, node)

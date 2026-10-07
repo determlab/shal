@@ -150,14 +150,81 @@ def test_address_is_redacted_through_redact_url(tmp_path):
     assert "abc123" not in out["address"]
 
 
-# ---- an int address is reported as-is, and `simulated` is the DRIVER's, never
-# inferred from the id: `setup_sim.yaml`'s `ambient_temp` runs the real-hardware
-# `ti,tmp102` driver against a simulated bus — the driver is not a sim, so
-# `simulated` is False even though the bus underneath it is ------------------------
+@pytest.mark.parametrize("bare,expected", [
+    ("h:5025?token=s3cret", "h:5025"),
+    ("h/api?key=s3cret", "h/api"),
+    ("h:5025#frag", "h:5025"),
+    ("user:pw@h:5025?token=s3cret", "h:5025"),
+])
+def test_a_scheme_less_address_drops_its_query_or_fragment_too(bare, expected):
+    """#347 round 2 must-fix 3: a secret can ride a scheme-less address as a
+    query param (`h:5025?token=s`), not only as URL userinfo -- `redact_url`'s
+    bare-address branch used to keep everything after the first `@` as-is."""
+    from shal.log import redact_url
+    assert redact_url(bare) == expected
 
-def test_int_address_is_unchanged_and_simulated_follows_the_driver():
+
+# ---- DoD 2' (#347 round 2 must-fix 2): a pinned route reports ITS OWN address,
+# not the main route's -- `shal call ... --via jump` answered on 0x49, but the
+# old code reported the node's own configured address (0x48) regardless -------
+
+_ROUTES_YAML = """\
+shal_version: 1
+root:
+  console:
+    driver: shal,sim-i2c
+    address: sim0
+    children:
+      board:
+        id: board
+        driver: shal,sim-sensor
+        address: 0x48
+        routes:
+          - {via: /net, address: 0x49, name: ssh}
+  net:
+    driver: shal,sim-i2c
+    address: sim1
+    children:
+      twin: {driver: "shal,sim-sensor", address: 0x49}
+"""
+
+
+def test_a_pinned_route_reports_the_address_it_actually_answered_on(tmp_path, caplog):
+    p = tmp_path / "routes.yaml"
+    p.write_text(_ROUTES_YAML, encoding="utf-8")
+    with shal.load(p) as hal:
+        with caplog.at_level(logging.DEBUG, logger="shal"):
+            out = hal.call_tool("board__read_celsius", {"via": "ssh"})
+    assert out["ok"] is True and out["via"] == "ssh"
+    assert out["address"] == 0x49
+    [call] = [r for r in _call_lines(caplog) if r.device == "board"]
+    assert call.address == 0x49
+
+
+# ---- an int address is reported as-is. `simulated` is never inferred from the
+# id or `compatible`: it is the driver's own flag OR'd with the flag of the
+# transport that carried the call (#347 round 2 must-fix) -- `setup_sim.yaml`'s
+# `ambient_temp` runs the real-hardware `ti,tmp102` driver against a simulated
+# bus, and the driver itself never declares `simulated`, but the reading is
+# still simulated because the bus underneath it is -----------------------------
+
+def test_int_address_is_unchanged_and_simulated_follows_the_driver_or_the_bus():
     with shal.load(Path(__file__).parent / "setup_sim.yaml") as hal:
         out = hal.call_tool("ambient_temp__read_celsius")
     assert out["device"] == "ambient_temp"
     assert out["address"] == 0x48
-    assert out["simulated"] is False
+    assert out["simulated"] is True
+
+
+def test_every_registered_sim_bus_or_device_declares_simulated_true():
+    """#347 round 2 enforcement: every `shal,sim-*` class SHAL ships (the three
+    transports a device sits on, and the device models that ship with them)
+    declares `simulated = True` on itself -- never relies on inference."""
+    from shal.registry import catalog, resolve
+    sim_compatibles = [e["compatible"] for e in
+                       catalog()["buses"] + catalog()["drivers"]
+                       if e["compatible"].startswith("shal,sim-")]
+    assert sim_compatibles  # the catalog actually has them, or this test proves nothing
+    for compatible in sim_compatibles:
+        cls = resolve(compatible)
+        assert cls.simulated is True, f"{compatible} ({cls.__name__}) must declare simulated = True"

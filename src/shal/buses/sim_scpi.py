@@ -57,6 +57,7 @@ class SimScpiBus(SimFaultMixin, Driver, Transport, MessageTransport):
 
     compatible = "shal,sim-scpi"
     kind = None  # may sit at root, or behind any CommandTransport later
+    simulated = True  # issue #347 round 2: a real driver on this bus is still a sim
 
     def __init__(self, node: Node) -> None:
         Transport.__init__(self, node)
