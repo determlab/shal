@@ -44,6 +44,7 @@ from .card_sim import DAMAGE, CardSim, Dmm, catalogue
 from .cases import CaseSpec, resolve_case
 from .errors import ArenaError, CheckCouldNotRun, MeasurementFailed
 from .loader import LoadedTask, load_task
+from .origin import driver_origin
 from .schema import Card, Instrument, Task
 from .score import build_score
 from .simlog import SimLog
@@ -627,6 +628,16 @@ def _import_driver_file(path: str | Path):
     return module
 
 
+def _record_driver_origin(store: RunStore, run_id: str, address: str,
+                          driver_path: str | Path, case_name: str) -> dict[str, Any]:
+    """issue #487: label the driver file -- written by the agent, or a copy
+    of the packaged reference driver for this case (`origin.py`) -- and
+    record it for ``address`` only. Returned for the call's own reply."""
+    origin = driver_origin(driver_path, case_name)
+    store.set_driver_origin(run_id, address, origin)
+    return origin
+
+
 def check_instrument_driver(run_id: str, address: str, driver_path: str | Path, *,
                             state_dir: str | Path = DEFAULT_STATE_DIR) -> dict[str, Any]:
     """The ADK-style driver check (issue #310 Scope): import the player's
@@ -657,6 +668,7 @@ def check_instrument_driver(run_id: str, address: str, driver_path: str | Path, 
                                fix=f"use one of this run's addresses: {known}")
     case = resolve_case(instrument.case)
     _import_driver_file(driver_path)
+    origin = _record_driver_origin(store, run_id, str(address), driver_path, instrument.case)
     topology = _topology_for_instrument(loaded.task, loaded.card, instrument, state.seed, case,
                                         nonce=state.turns)
     try:
@@ -675,6 +687,7 @@ def check_instrument_driver(run_id: str, address: str, driver_path: str | Path, 
         "passed": report.ok,
         "problems": report.problems,
         "warnings": report.warnings,
+        **origin,
     }
 
 
@@ -744,6 +757,7 @@ def take_measurement(run_id: str, address: str, driver_path: str | Path, *,
                                fix=f"use one of this run's addresses: {known}")
     case = resolve_case(instrument.case)
     _import_driver_file(driver_path)
+    origin = _record_driver_origin(store, run_id, str(address), driver_path, instrument.case)
     try:
         cls = registry.resolve(case.compatible)
     except Exception as e:  # noqa: BLE001 - a bad/missing registration is a named failure
@@ -810,6 +824,7 @@ def take_measurement(run_id: str, address: str, driver_path: str | Path, *,
         "op": read_op,
         "reading": reading,
         "card": card,
+        **origin,
     }
     spec = catalogue().get(instrument.case)
     if spec is not None and spec.fuse_a is not None:
@@ -918,6 +933,7 @@ def call_op(run_id: str, address: str, driver_path: str | Path, op_name: str,
                                fix=f"use one of this run's addresses: {known}")
     case = resolve_case(instrument.case)
     _import_driver_file(driver_path)
+    origin = _record_driver_origin(store, run_id, str(address), driver_path, instrument.case)
     try:
         cls = registry.resolve(case.compatible)
     except Exception as e:  # noqa: BLE001 - a bad/missing registration is a named failure
@@ -988,6 +1004,6 @@ def call_op(run_id: str, address: str, driver_path: str | Path, op_name: str,
 
     sim_log.append(str(address), "call", op=op_name, args=args, ok=bool(result.get("ok")))
     out = {"ok": bool(result.get("ok")), "side_effect": side_effect, "run_id": run_id,
-          "address": instrument.address, "op": op_name, "args": args}
+          "address": instrument.address, "op": op_name, "args": args, **origin}
     out.update({k: v for k, v in result.items() if k != "ok"})
     return out
