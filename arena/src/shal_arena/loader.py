@@ -128,7 +128,20 @@ def _cross_check(task: Task, card: Card, task_path: Path) -> None:
 
     for i, instrument in enumerate(task.instruments):
         where = f"{task_path}: task.instruments[{i}]"
-        resolve_case(instrument.case)  # raises TaskFormatError naming the known cases
+        case = resolve_case(instrument.case)  # raises TaskFormatError naming the known cases
+        # CTO review of #479: `switches` skips `call`'s damage check (runner
+        # `call_op`), so it is only allowed on a power-switch case; `drives`
+        # is not allowed there, so each key matches one kind of case.
+        if instrument.switches is not None and not case.power_switch:
+            raise TaskFormatError(
+                f"{where}.switches: case {instrument.case!r} is not a power switch, "
+                f"so it cannot use `switches`",
+                fix=f"use `drives: {instrument.switches}` for case {instrument.case!r}")
+        if instrument.drives is not None and case.power_switch:
+            raise TaskFormatError(
+                f"{where}.drives: case {instrument.case!r} is a power switch, "
+                f"so it cannot use `drives`",
+                fix=f"use `switches: {instrument.drives}` for case {instrument.case!r}")
         if instrument.drives is not None or instrument.switches is not None:
             # issue #473: `switches` names a card input, checked like `drives`
             key = "drives" if instrument.drives is not None else "switches"
