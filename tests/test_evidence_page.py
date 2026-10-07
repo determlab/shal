@@ -38,7 +38,11 @@ evidence_page = _load_module()
 def _sample() -> dict:
     doc = json.loads(SAMPLE_EVIDENCE.read_text(encoding="utf-8"))
     doc["run_id"] = "37398801816"
-    doc["run_attempt"] = 1
+    # CTO review on #467 round 3, must-fix 1: story.py writes run_attempt
+    # from GITHUB_RUN_ATTEMPT, an env var -- always the STRING "1" on a
+    # real run, never the int. Match that shape here so these tests catch
+    # what round 2's int-only check missed.
+    doc["run_attempt"] = "1"
     return doc
 
 
@@ -521,3 +525,148 @@ def test_gating_cells_from_different_runs_do_not_anchor_a_streak(tmp_path):
     page = out.read_text(encoding="utf-8")
     assert "gate met" not in page
     assert "day 1 of 3" in page
+
+
+# --------------------------------------------------------------------------- #
+# CTO review on #467 round 3: the round-2 int-only attempt check rejected
+# every REAL cell (story.py writes the string "1"), plus 2 more ways to
+# fool it -- an empty-checks cell, and a partial download.
+# --------------------------------------------------------------------------- #
+
+def test_a_real_string_attempt_one_meets_the_gate(tmp_path):
+    """must-fix 1: `_sample()` now writes `run_attempt: "1"`, the shape
+    story.py really writes -- the round-2 `type(...) is int` check rejected
+    this, so a real, green run could never pass day 1."""
+    ev_dir = tmp_path / "ev"
+    ev_dir.mkdir()
+    _four_cell_passing_matrix(ev_dir)
+
+    history = tmp_path / "runs.json"
+    history.write_text(_good_history(), encoding="utf-8")
+
+    out = tmp_path / "evidence.html"
+    assert evidence_page.main(
+        [str(ev_dir), "--out", str(out), "--history", str(history),
+         "--event", "schedule", "--date", _TODAY]) == 0
+    page = out.read_text(encoding="utf-8")
+    assert "gate met" in page
+
+
+@pytest.mark.parametrize("bad_attempt", ["2", "unknown", True, None, "missing"])
+def test_any_other_attempt_shape_never_meets_the_gate(tmp_path, bad_attempt):
+    ev_dir = tmp_path / "ev"
+    ev_dir.mkdir()
+    _four_cell_passing_matrix(ev_dir)
+    for cell_dir in sorted(ev_dir.iterdir()):
+        doc = json.loads((cell_dir / "evidence.json").read_text(encoding="utf-8"))
+        if bad_attempt == "missing":
+            del doc["run_attempt"]
+        else:
+            doc["run_attempt"] = bad_attempt
+        (cell_dir / "evidence.json").write_text(json.dumps(doc), encoding="utf-8")
+
+    history = tmp_path / "runs.json"
+    history.write_text(_good_history(), encoding="utf-8")
+
+    out = tmp_path / "evidence.html"
+    _run_with_history(ev_dir, out, history)
+    page = out.read_text(encoding="utf-8")
+    assert "gate met" not in page
+    assert "day 1 of 3" in page
+
+
+def test_a_cell_with_no_checks_does_not_count_as_passed(tmp_path):
+    """must-fix 2a: `any([])` is False, so an empty `checks` list used to
+    read as a pass -- nothing was actually proved."""
+    ev_dir = tmp_path / "ev"
+    ev_dir.mkdir()
+    doc = _sample()
+    doc["checks"] = []
+    _write_cell(ev_dir, "evidence-ubuntu-latest-3.10", doc)
+    history = tmp_path / "runs.json"
+    history.write_text(_good_history(), encoding="utf-8")
+
+    out = tmp_path / "evidence.html"
+    proc = _run_with_history(ev_dir, out, history)
+    assert proc.returncode == 1  # a missing (unproven) gating cell fails the run
+    page = out.read_text(encoding="utf-8")
+    assert "gate met" not in page
+
+
+def test_a_partial_download_does_not_meet_the_gate(tmp_path):
+    """must-fix 2b: with no known matrix size, only 1 of the real 4 gating
+    cells present (the rest never downloaded) used to read as '1/1 ...
+    gate met' -- a false all-green."""
+    ev_dir = tmp_path / "ev"
+    ev_dir.mkdir()
+    _write_cell(ev_dir, "evidence-ubuntu-latest-3.10", _sample())
+    history = tmp_path / "runs.json"
+    history.write_text(_good_history(), encoding="utf-8")
+
+    out = tmp_path / "evidence.html"
+    proc = subprocess.run(
+        [sys.executable, str(SCRIPT), str(ev_dir), "--out", str(out),
+         "--history", str(history), "--event", "schedule", "--date", _TODAY,
+         "--expect-gating", "4"],
+        capture_output=True, text=True, check=False)
+    assert proc.returncode == 0  # the 1 present cell did pass; nothing failed or is missing
+    page = out.read_text(encoding="utf-8")
+    assert "gate met" not in page
+
+
+def test_run_id_unknown_never_anchors_a_streak(tmp_path):
+    """nit: story.py's own run_id outside CI is the literal string
+    "unknown" -- it must not be treated as a real, consistent run_id."""
+    ev_dir = tmp_path / "ev"
+    ev_dir.mkdir()
+    _four_cell_passing_matrix(ev_dir)
+    for cell_dir in sorted(ev_dir.iterdir()):
+        doc = json.loads((cell_dir / "evidence.json").read_text(encoding="utf-8"))
+        doc["run_id"] = "unknown"
+        (cell_dir / "evidence.json").write_text(json.dumps(doc), encoding="utf-8")
+
+    history = tmp_path / "runs.json"
+    history.write_text(_good_history(), encoding="utf-8")
+
+    out = tmp_path / "evidence.html"
+    _run_with_history(ev_dir, out, history)
+    page = out.read_text(encoding="utf-8")
+    assert "gate met" not in page
+    assert "day 1 of 3" in page
+
+
+def test_mixed_run_ids_show_mixed_in_the_header_not_the_first_ones(tmp_path):
+    """nit: `_render_header` used to show the first cell's run_id when the
+    cells came from different runs."""
+    ev_dir = tmp_path / "ev"
+    ev_dir.mkdir()
+    a = _sample()
+    a["run_id"] = "102"
+    _write_cell(ev_dir, "evidence-ubuntu-latest-3.10", a)
+    b = _sample()
+    b["os"] = "windows-latest"
+    b["run_id"] = "999"
+    _write_cell(ev_dir, "evidence-windows-latest-3.10", b)
+
+    out = tmp_path / "evidence.html"
+    evidence_page.main([str(ev_dir), "--out", str(out)])
+    page = out.read_text(encoding="utf-8")
+    header = page[page.index('<p class="run-header">'):page.index("</p>") + len("</p>")]
+    assert "mixed" in header
+    assert "102" not in header and "999" not in header
+
+
+def test_stdout_names_gate_met_in_plain_text(tmp_path, capsys):
+    """nit: no test asserted the plain-text stdout line itself."""
+    ev_dir = tmp_path / "ev"
+    ev_dir.mkdir()
+    _four_cell_passing_matrix(ev_dir)
+    history = tmp_path / "runs.json"
+    history.write_text(_good_history(), encoding="utf-8")
+
+    out = tmp_path / "evidence.html"
+    assert evidence_page.main(
+        [str(ev_dir), "--out", str(out), "--history", str(history),
+         "--event", "schedule", "--date", _TODAY]) == 0
+    printed = capsys.readouterr().out
+    assert "day 3 of 3 — gate met" in printed

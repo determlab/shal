@@ -43,7 +43,8 @@ history either, for the same reason: day stays at most 1.
 
 Usage:
     evidence_page.py DIR --out evidence.html [--history runs.json]
-                      [--event schedule] [--date 2026-01-02] [--json]
+                      [--event schedule] [--date 2026-01-02]
+                      [--expect-gating 4] [--json]
 
 Exit 0 if every gating cell passed, 1 if a gating check failed or a gating
 cell is missing (a macOS-only failure never sets this) -- unchanged by the
@@ -98,7 +99,14 @@ def _load_cell(cell_dir: Path) -> dict[str, Any]:
         return _empty_cell(name)
 
     checks = doc["checks"]
-    status = STATUS_FAIL if any(c.get("result") != "pass" for c in checks) else STATUS_PASS
+    # CTO review on #467 round 3, must-fix 2a: `any([])` is False, so a
+    # cell with an empty checks list used to read as a pass -- nothing was
+    # actually proved. Treat it the same as an unreadable evidence.json:
+    # missing, not passed.
+    if not checks:
+        status = STATUS_MISSING
+    else:
+        status = STATUS_FAIL if any(c.get("result") != "pass" for c in checks) else STATUS_PASS
     os_label = doc.get("os")
     return {"name": name, "status": status, "os": os_label, "python": doc.get("python"),
             "run_id": doc.get("run_id"), "run_attempt": doc.get("run_attempt"),
@@ -335,8 +343,17 @@ def _render_cell(cell: dict[str, Any]) -> str:
 
 
 def _render_header(cells: list[dict[str, Any]]) -> str:
-    run_id = next((c["run_id"] for c in cells if c.get("run_id")), None)
-    run_id_label = html.escape(str(run_id)) if run_id else "n/a"
+    # CTO review on #467 round 3 nit: the first cell with a run_id used to
+    # stand in for the whole run, even when cells came from different runs
+    # (a stale artifact, a partial re-run) -- say "mixed" instead of
+    # picking one arbitrarily.
+    run_ids = {c["run_id"] for c in cells if c.get("run_id")}
+    if len(run_ids) == 1:
+        run_id_label = html.escape(str(next(iter(run_ids))))
+    elif run_ids:
+        run_id_label = "mixed"
+    else:
+        run_id_label = "n/a"
     generated = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
     return (f'<p class="run-header">Run <strong>{run_id_label}</strong> &mdash; '
             f'generated {generated}. Gate rule: <em>{html.escape(GATE_RULE)}</em></p>')
@@ -385,8 +402,24 @@ pre { white-space: pre-wrap; word-break: break-word; margin: 0.3rem 0 0; }
 """
 
 
+def _is_attempt_one(value: Any) -> bool:
+    """CTO review on #467 round 3, must-fix 1: `dev/e2e/story.py` writes
+    `run_attempt` from `GITHUB_RUN_ATTEMPT`, an environment variable -- so a
+    real cell's value is always the STRING `"1"`, never the int `1`. The
+    round-2 `type(...) is int` check rejected every real cell, stuck at day
+    1 for good. Accept exactly the int `1` (bool excluded, as `bool` is an
+    `int` subclass) or the exact string `"1"`; reject anything else,
+    including `"2"`, `"unknown"`, `True` and `None`."""
+    if isinstance(value, bool):
+        return False
+    if isinstance(value, int):
+        return value == 1
+    return value == "1"
+
+
 def today_entry(cells: list[dict[str, Any]], counts: dict[str, Any], *,
-                event: str | None, date: str | None) -> dict[str, Any]:
+                event: str | None, date: str | None,
+                expect_gating: int | None = None) -> dict[str, Any]:
     """This run, in the same shape a history entry takes -- CTO review on
     #467 round 1, must-fix 1: today is held to the SAME 3 conditions
     (`event`=="schedule", every gating cell's own `run_attempt` == 1,
@@ -404,14 +437,24 @@ def today_entry(cells: list[dict[str, Any]], counts: dict[str, Any], *,
     re-run) could be stitched into one false "today". Every gating cell
     must now share the SAME non-empty `run_id`, or today cannot anchor a
     streak (folded into `attempt`, same mechanism a real retry already
-    uses -- not a second check gate_status would need to know about)."""
+    uses -- not a second check gate_status would need to know about).
+
+    Round 3 (CTO review on PR #467) closes 2 more: must-fix 1 above, read
+    through `_is_attempt_one`; and `expect_gating` (`--expect-gating`, round
+    3 must-fix 2b) -- without a known matrix size, a partial download (only
+    some of the real gating cells present, the rest never fetched) still
+    reads as "all of them passed". `run_id == "unknown"` (`story.py`'s own
+    value outside CI, round 3 nit) is excluded from consistency the same
+    way a missing run_id already was -- it must never anchor a streak."""
     gating = counts["gating"]
     gating_cells = [c for c in cells if c["gating"]]
-    gating_passed = gating["cells"] > 0 and gating["passed"] == gating["cells"]
-    attempt_ok = all(type(c["run_attempt"]) is int and c["run_attempt"] == 1
-                     for c in gating_cells)
+    gating_count_ok = gating["cells"] > 0 and (
+        expect_gating is None or gating["cells"] == expect_gating)
+    gating_passed = gating_count_ok and gating["passed"] == gating["cells"]
+    attempt_ok = all(_is_attempt_one(c["run_attempt"]) for c in gating_cells)
     run_ids = [c.get("run_id") for c in gating_cells]
-    run_id_consistent = bool(run_ids) and all(r and r == run_ids[0] for r in run_ids)
+    run_id_consistent = bool(run_ids) and all(
+        r and r != "unknown" and r == run_ids[0] for r in run_ids)
     run_id = run_ids[0] if run_id_consistent else None
     attempt = 1 if (attempt_ok and run_id_consistent) else 2
     return {"event": event, "attempt": attempt, "gating_passed": gating_passed,
@@ -439,8 +482,15 @@ def main(argv: list[str] | None = None) -> int:
                         help="where to write the HTML page")
     parser.add_argument("--history", type=Path, metavar="FILE", default=None,
                         help="JSON list of the runs immediately before this one, oldest "
-                             f"first ({HISTORY_FORMAT}) -- without it, this run is always "
-                             "day 1 of 3 and the gate is never met from one run (shal#402)")
+                             f"first ({HISTORY_FORMAT}) -- must NOT include this run itself "
+                             "(a workflow that appends today's own run first stays on day 1 "
+                             "for good); without --history, this run is always day 1 of 3 "
+                             "and the gate is never met from one run (shal#402)")
+    parser.add_argument("--expect-gating", type=int, default=None, metavar="N",
+                        help="the number of non-macOS cells the matrix is expected to "
+                             "have -- without it, a partial download (fewer cells than the "
+                             "real matrix) can still read as 'all of them passed'; with it, "
+                             "today's own gating cell count must equal N (shal#402 round 3)")
     parser.add_argument("--event", default=None, metavar="NAME",
                         help="this run's own trigger, e.g. the workflow's "
                              "${{ github.event_name }} -- without it, today can never "
@@ -469,7 +519,8 @@ def main(argv: list[str] | None = None) -> int:
     counts = summarize(cells)
     gating = counts["gating"]
     day, gate_met = gate_status(
-        today_entry(cells, counts, event=args.event, date=args.date), history)
+        today_entry(cells, counts, event=args.event, date=args.date,
+                   expect_gating=args.expect_gating), history)
     args.out.write_text(render_page(cells, day, gate_met), encoding="utf-8")
 
     if args.json:
