@@ -1,0 +1,17 @@
+{
+  "run_id": "run-20261007T080236Z-f98b4df0",
+  "task_path": "arena/src/shal_arena/tasks/easy.yaml",
+  "card_path": "arena/src/shal_arena/cards/ldo-5v-3v3.yaml",
+  "status": "closed",
+  "seed": 0,
+  "created_at": "2026-10-07T08:02:36Z",
+  "tiles": {},
+  "turns": 2,
+  "closed_at": "2026-10-07T08:02:36Z",
+  "card_applied": {
+    "vin": 5.0
+  },
+  "card_destroyed": false,
+  "card_power_on": true,
+  "fuses_blown": []
+}

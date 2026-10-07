@@ -1,0 +1,15 @@
+{
+  "task_id": "easy",
+  "seed": 0,
+  "fault_type": "open",
+  "faults_total": 1,
+  "faults_caught": 1,
+  "false_fails": 0,
+  "error_fail_correct": 1,
+  "duration_s": 0.0,
+  "turns": 2,
+  "gate_stops": 0,
+  "schema_version": 1,
+  "game_version": "0.4.0",
+  "record_sha256": "0f34d4e5727a1965b7f7debed395934c872f2bb4faf0b54a662cdeb0bdcf688a"
+}

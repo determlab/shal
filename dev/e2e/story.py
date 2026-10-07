@@ -81,6 +81,15 @@ _N_READS = 8
 OPEN_FRACTION = 0.05
 
 
+def _measure_failure_cause(measure_doc: dict[str, Any]) -> str:
+    """``transport`` when a failed `measure` raised shal's own "the hop never
+    completed" (`HopError`/`HopTimeout`, named in its error message, the same
+    split `runner.take_measurement` logs); ``driver`` for anything else, such
+    as a bug in the driver itself (CTO review on #480)."""
+    message = ((measure_doc or {}).get("error") or {}).get("message", "")
+    return "transport" if ("HopError" in message or "HopTimeout" in message) else "driver"
+
+
 def _diagnose(nominal_v: float, tol_pct: float, readings: list[float],
              allowed: set[str]) -> str:
     """A guess from the measurements alone (same logic as `shal_arena.demo`'s
@@ -325,10 +334,11 @@ def run_arena_task_score_file(venv_python: str, level: str, state_dir: Path, *,
 
     given = _diagnose(rail["nominal_v"], rail["tol_pct"], readings, allowed)
     if given == "error":
-        # issue #477: nothing to answer -- the run is an `error` (cause:
-        # transport), never scored as a correct `fail`
+        # issue #477: nothing to answer -- the run is an `error`, never
+        # scored as a correct `fail`
         return _result(f"arena_{level}_score_file", False, json.dumps(
-            {"verdict": "error", "cause": "transport", "measure": measure_doc}),
+            {"verdict": "error", "cause": _measure_failure_cause(measure_doc),
+             "measure": measure_doc}),
             f"{venv_python} {_argv_str(measure_argv)}")
     answer_argv = ["-m", "shal_arena.cli", "answer", run_id, given,
                   "--state-dir", str(state_dir), "--json"]

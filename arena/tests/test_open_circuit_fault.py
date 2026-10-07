@@ -196,3 +196,14 @@ def test_unplugged_arena_dmm_is_error_never_open_or_fail(tmp_path, monkeypatch):
         given_story = story._diagnose(rail.nominal_v, rail.tol_pct, [], allowed)
         assert given_demo == given_story == "error"
         assert given_demo not in card_faults
+
+
+def test_story_names_the_failure_cause_from_the_measure_error():
+    """CTO review on #480: `story.py` reads the cause from `measure`'s own
+    error JSON -- a HopError is `transport`, a driver bug is `driver`."""
+    hop = {"ok": False, "error": {"type": "MeasurementFailed",
+                                  "message": "measure_voltage raised HopError: no answer"}}
+    bug = {"ok": False, "error": {"type": "MeasurementFailed",
+                                  "message": "measure_voltage raised ValueError: bad reply"}}
+    assert story._measure_failure_cause(hop) == "transport"
+    assert story._measure_failure_cause(bug) == "driver"

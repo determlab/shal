@@ -35,10 +35,15 @@ from typing import Any
 import jsonschema
 
 SCHEMA_VERSION = 1
-# shal-arena's own version (arena/pyproject.toml). Kept a literal, like
-# test_packaging.py's own version pin, rather than imported at runtime: a
-# mismatch is caught by that same test, not hidden behind an import.
-GAME_VERSION = "0.4.0"
+# The game-rules version, NOT the package version (arena/pyproject.toml):
+# what a score means -- which fault a seed realizes, what each instrument
+# reads, how a run is scored. Bump it whenever fault realization, readings
+# or scoring change, so a stored score says which rules it was made under.
+# `arena/tests/test_game_version_golden.py` pins a hash of those rules per
+# version, so a change to them without a bump fails CI.
+# 0.4.1 (issue #477): `open` reads ~0 V instead of raising, and no longer
+# counts in `error_fail_correct`.
+GAME_VERSION = "0.4.1"
 
 SCORE_SCHEMA = {
     "$schema": "https://json-schema.org/draft/2020-12/schema",
