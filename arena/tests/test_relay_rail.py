@@ -39,8 +39,20 @@ _TEMP = next(t for t in _CARD.temp_points if t.test_point == "tp_reg_temp")
 # issue #451: `high_c` is now a PUBLIC field in every `start_run`'s own
 # `temp_points` (the card's documented limit, same category as `rails`'
 # already-public `nominal_v`/`tol_pct`) -- dropped from this list, since it
-# never named the fault itself. `shift_c` (the fault's own internal
-# amount) stays banned.
+# never named the fault itself.
+# issue #461 (CTO review, PR #465): `low_voltage`/`overheat` are now public
+# too, as the fixed vocabulary of possible answers (`task.answer.values`,
+# the same 4 names on every run regardless of the seed) -- but these words
+# STAY in this list, not dropped: this list guards every string this test
+# checks, and most of those (the state file, the sim log) have no business
+# naming ANY fault, drawn or not. Dropping them here would have silently
+# let a real leak through -- a per-run `"fault": "overheat"` field, say --
+# anywhere else this list is checked. Only `start_run`'s own result needs
+# the exception, because it now legitimately carries the vocabulary; that
+# one case pops `result["task"]["answer"]` before checking (see below).
+# `shift_v`/`shift_c` (the fault's own internal magnitude, which DOES vary
+# by seed and WOULD leak which one was drawn) were never public and stay
+# banned everywhere.
 _FAULT_WORDS = ("low_voltage", "overheat", "shift_v", "shift_c")
 
 
@@ -113,6 +125,14 @@ def test_start_run_never_leaks_the_fault_or_its_vocabulary(tmp_path: Path) -> No
         seed = _seed_for(fault_id)
         state_dir = tmp_path / fault_id
         result = start_run(str(RELAY_RAIL_TASK), seed=seed, state_dir=state_dir)
+        # issue #461 (CTO review, PR #465): `task.answer` is the one
+        # legitimate exception -- the fixed, seed-independent vocabulary of
+        # POSSIBLE answers, not the one fault this run drew. Checked
+        # separately below, popped before the blanket scan so dropping
+        # `low_voltage`/`overheat` from `_FAULT_WORDS` was never needed.
+        answer = result["task"].pop("answer")
+        assert answer == {"kind": "enum",
+                          "values": ["ok", "low_voltage", "open", "overheat"]}
         text = json.dumps(result)
         for word in _FAULT_WORDS:
             assert word not in text, (fault_id, word, text)

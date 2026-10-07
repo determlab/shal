@@ -105,9 +105,27 @@ def test_readme_never_names_the_default_seed_fault() -> None:
     default_fault = pick_fault(loaded.card, loaded.task.seed)
     text = _README.read_text(encoding="utf-8")
 
+    # issue #461 (CTO review on #465, round 2): `start_run`'s own output now
+    # always carries the task's full answer vocabulary (`task.answer.values`,
+    # the same fixed names on every seed), and the README's example pastes
+    # it. That line legitimately contains `noise` — rail-3v3's own default-
+    # seed fault, and exactly the word this scan exists to reject. The
+    # vocabulary is public data, not a per-run leak (same exception
+    # `test_relay_rail.py` makes for `task.answer`), so it's popped out of
+    # the body before the scan and checked separately, rather than
+    # weakening the scan itself for every OTHER word it still has to catch.
+    answer_line_re = re.compile(r'\s*"answer":\s*(\{[^}]*\}),?\n?')
+
     for lang, body in _FENCED_BLOCK_RE.findall(text):
         if lang == "bash":
             continue
+        match = answer_line_re.search(body)
+        if match is not None:
+            answer = json.loads(match.group(1))
+            assert answer["values"] == list(loaded.task.question.answer.values), (
+                "README's pasted answer.values no longer matches "
+                "rail-3v3.yaml's own question.answer.values")
+            body = answer_line_re.sub("", body)
         assert default_fault not in body, (
             f"README pastes {default_fault!r} as output — the fault "
             "rail-3v3.yaml's own default seed picks; run the walkthrough "
