@@ -64,12 +64,26 @@ def test_noise_varies_the_reading_around_nominal() -> None:
         assert abs(r - _RAIL.nominal_v) <= ripple / 2 + 1e-9
 
 
-def test_open_makes_the_instrument_unreachable() -> None:
-    # direct driver call, not hal.call_tool: the tool-use surface catches and
-    # reports a HopError rather than raising it, same as runner.take_measurement
+def test_open_is_an_open_circuit_not_an_unreachable_instrument() -> None:
+    # issue #477: direct driver call, not hal.call_tool (the tool-use surface
+    # would catch a HopError rather than raise it) -- `open` answers, ~0 V
     seed = _seed_for("open")
     realized = fault_mod.realized_fault(_CARD, seed)
     topology = fault_mod.harness_for_run(_CASE, rail=_RAIL, realized=realized, seed=seed)
+    assert "fault" not in topology["root"]["bench"]["children"]["unit"]
+    with load(topology) as hal:
+        node = next(n for root in hal._roots for n in root.walk() if n.id == "unit")
+        reading = node.driver.measure_voltage()
+    assert abs(reading) < 0.05 * _RAIL.nominal_v
+
+
+def test_unplugged_dmm_is_still_unreachable(monkeypatch: pytest.MonkeyPatch) -> None:
+    # a real broken link (SHAL_SIM_UNPLUG) still raises HopError -- an error,
+    # never the `open` card fault
+    seed = _seed_for("open")
+    realized = fault_mod.realized_fault(_CARD, seed)
+    topology = fault_mod.harness_for_run(_CASE, rail=_RAIL, realized=realized, seed=seed)
+    monkeypatch.setenv("SHAL_SIM_UNPLUG", "unit")
     with pytest.raises(HopError), load(topology) as hal:
         node = next(n for root in hal._roots for n in root.walk() if n.id == "unit")
         node.driver.measure_voltage()

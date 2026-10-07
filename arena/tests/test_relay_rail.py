@@ -16,7 +16,7 @@ from pathlib import Path
 import pytest
 
 from shal_arena import fault as fault_mod
-from shal_arena.errors import CheckCouldNotRun, MeasurementFailed
+from shal_arena.errors import CheckCouldNotRun
 from shal_arena.loader import load_task
 from shal_arena.runner import answer, call_op, drive_input, start_run, take_measurement
 from shal_arena.simlog import SimLog
@@ -74,12 +74,8 @@ def test_each_fault_is_detectable_and_answerable(fault_id: str, tmp_path: Path) 
     result = start_run(str(RELAY_RAIL_TASK), seed=seed, state_dir=state_dir)
     run_id = result["run_id"]
 
-    try:
-        dmm_reading = take_measurement(run_id, "dmm0", PASSING_DMM_DRIVER,
-                                       state_dir=state_dir)["reading"]
-    except MeasurementFailed:
-        assert fault_id == "open", f"seed {seed}: dmm0 failed for fault {fault_id!r}"
-        dmm_reading = None
+    dmm_reading = take_measurement(run_id, "dmm0", PASSING_DMM_DRIVER,
+                                   state_dir=state_dir)["reading"]
 
     temp_reading = take_measurement(run_id, "temp0", PASSING_TEMP_DRIVER,
                                     state_dir=state_dir)["reading"]
@@ -90,8 +86,8 @@ def test_each_fault_is_detectable_and_answerable(fault_id: str, tmp_path: Path) 
     elif fault_id == "low_voltage":
         assert dmm_reading != pytest.approx(_RAIL.nominal_v, abs=1e-6)
         assert temp_reading == pytest.approx(_TEMP.nominal_c, abs=0.01)
-    elif fault_id == "open":
-        assert dmm_reading is None
+    elif fault_id == "open":  # issue #477: an open circuit still answers, ~0 V
+        assert abs(dmm_reading) < 0.05 * _RAIL.nominal_v
         assert temp_reading == pytest.approx(_TEMP.nominal_c, abs=0.01)
     else:  # overheat: temperature is high while the rail still reads nominal
         assert dmm_reading == pytest.approx(_RAIL.nominal_v, abs=1e-6)

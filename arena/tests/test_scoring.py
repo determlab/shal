@@ -218,16 +218,11 @@ def test_correct_ok_answer_is_not_counted_as_a_caught_fault(tmp_path: Path) -> N
     assert out["score"]["false_fails"] == 0
 
 
-def test_open_fault_measurement_fails_but_still_counts_as_measured(tmp_path: Path) -> None:
-    """The `open` fault makes the instrument genuinely unreachable
-    (`fault.harness_for_run` extends `fault: unplugged`). `take_measurement`
-    reports that live, to the player, as `MeasurementFailed` — but it still
-    writes the one neutral ``measure`` marker to the sim log BEFORE the read
-    (CTO review on #322, round 2): disqualification checks for that marker,
-    not for a successful ``query``, precisely so a fault that makes every
-    read fail by design doesn't also make it impossible to ever be credited
-    for a correct answer. The marker is identical whether the read that
-    follows succeeds or raises, so its presence alone names nothing."""
+def test_open_fault_reads_near_zero_and_scores_as_a_caught_card_fault(tmp_path: Path) -> None:
+    """issue #477: `open` is an open circuit on the card -- the DMM still
+    answers, about 0 V. Answered `open`, it is a caught card fault
+    (`faults_caught: 1`), never `error_fail_correct` (CTO comment on #477:
+    that one is a real transport error only)."""
     state_dir = tmp_path / "state"
     seed = _seed_for("open")
     result = start_run(SAMPLE_TASK, seed=seed, state_dir=state_dir)
@@ -236,12 +231,36 @@ def test_open_fault_measurement_fails_but_still_counts_as_measured(tmp_path: Pat
     check = check_instrument_driver(run_id, "dmm0", PASSING_DMM_DRIVER, state_dir=state_dir)
     assert check["passed"] is True  # the ADK check is about driver correctness, not the card
 
-    with pytest.raises(MeasurementFailed):
-        take_measurement(run_id, "dmm0", PASSING_DMM_DRIVER, state_dir=state_dir)
+    reading = take_measurement(run_id, "dmm0", PASSING_DMM_DRIVER,
+                               state_dir=state_dir)["reading"]
+    assert abs(reading) < 0.05 * 3.3
 
     out = answer(run_id, "open", state_dir=state_dir)
 
     assert out["correct"] is True
     assert out["disqualified"] is False
     assert out["score"]["faults_caught"] == 1
-    assert out["score"]["error_fail_correct"] == 1
+    assert out["score"]["error_fail_correct"] == 0
+
+
+def test_failed_measurement_still_counts_as_measured(
+        tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """A DMM that never answers (a real unplug, `SHAL_SIM_UNPLUG`) makes
+    `take_measurement` raise `MeasurementFailed` live -- but it still
+    writes the one neutral ``measure`` marker to the sim log BEFORE the read
+    (CTO review on #322, round 2): disqualification checks for that marker,
+    not for a successful ``query``. The marker is identical whether the read
+    that follows succeeds or raises, so its presence alone names nothing."""
+    state_dir = tmp_path / "state"
+    seed = _seed_for("ok")
+    run_id = start_run(SAMPLE_TASK, seed=seed, state_dir=state_dir)["run_id"]
+
+    monkeypatch.setenv("SHAL_SIM_UNPLUG", "unit")  # the dmm harness's node id
+    with pytest.raises(MeasurementFailed):
+        take_measurement(run_id, "dmm0", PASSING_DMM_DRIVER, state_dir=state_dir)
+    monkeypatch.delenv("SHAL_SIM_UNPLUG")
+
+    out = answer(run_id, "ok", state_dir=state_dir)
+
+    assert out["disqualified"] is False
+    assert out["score"]["error_fail_correct"] == 0

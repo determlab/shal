@@ -92,14 +92,24 @@ class BenchDmm1(Driver):
 registry.register(BenchDmm1, override=True)
 '''
 
+#: issue #477: a rail reading below this fraction of its nominal is an open
+#: circuit (``open``), never ``low_voltage``.
+OPEN_FRACTION = 0.05
+
+
 def _diagnose(rail, reading: float | None, allowed: set[str]) -> str:
     """A guess from the measurement alone: the rail's own documented nominal
     voltage and tolerance (never the hidden fault, which this process never
-    reads). A reading outside tolerance but not clearly low or high falls
-    back to ``noise`` when the task even offers it -- this can still be the
-    wrong fault name; that is the player's job to get right, not this
-    demo's."""
+    reads). A reading near 0 V is ``open`` (issue #477: an open circuit on
+    the card still answers). No reading at all (``None``: the read itself
+    failed, a broken link to the bench) is ``error`` -- never ``open``,
+    never a card fault. A reading outside tolerance but not clearly low or
+    high falls back to ``noise`` when the task even offers it -- this can
+    still be the wrong fault name; that is the player's job to get right,
+    not this demo's."""
     if reading is None:
+        return "error"
+    if abs(reading) < OPEN_FRACTION * rail.nominal_v and "open" in allowed:
         return "open"
     band = rail.nominal_v * rail.tol_pct / 100
     delta = reading - rail.nominal_v
@@ -112,6 +122,16 @@ def _diagnose(rail, reading: float | None, allowed: set[str]) -> str:
     if "noise" in allowed:
         return "noise"
     return "ok"
+
+
+def _failure_cause(e: BaseException) -> str:
+    """``transport`` when a failed measurement came from shal's own "the hop
+    never completed" (`HopError`/`HopTimeout`), the same split
+    `runner.take_measurement` logs; ``driver`` otherwise."""
+    import shal
+
+    hop = (shal.errors.HopError, shal.errors.HopTimeout)
+    return "transport" if isinstance(e, hop) or isinstance(e.__cause__, hop) else "driver"
 
 
 @contextlib.contextmanager
@@ -248,8 +268,13 @@ def _run_arena_task(ctx: dict[str, Any], level: str) -> dict[str, Any]:
         try:
             reading = take_measurement(run_id, str(probe.address), str(ctx["dmm_driver"]),
                                        state_dir=state_dir)["reading"]
-        except MeasurementFailed:
-            reading = None
+        except MeasurementFailed as e:
+            # issue #477: no answer from the instrument is a broken link to
+            # the bench -- `error`, never a card fault, so nothing is answered
+            ctx["arena_runs"][level] = (run_id, state_dir)
+            return {"run_id": run_id, "reading": None, "given": None,
+                    "verdict": "error", "cause": _failure_cause(e), "message": str(e),
+                    "correct": False, "disqualified": False}
         given = _diagnose(rail, reading, set(task.question.answer.values))
 
         answer_doc = answer(run_id, given, state_dir=state_dir)
