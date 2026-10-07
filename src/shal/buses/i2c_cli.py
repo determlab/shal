@@ -10,7 +10,7 @@ from typing import Any
 from .. import registry
 from ..driver import Driver
 from ..errors import HopError, LoadError
-from ..log import bus_logger, current_txn, redact_url
+from ..log import bus_logger, current_txn, record_exchange, redact_url
 from ..node import Node
 from ..transport import ByteTransport, CommandTransport, Op, Read, Transport, Write
 
@@ -97,4 +97,5 @@ class I2cCliBus(Driver, Transport, ByteTransport):
                                txn=current_txn.get(), delivered="unknown")
             self.log.debug("txn %s", op_summary(ops), event="txn",
                            addr=f"0x{addr:02x}")
+            record_exchange("i2c_cli", self.host.path, addr, ops, result)
             return result
