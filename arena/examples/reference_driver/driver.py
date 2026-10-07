@@ -44,4 +44,7 @@ class ReferencePsuDriver(Driver):
         self.bus.exchange(self.addr, {"scpi": f"OUTP {'ON' if on else 'OFF'}"})
 
 
-registry.register(ReferencePsuDriver)
+# issue #407: override=True -- see minimal_dmm_driver.py's own comment on
+# this line: a second in-process call re-execs this file fresh, and without
+# override=True the registry can't resolve the resulting 2 candidates.
+registry.register(ReferencePsuDriver, override=True)

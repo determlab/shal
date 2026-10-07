@@ -25,4 +25,10 @@ class MinimalDmmDriver(Driver):
         return float(reply["reply"])
 
 
-registry.register(MinimalDmmDriver)
+# issue #407: `override=True` -- `_import_driver_file` (runner.py) re-execs
+# this file fresh on every call, with no module cache, so a SECOND call in
+# the same process (e.g. one caller measuring twice) registers a brand new,
+# logically-identical class object each time. Without `override=True` the
+# registry treats that as a second, ambiguous candidate for the same
+# `compatible` and the next call fails to resolve it at all.
+registry.register(MinimalDmmDriver, override=True)
