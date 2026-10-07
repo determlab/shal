@@ -91,6 +91,11 @@ class Tile:
     case: str
     passed: bool
     checked_at: str
+    # issue #487: "agent", or "reference-copy" when the driver file this
+    # instrument was played with is a copy of the packaged reference driver
+    # (`origin.py`). None on a state file written before #487.
+    driver_origin: str | None = None
+    similarity: float | None = None
 
 
 @dataclass
@@ -113,6 +118,9 @@ class RunState:
     card_power_on: bool = True
     # issue #325: addresses of DMMs whose current-input fuse has burned.
     fuses_blown: list[str] = field(default_factory=list)
+    # issue #487: per address, the driver origin `check`/`measure`/`call`
+    # found: {"driver_origin": "agent"|"reference-copy", "similarity": x}.
+    driver_origins: dict[str, dict[str, Any]] = field(default_factory=dict)
 
 
 @contextlib.contextmanager
@@ -344,9 +352,33 @@ class RunStore:
     def set_tile(self, run_id: str, address: str, *, case: str, passed: bool) -> RunState:
         with _locked_state_file(self._public_path(run_id)):
             state = self.load_open(run_id)
+            origin = state.driver_origins.get(str(address), {})
             state.tiles[str(address)] = Tile(case=case, passed=passed,
                                              checked_at=time.strftime("%Y-%m-%dT%H:%M:%SZ",
-                                                                       time.gmtime()))
+                                                                       time.gmtime()),
+                                             driver_origin=origin.get("driver_origin"),
+                                             similarity=origin.get("similarity"))
+            self._write_public(state)
+        return state
+
+    def set_driver_origin(self, run_id: str, address: str, origin: dict[str, Any]) -> RunState:
+        """issue #487: record where the driver file used on ``address`` came
+        from, in the run state and on that address's tile (if lit). Only that
+        address is marked. Once a reference copy was used on an instrument,
+        it stays marked for the run: a later call with another file must not
+        relabel what was already played with the copy."""
+        with _locked_state_file(self._public_path(run_id)):
+            state = self.load_open(run_id)
+            prior = state.driver_origins.get(str(address))
+            if prior is not None and prior["driver_origin"] == "reference-copy" \
+                    and origin["driver_origin"] != "reference-copy":
+                origin = prior
+            state.driver_origins[str(address)] = {"driver_origin": origin["driver_origin"],
+                                                  "similarity": origin["similarity"]}
+            tile = state.tiles.get(str(address))
+            if tile is not None:
+                tile.driver_origin = origin["driver_origin"]
+                tile.similarity = origin["similarity"]
             self._write_public(state)
         return state
 

@@ -238,7 +238,9 @@ def run_payload(run_id: str, *, state_dir: str | Path = DEFAULT_STATE_DIR) -> di
         for t in loaded.card.temp_points if t.high_c is not None
     ]
     tiles = {
-        addr: {"case": t.case, "passed": t.passed, "checked_at": t.checked_at}
+        addr: {"case": t.case, "passed": t.passed, "checked_at": t.checked_at,
+               # issue #487: "agent" or "reference-copy" (None before #487)
+               "driver_origin": t.driver_origin, "similarity": t.similarity}
         for addr, t in state.tiles.items()
     }
     closed = state.status == "closed"
@@ -267,6 +269,8 @@ def run_payload(run_id: str, *, state_dir: str | Path = DEFAULT_STATE_DIR) -> di
         "rails": rails,
         "temp_points": temp_points,
         "tiles": tiles,
+        # issue #487: per address, where the driver played with came from
+        "driver_origins": {addr: dict(o) for addr, o in state.driver_origins.items()},
         "card": {"applied": dict(state.card_applied), "destroyed": state.card_destroyed,
                 "power_on": state.card_power_on},
         "timeline": _timeline(run_id, store),

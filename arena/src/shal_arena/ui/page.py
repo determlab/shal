@@ -585,7 +585,11 @@ function renderDriverCode(payload) {
     const details = document.createElement("details");
     details.className = "driver-code";
     const summary = document.createElement("summary");
-    summary.textContent = `The driver the agent wrote for the ${name}, ${d.lines} lines`;
+    // issue #487: a driver copied from the packaged reference driver says
+    // so, in place of "The driver the agent wrote" (textContent, as above).
+    summary.textContent = d.driver_origin === "reference-copy"
+      ? `The driver for the ${name}, copied from the reference driver, ${d.lines} lines`
+      : `The driver the agent wrote for the ${name}, ${d.lines} lines`;
     const pre = document.createElement("pre");
     pre.textContent = d.code;
     details.appendChild(summary);

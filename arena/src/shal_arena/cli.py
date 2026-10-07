@@ -41,6 +41,7 @@ from .bench import (
 )
 from .errors import ArenaError
 from .loader import list_tasks, resolve_task
+from .origin import driver_origin_any_case
 from .replay.card import build_result_card
 from .replay.rack import build_setup_yaml, render_rack_page
 from .runner import answer as _answer
@@ -56,9 +57,12 @@ def _cmd_demo(args: argparse.Namespace) -> int:
 
 
 def _parse_driver_args(specs: list[str]) -> dict[str, dict[str, Any]]:
-    """`--driver NAME=PATH` (issue #406 follow-up) -> `{name: {lines, code}}`,
-    read once at CLI time -- never a run's own file, so this lives here, not
-    in `ui/data.py` (whose one rule is "only this run's own files")."""
+    """`--driver NAME=PATH` (issue #406 follow-up) -> `{name: {lines, code,
+    driver_origin, similarity}}`, read once at CLI time -- never a run's own
+    file, so this lives here, not in `ui/data.py` (whose one rule is "only
+    this run's own files"). issue #487: `driver_origin` compares the file
+    with the closest packaged reference driver (`origin.py`) -- a NAME is a
+    label, not an instrument, so there is no one case to pick."""
     drivers: dict[str, dict[str, Any]] = {}
     for spec in specs:
         name, sep, path = spec.partition("=")
@@ -66,7 +70,8 @@ def _parse_driver_args(specs: list[str]) -> dict[str, dict[str, Any]]:
             raise ArenaError(f"--driver {spec!r} is not NAME=PATH",
                              fix="pass --driver psu=psu_driver.py (one '=', the name first)")
         code = Path(path).read_text(encoding="utf-8")
-        drivers[name] = {"lines": len(code.splitlines()), "code": code}
+        drivers[name] = {"lines": len(code.splitlines()), "code": code,
+                         **driver_origin_any_case(code)}
     return drivers
 
 
