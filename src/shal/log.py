@@ -251,12 +251,27 @@ def record_exchange(bus_family: str, path: str, address: Any, request: Any,
     cannot forget it, the way 2 of 5 did when each bus redacted for
     itself: `address` through `redact_url` (it is `${ENV}`-resolved, same
     as every other log line these buses already clean), `request`/
-    `response` through `_clean_payload`."""
+    `response` through `_clean_payload`.
+
+    issue #466: the sink is someone else's code, called from inside a real
+    bus call -- a bug in it (or in an observer's own storage) must never
+    fail or change that call. `sink(...)` is the only thing guarded: the
+    bus's own result, or its own exception, is unaffected either way, and
+    a broken sink is one WARNING, not a crash, with no exchange data in
+    the message (it may itself be unsanitized if the sink raised before
+    finishing with it)."""
     sink = _exchange_sink.get()
     if sink is None:
         return
-    sink(Exchange(bus_family=bus_family, path=path, address=redact_url(str(address)),
-                 request=_clean_payload(request), response=_clean_payload(response)))
+    exchange = Exchange(bus_family=bus_family, path=path, address=redact_url(str(address)),
+                        request=_clean_payload(request), response=_clean_payload(response))
+    try:
+        sink(exchange)
+    except (KeyboardInterrupt, SystemExit):
+        raise
+    except Exception:
+        logging.getLogger("shal.log").warning(
+            "exchange_sink raised; the bus call it observed is unaffected", exc_info=True)
 
 
 _RESERVED_KWARGS = frozenset({"exc_info", "stack_info", "stacklevel", "extra"})
