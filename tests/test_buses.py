@@ -535,6 +535,14 @@ _URL_TABLE = [
     ("http://u:p;w@h", "http://h"),
     ("http://u:pa)ss@h:80", "http://h:80"),
     ("http://bob:it's@h/", "http://h/"),
+    # CTO review round 5 (security): the match must stop the instant a new
+    # scheme:// begins, so a second URL right after the first (no
+    # whitespace between them, as in a SCPI comma-list reply) gets its own
+    # redaction instead of being swallowed into the first match's path.
+    ("http://a:b@h1,http://c:d@h2", "http://h1,http://h2"),
+    ("http://h1/x,http://c:d@h2", "http://h1/x,http://h2"),
+    ("a=http://u:p@h;b=http://c:d@k", "a=http://h;b=http://k"),
+    ("http://h:80/;http://u:p@x", "http://h:80/;http://x"),
 ]
 
 
