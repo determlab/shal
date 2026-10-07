@@ -602,6 +602,7 @@ class Driver:
         if routed and "via" in inspect.signature(fn).parameters:
             raise _LoadError(f"{self.node.path}: op {op} has a parameter named via, "
                              f"which pins a route on a node with routes; rename it")
+
         @functools.wraps(fn)
         def call(*args, **kwargs):
             from .errors import LimitError
