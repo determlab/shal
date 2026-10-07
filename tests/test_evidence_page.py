@@ -234,7 +234,7 @@ def test_three_consecutive_daily_passing_scheduled_runs_meet_the_gate(tmp_path):
     out = tmp_path / "evidence.html"
     assert evidence_page.main(
         [str(ev_dir), "--out", str(out), "--history", str(history),
-         "--event", "schedule", "--date", _TODAY]) == 0
+         "--event", "schedule", "--date", _TODAY, "--expect-gating", "4"]) == 0
     page = out.read_text(encoding="utf-8")
     assert "gate met" in page
     # CTO review on #467 nit: the "this run: N/M" line stays even when met.
@@ -262,7 +262,7 @@ def test_todays_own_run_must_qualify_too_not_only_history(tmp_path):
 
     out = tmp_path / "evidence.html"
     evidence_page.main([str(ev_dir), "--out", str(out), "--history", str(history),
-                        "--event", "schedule", "--date", _TODAY])
+                        "--event", "schedule", "--date", _TODAY, "--expect-gating", "4"])
     page = out.read_text(encoding="utf-8")
     assert "gate met" not in page
     assert "day 1 of 3" in page
@@ -282,7 +282,7 @@ def test_todays_own_event_must_be_schedule_too(tmp_path):
 
     out = tmp_path / "evidence.html"
     evidence_page.main([str(ev_dir), "--out", str(out), "--history", str(history),
-                        "--event", "workflow_dispatch", "--date", _TODAY])
+                        "--event", "workflow_dispatch", "--date", _TODAY, "--expect-gating", "4"])
     page = out.read_text(encoding="utf-8")
     assert "gate met" not in page
     assert "day 1 of 3" in page
@@ -310,7 +310,7 @@ def test_a_failed_or_retried_or_manual_run_in_the_3_breaks_the_gate(tmp_path, ba
 
     out = tmp_path / "evidence.html"
     evidence_page.main([str(ev_dir), "--out", str(out), "--history", str(history),
-                        "--event", "schedule", "--date", _TODAY])
+                        "--event", "schedule", "--date", _TODAY, "--expect-gating", "4"])
     page = out.read_text(encoding="utf-8")
     assert "gate met" not in page
     assert "this run: 4/4 gating cells pass (day 1 of 3)" in page
@@ -330,7 +330,7 @@ def test_a_duplicate_date_in_history_breaks_the_gate(tmp_path):
 
     out = tmp_path / "evidence.html"
     evidence_page.main([str(ev_dir), "--out", str(out), "--history", str(history),
-                        "--event", "schedule", "--date", _TODAY])
+                        "--event", "schedule", "--date", _TODAY, "--expect-gating", "4"])
     page = out.read_text(encoding="utf-8")
     assert "gate met" not in page
 
@@ -349,7 +349,7 @@ def test_a_one_day_gap_in_history_breaks_the_gate(tmp_path):
 
     out = tmp_path / "evidence.html"
     evidence_page.main([str(ev_dir), "--out", str(out), "--history", str(history),
-                        "--event", "schedule", "--date", _TODAY])
+                        "--event", "schedule", "--date", _TODAY, "--expect-gating", "4"])
     page = out.read_text(encoding="utf-8")
     assert "gate met" not in page
     # the gap is 2 days back, so yesterday (day 2) still counted
@@ -371,7 +371,7 @@ def test_a_repeated_run_id_in_history_breaks_the_gate(tmp_path):
 
     out = tmp_path / "evidence.html"
     evidence_page.main([str(ev_dir), "--out", str(out), "--history", str(history),
-                        "--event", "schedule", "--date", _TODAY])
+                        "--event", "schedule", "--date", _TODAY, "--expect-gating", "4"])
     page = out.read_text(encoding="utf-8")
     assert "gate met" not in page
     assert "day 2 of 3" in page
@@ -547,7 +547,7 @@ def test_a_real_string_attempt_one_meets_the_gate(tmp_path):
     out = tmp_path / "evidence.html"
     assert evidence_page.main(
         [str(ev_dir), "--out", str(out), "--history", str(history),
-         "--event", "schedule", "--date", _TODAY]) == 0
+         "--event", "schedule", "--date", _TODAY, "--expect-gating", "4"]) == 0
     page = out.read_text(encoding="utf-8")
     assert "gate met" in page
 
@@ -614,6 +614,99 @@ def test_a_partial_download_does_not_meet_the_gate(tmp_path):
     assert "gate met" not in page
 
 
+# --------------------------------------------------------------------------- #
+# CTO review on #467 round 4: --expect-gating being OPTIONAL left the
+# unsafe answer as the default -- a partial download with no flag at all
+# still reached "gate met".
+# --------------------------------------------------------------------------- #
+
+def test_a_partial_download_with_no_expect_gating_flag_does_not_meet_the_gate(tmp_path):
+    """must-fix 1: a real 4-cell matrix with only 1 cell present, 2 good
+    history days, and NO `--expect-gating` at all used to give
+    `this run: 1/1 gating cells pass (day 3 of 3) — gate met`."""
+    ev_dir = tmp_path / "ev"
+    ev_dir.mkdir()
+    _write_cell(ev_dir, "evidence-ubuntu-latest-3.10", _sample())
+    history = tmp_path / "runs.json"
+    history.write_text(_good_history(), encoding="utf-8")
+
+    out = tmp_path / "evidence.html"
+    proc = _run_with_history(ev_dir, out, history)  # no --expect-gating
+    assert proc.returncode == 0
+    page = out.read_text(encoding="utf-8")
+    assert "gate met" not in page
+    assert "day 1 of 3" in page
+
+
+def test_a_full_matrix_with_no_expect_gating_flag_is_capped_at_day_1(tmp_path):
+    """The same cap applies even to a real, fully-passing 4-cell matrix:
+    with no `--expect-gating`, today can anchor or extend a streak no
+    further than day 1 -- the same treatment a missing `--event`/`--date`
+    already gets."""
+    ev_dir = tmp_path / "ev"
+    ev_dir.mkdir()
+    _four_cell_passing_matrix(ev_dir)
+    history = tmp_path / "runs.json"
+    history.write_text(_good_history(), encoding="utf-8")
+
+    out = tmp_path / "evidence.html"
+    evidence_page.main([str(ev_dir), "--out", str(out), "--history", str(history),
+                        "--event", "schedule", "--date", _TODAY])  # no --expect-gating
+    page = out.read_text(encoding="utf-8")
+    assert "gate met" not in page
+    assert "day 1 of 3" in page
+
+
+def test_expect_gating_below_1_is_rejected():
+    proc = subprocess.run(
+        [sys.executable, str(SCRIPT), "--help"], capture_output=True, text=True, check=False)
+    assert "--expect-gating" in proc.stdout
+
+
+def test_expect_gating_zero_or_negative_errors(tmp_path):
+    ev_dir = tmp_path / "ev"
+    ev_dir.mkdir()
+    _four_cell_passing_matrix(ev_dir)
+    out = tmp_path / "evidence.html"
+    for bad in ("0", "-1"):
+        proc = subprocess.run(
+            [sys.executable, str(SCRIPT), str(ev_dir), "--out", str(out),
+             "--expect-gating", bad],
+            capture_output=True, text=True, check=False)
+        assert proc.returncode == 2, proc.stderr
+        assert "--expect-gating" in proc.stderr
+
+
+def test_a_mismatched_gating_count_shows_expected_n_on_the_page(tmp_path):
+    """nit: the page used to show `1/1 gating cells pass (day 0 of 3)` with
+    no clue why -- it now names the expected count."""
+    ev_dir = tmp_path / "ev"
+    ev_dir.mkdir()
+    _write_cell(ev_dir, "evidence-ubuntu-latest-3.10", _sample())
+    out = tmp_path / "evidence.html"
+    evidence_page.main([str(ev_dir), "--out", str(out), "--expect-gating", "4"])
+    page = out.read_text(encoding="utf-8")
+    assert "this run: 1/1 (expected 4) gating cells pass" in page
+
+
+def test_history_run_id_unknown_is_rejected_the_same_as_todays_own(tmp_path):
+    """nit: `run_id: "unknown"` (story.py's own value outside CI) was
+    rejected only in `today_entry`, never in a `--history` entry itself."""
+    ev_dir = tmp_path / "ev"
+    ev_dir.mkdir()
+    _write_cell(ev_dir, "evidence-ubuntu-latest-3.10", _sample())
+    bad_history = tmp_path / "runs.json"
+    bad_history.write_text(json.dumps([_qualifying(_DAY_BEFORE, "unknown")]),
+                           encoding="utf-8")
+    out = tmp_path / "evidence.html"
+    proc = subprocess.run(
+        [sys.executable, str(SCRIPT), str(ev_dir), "--out", str(out),
+         "--history", str(bad_history)],
+        capture_output=True, text=True, check=False)
+    assert proc.returncode == 2
+    assert "unknown" in proc.stderr
+
+
 def test_run_id_unknown_never_anchors_a_streak(tmp_path):
     """nit: story.py's own run_id outside CI is the literal string
     "unknown" -- it must not be treated as a real, consistent run_id."""
@@ -667,6 +760,6 @@ def test_stdout_names_gate_met_in_plain_text(tmp_path, capsys):
     out = tmp_path / "evidence.html"
     assert evidence_page.main(
         [str(ev_dir), "--out", str(out), "--history", str(history),
-         "--event", "schedule", "--date", _TODAY]) == 0
+         "--event", "schedule", "--date", _TODAY, "--expect-gating", "4"]) == 0
     printed = capsys.readouterr().out
     assert "day 3 of 3 — gate met" in printed

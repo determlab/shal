@@ -194,9 +194,13 @@ def load_history(path: Path) -> list[dict[str, Any]]:
         if not isinstance(entry["date"], str) or not _is_iso_date(entry["date"]):
             raise _history_error(path, f'"date" must be "YYYY-MM-DD", got '
                                        f'{entry["date"]!r}', index=i)
-        if not isinstance(entry["run_id"], str) or not entry["run_id"]:
-            raise _history_error(path, f'"run_id" must be a non-empty string, got '
-                                       f'{entry["run_id"]!r}', index=i)
+        # round 4 nit: "unknown" (story.py's own value outside CI) is
+        # rejected the same way here as in `today_entry` -- the same rule
+        # in both places, not just one.
+        if (not isinstance(entry["run_id"], str) or not entry["run_id"]
+                or entry["run_id"] == "unknown"):
+            raise _history_error(path, f'"run_id" must be a non-empty string, not "unknown", '
+                                       f'got {entry["run_id"]!r}', index=i)
         if not isinstance(entry["event"], str):
             raise _history_error(path, f'"event" must be a string, got '
                                        f'{entry["event"]!r}', index=i)
@@ -359,14 +363,21 @@ def _render_header(cells: list[dict[str, Any]]) -> str:
             f'generated {generated}. Gate rule: <em>{html.escape(GATE_RULE)}</em></p>')
 
 
-def _render_summary(counts: dict[str, Any], day: int, gate_met: bool) -> str:
+def _render_summary(counts: dict[str, Any], day: int, gate_met: bool,
+                    expect_gating: int | None = None) -> str:
     gating = counts["gating"]
     # shal#402: "gate met" is produced from the 3-daily-run check alone
     # (`gate_status`, via `day`/`gate_met` here) -- never from this run's
     # own cell counts. CTO review on #467 nit: keep the "this run: N/M"
     # line even when the gate is met, so the page never drops this run's
     # own numbers just because the streak reached 3.
-    this_run = (f"this run: {gating['passed']}/{gating['cells']} gating cells "
+    #
+    # round 4 nit: when the count does not match `--expect-gating`, say so
+    # -- otherwise a reader sees "day 0 of 3" with no clue why a run that
+    # looks all-green isn't day 1.
+    expected = (f" (expected {expect_gating})"
+               if expect_gating is not None and gating["cells"] != expect_gating else "")
+    this_run = (f"this run: {gating['passed']}/{gating['cells']}{expected} gating cells "
                f"pass (day {day} of 3)")
     verdict = f"{this_run} — gate met" if gate_met else this_run
     return (
@@ -445,7 +456,15 @@ def today_entry(cells: list[dict[str, Any]], counts: dict[str, Any], *,
     some of the real gating cells present, the rest never fetched) still
     reads as "all of them passed". `run_id == "unknown"` (`story.py`'s own
     value outside CI, round 3 nit) is excluded from consistency the same
-    way a missing run_id already was -- it must never anchor a streak."""
+    way a missing run_id already was -- it must never anchor a streak.
+
+    Round 4 (CTO review on PR #467) must-fix 1: `--expect-gating` being
+    OPTIONAL left the unsafe answer as the default -- a caller that forgets
+    the flag got a false "gate met" on a partial download, the exact
+    failure #402 exists to stop. `expect_gating is not None` now folds into
+    `attempt` the same way `attempt_ok`/`run_id_consistent` already do:
+    with no `--expect-gating` at all, today can anchor or extend a streak
+    no further than day 1, same as a missing `--event`/`--date`."""
     gating = counts["gating"]
     gating_cells = [c for c in cells if c["gating"]]
     gating_count_ok = gating["cells"] > 0 and (
@@ -456,15 +475,16 @@ def today_entry(cells: list[dict[str, Any]], counts: dict[str, Any], *,
     run_id_consistent = bool(run_ids) and all(
         r and r != "unknown" and r == run_ids[0] for r in run_ids)
     run_id = run_ids[0] if run_id_consistent else None
-    attempt = 1 if (attempt_ok and run_id_consistent) else 2
+    attempt = 1 if (attempt_ok and run_id_consistent and expect_gating is not None) else 2
     return {"event": event, "attempt": attempt, "gating_passed": gating_passed,
            "date": date, "run_id": run_id}
 
 
-def render_page(cells: list[dict[str, Any]], day: int, gate_met: bool) -> str:
+def render_page(cells: list[dict[str, Any]], day: int, gate_met: bool,
+                expect_gating: int | None = None) -> str:
     counts = summarize(cells)
     header = _render_header(cells)
-    summary = _render_summary(counts, day, gate_met)
+    summary = _render_summary(counts, day, gate_met, expect_gating)
     body = "".join(_render_cell(c) for c in cells)
     return ("<!doctype html><html><head><meta charset=\"utf-8\">"
             "<title>Evidence — clean-machine run</title>"
@@ -507,6 +527,11 @@ def main(argv: list[str] | None = None) -> int:
              file=sys.stderr)
         return 2
 
+    if args.expect_gating is not None and args.expect_gating < 1:
+        print(f"evidence_page.py: --expect-gating must be >= 1, got {args.expect_gating}",
+             file=sys.stderr)
+        return 2
+
     history: list[dict[str, Any]] = []
     if args.history is not None:
         try:
@@ -521,7 +546,7 @@ def main(argv: list[str] | None = None) -> int:
     day, gate_met = gate_status(
         today_entry(cells, counts, event=args.event, date=args.date,
                    expect_gating=args.expect_gating), history)
-    args.out.write_text(render_page(cells, day, gate_met), encoding="utf-8")
+    args.out.write_text(render_page(cells, day, gate_met, args.expect_gating), encoding="utf-8")
 
     if args.json:
         print(json.dumps({**counts, "day": day, "gate_met": gate_met,
