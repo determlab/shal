@@ -251,12 +251,34 @@ def record_exchange(bus_family: str, path: str, address: Any, request: Any,
     cannot forget it, the way 2 of 5 did when each bus redacted for
     itself: `address` through `redact_url` (it is `${ENV}`-resolved, same
     as every other log line these buses already clean), `request`/
-    `response` through `_clean_payload`."""
+    `response` through `_clean_payload`.
+
+    issue #466: the sink is someone else's code, called from inside a real
+    bus call -- a bug in it (or in an observer's own storage) must never
+    fail or change that call, in particular a DELIVERED write (`scpi_raw`/
+    `sim_msg` call this after the device has already acted): a raising
+    sink must never turn a change that really happened into a reported
+    failure. `sink(exchange)` is the only thing guarded -- the `Exchange`
+    above it is built, and fully sanitized, before the `try`, so a
+    redaction bug still fails loudly instead of handing the sink
+    unredacted data. The bus's own result, or its own exception, is
+    unaffected either way; `KeyboardInterrupt`/`SystemExit` are not
+    `Exception` subclasses, so they already propagate with no special
+    case. A broken sink is one WARNING naming it (never the exchange it
+    saw): `exc_info` carries only what the sink's own exception carries;
+    the exchange fields it was handed are already sanitized."""
     sink = _exchange_sink.get()
     if sink is None:
         return
-    sink(Exchange(bus_family=bus_family, path=path, address=redact_url(str(address)),
-                 request=_clean_payload(request), response=_clean_payload(response)))
+    exchange = Exchange(bus_family=bus_family, path=path, address=redact_url(str(address)),
+                        request=_clean_payload(request), response=_clean_payload(response))
+    try:
+        sink(exchange)
+    except Exception:
+        name = getattr(sink, "__qualname__", type(sink).__qualname__)
+        logging.getLogger("shal.log").warning(
+            "exchange_sink %s raised; the bus call it observed is unaffected",
+            name, exc_info=True)
 
 
 _RESERVED_KWARGS = frozenset({"exc_info", "stack_info", "stacklevel", "extra"})
