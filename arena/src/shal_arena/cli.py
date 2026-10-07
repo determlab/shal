@@ -24,9 +24,13 @@ from __future__ import annotations
 
 import argparse
 import json
+import re
 import sys
+import time
 from pathlib import Path
 from typing import Any
+
+from shal.log import redact_secret_args, redact_structured, redact_url_in_text
 
 from .bench import (
     DEFAULT_POLICY,
@@ -41,6 +45,7 @@ from .replay.card import build_result_card
 from .replay.rack import build_setup_yaml, render_rack_page
 from .runner import answer as _answer
 from .runner import call_op, check_instrument_driver, drive_input, start_run, take_measurement
+from .store import DEFAULT_STATE_DIR, RunStore
 
 
 def _cmd_demo(args: argparse.Namespace) -> int:
@@ -439,10 +444,129 @@ def _build_parser() -> argparse.ArgumentParser:
     return parser
 
 
+_RUN_LINE_RE = re.compile(r"^run (\S+):")
+
+
+class _Tee:
+    """Mirrors every write to the real stdout, flushed through immediately,
+    and keeps a copy for the cli log (#460 round 2 must-fix: `redirect_stdout`
+    held back ALL of a command's output until it returned -- `ui --no-open`
+    serves silently forever with its own `watching ...` URL line never
+    reaching anyone, `demo`'s paced narration became one silent wait then a
+    single dump, and an uncaught exception lost everything already
+    printed). A command that can never name a run (`ui`'s own commands are
+    not among #460's "write one line" set anyway) still streams normally;
+    the mirrored copy is only ever used if the command turns out loggable."""
+
+    def __init__(self, real) -> None:
+        self._real = real
+        self._parts: list[str] = []
+
+    def write(self, s: str) -> int:
+        self._parts.append(s)
+        n = self._real.write(s)
+        self._real.flush()
+        return n
+
+    def flush(self) -> None:
+        self._real.flush()
+
+    def getvalue(self) -> str:
+        return "".join(self._parts)
+
+
+def _redact_cli_line(argv: list[str], payload: dict[str, Any] | None, text: str | None
+                     ) -> tuple[list[str], dict[str, Any] | None, str | None]:
+    """issue #460: the one place every value written to ``<run>.cli.jsonl``
+    passes through before it reaches disk -- a one-line swap if the
+    redaction policy ever changes. `redact_secret_args`/`redact_url_in_text`/
+    `redact_structured` (`shal.log`) are the exact same shared rule #457's
+    bus exchange hook uses -- `redact_url_in_text`, not `redact_url`, because
+    an argv element or a printed line is free text that may merely CONTAIN a
+    URL, not a value that IS one end to end (#457 round 2: the same mistake
+    mangled unrelated `@`/`:` text and could leave a URL's userinfo in
+    place).
+
+    `text` gets the URL rule only, never the key-based secret rule
+    `redact_structured` also applies to `json` (round 2 nit): `text` is a
+    command's own PRINTED output, which has no keys to check -- the URL
+    rule is the only one that ever applied to it."""
+    argv = [redact_url_in_text(a) for a in redact_secret_args(argv)]
+    if payload is not None:
+        payload = redact_structured(payload)
+    if text is not None:
+        text = redact_url_in_text(text)
+    return argv, payload, text
+
+
+def _extract_run_id(args: argparse.Namespace, printed: str,
+                    parsed: dict[str, Any] | None) -> str | None:
+    """issue #460: most commands take a run id directly (`run_id`/`--run`
+    dest `run`); `run` itself creates one, known only once it has printed
+    (`--json`'s own `run_id` key, or the plain-text `run <id>: ...` line).
+    `tasks`/`--help`/a `run` that raised before an id ever existed write
+    nothing -- none of the three matches below fire for them."""
+    run_id = getattr(args, "run_id", None) or getattr(args, "run", None)
+    if run_id:
+        return run_id
+    if isinstance(parsed, dict) and isinstance(parsed.get("run_id"), str):
+        return parsed["run_id"]
+    m = _RUN_LINE_RE.match(printed)
+    return m.group(1) if m else None
+
+
+def _log_cli_call(state_dir: str, run_id: str, argv: list[str], exit_code: int,
+                  parsed: dict[str, Any] | None, printed: str) -> None:
+    """issue #460: one JSON line to ``<run>.cli.jsonl``, under the run's own
+    lock (`RunStore.append_cli_log`, reusing #436/#442's lock -- agents run
+    commands in parallel). `json` is the parsed `--json` output; `text` is
+    the printed text when the command ran without `--json` (``json: null``
+    then, so the window still shows the answer).
+
+    Intentional (round 2 nit): a command's own error message goes to
+    stderr, not stdout (`_report_error`), so a FAILING command run without
+    `--json` logs `text: ""` here -- only `exit_code` and `argv` say
+    anything went wrong. stderr is never mirrored into this file; `--json`
+    is the one shape that carries the error text itself, in `json.error`."""
+    text = None if parsed is not None else printed
+    argv, parsed, text = _redact_cli_line(argv, parsed, text)
+    entry = {"time": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+             "argv": argv, "exit_code": exit_code, "json": parsed, "text": text}
+    RunStore(state_dir).append_cli_log(run_id, entry)
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = _build_parser()
     args = parser.parse_args(argv)
-    return args.func(args)
+    raw_argv = list(argv if argv is not None else sys.argv[1:])
+
+    # issue #460: mirror what the command prints, to log it, without ever
+    # holding it back from the real stdout (round 2 must-fix: a buffer-then-
+    # replay here made `ui`'s live server line, and `demo`'s paced
+    # narration, silent until the command returned).
+    real_stdout = sys.stdout
+    tee = _Tee(real_stdout)
+    sys.stdout = tee
+    try:
+        exit_code = args.func(args)
+    finally:
+        sys.stdout = real_stdout
+    printed = tee.getvalue()
+
+    parsed: dict[str, Any] | None = None
+    if getattr(args, "json", False):
+        try:
+            candidate = json.loads(printed)
+        except json.JSONDecodeError:
+            candidate = None
+        if isinstance(candidate, dict):
+            parsed = candidate
+
+    run_id = _extract_run_id(args, printed, parsed)
+    if run_id is not None:
+        state_dir = getattr(args, "state_dir", DEFAULT_STATE_DIR)
+        _log_cli_call(state_dir, run_id, raw_argv, exit_code, parsed, printed)
+    return exit_code
 
 
 if __name__ == "__main__":  # pragma: no cover

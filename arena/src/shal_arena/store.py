@@ -232,6 +232,37 @@ class RunStore:
         public run json, not under a separate private path."""
         return self.dir / f"{run_id}.simlog.jsonl"
 
+    def cli_log_path(self, run_id: str) -> Path:
+        """Issue #460: one JSON line per `shal-arena` CLI call this run
+        served, next to the public run json, same as every other run file."""
+        return self.dir / f"{run_id}.cli.jsonl"
+
+    def append_cli_log(self, run_id: str, entry: dict) -> None:
+        """Appends one line (issue #460). Under the same per-run lock
+        #436/#442 already added for the state file — agents run commands in
+        parallel, and this is append-only, but a lock avoids relying on
+        O_APPEND's atomicity guarantees differing by platform.
+
+        Writes only for a run id with no path separator whose public run
+        file already exists (round 2 must-fix): `cli.py` passes the run id
+        straight from argv or a reply, unchecked, and this is the one place
+        it ever reaches a filesystem path. Without this check, `answer
+        no-such-run ok` left an orphan `no-such-run.cli.jsonl`, and
+        `answer ../escaped ok` wrote `<state_dir>/../escaped.cli.jsonl` —
+        outside the state dir entirely. A run id that fails either check
+        has no run to log against, so the entry is silently skipped rather
+        than raised: it is observability, never part of the command's own
+        result."""
+        if "/" in run_id or "\\" in run_id:
+            return
+        if not self._public_path(run_id).is_file():
+            return
+        path = self.cli_log_path(run_id)
+        with _locked_state_file(self._public_path(run_id)):
+            path.parent.mkdir(parents=True, exist_ok=True)
+            with path.open("a", encoding="utf-8") as f:
+                f.write(json.dumps(entry) + "\n")
+
     def score_path(self, run_id: str) -> Path:
         return self.dir / f"{run_id}.score.json"
 
