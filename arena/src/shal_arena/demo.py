@@ -237,9 +237,16 @@ def _run_arena_task(ctx: dict[str, Any], level: str) -> dict[str, Any]:
         rail = next(r for r in card.rails
                    if r.test_point == probe.probe.split(".", 1)[1])
 
-        state_dir = ctx["state_dir"] / level
-        run_doc = start_run(str(task_path), state_dir=state_dir)
-        run_id = run_doc["run_id"]
+        # issue #408: the "easy" run is pre-started before the step loop
+        # (so the ui hint line, printed before any step, names a real,
+        # already-open run) -- this reuses that one instead of starting a
+        # second run for the same level.
+        pre_started = ctx.get("pre_started_runs", {}).get(level)
+        if pre_started is not None:
+            run_id, state_dir = pre_started
+        else:
+            state_dir = ctx["state_dir"] / level
+            run_id = start_run(str(task_path), state_dir=state_dir)["run_id"]
         # power the card first -- an unpowered rail reads near 0 V, which a
         # tolerance-band diagnosis would (correctly, but uselessly) call
         # "low_voltage" every time
@@ -346,7 +353,7 @@ def _plain_outcome(result: dict[str, Any]) -> str:
     return "done"  # pragma: no cover - every step above sets a recognized key
 
 
-def run_story(*, pause: float, json_mode: bool) -> int:
+def run_story(*, pause: float, json_mode: bool, port: int | None = None) -> int:
     """The whole story, run once: one plain line (or one JSON document) per
     step, then the final summary. Shared by `main` below (the standalone
     entry point) and `shal-arena demo` (``cli.py``'s own `_cmd_demo`), so
@@ -371,6 +378,32 @@ def run_story(*, pause: float, json_mode: bool) -> int:
     dmm_driver.write_text(_DMM_DRIVER_SOURCE, encoding="utf-8")
     ctx: dict[str, Any] = {"state_dir": state_dir, "bench_yaml": bench_yaml,
                            "dmm_driver": dmm_driver, "arena_runs": {}}
+
+    # issue #408: start the "easy" arena task's run FIRST, before any step
+    # prints, so there is already a real, watchable run id to name in the ui
+    # hint below -- `_run_arena_task("easy", ...)` reuses this same run
+    # later instead of starting a second one (`pre_started_runs`). No other
+    # step's own behaviour changes: same order, same checks, same lines --
+    # only WHEN this one run_id is created moves earlier.
+    from .runner import start_run
+
+    with _arena_task_file("easy") as easy_task_path:
+        easy_state_dir = state_dir / "easy"
+        easy_run_id = start_run(str(easy_task_path), state_dir=easy_state_dir)["run_id"]
+    ctx["pre_started_runs"] = {"easy": (easy_run_id, easy_state_dir)}
+
+    ui_hint = f"shal-arena ui --run {easy_run_id}"
+    if port is not None:
+        ui_hint += f" --port {port}"
+    if not json_mode:
+        print(ui_hint)
+        sys.stdout.flush()
+    else:
+        # CTO ruling (issue #408 scope): --json keeps stdout as ONE JSON
+        # document -- the hint goes to stderr for a person watching the
+        # log, and into the JSON's own `ui_hint` field for a machine reader
+        # (the Agent path: "the printed line (or the ui_hint field)").
+        print(ui_hint, file=sys.stderr)
 
     steps: list[dict[str, Any]] = []
     overall_ok = True
@@ -409,9 +442,9 @@ def run_story(*, pause: float, json_mode: bool) -> int:
     record_path = ctx.get("record_path")
 
     if json_mode:
-        print(json.dumps({"ok": overall_ok, "note": FIRST_LINE, "state_dir": str(state_dir),
-                         "record_path": record_path, "card_path": card_path,
-                         "steps": steps}, indent=2, default=str))
+        print(json.dumps({"ok": overall_ok, "note": FIRST_LINE, "ui_hint": ui_hint,
+                         "state_dir": str(state_dir), "record_path": record_path,
+                         "card_path": card_path, "steps": steps}, indent=2, default=str))
     elif record_path or card_path:
         print(f"record: {record_path}")
         print(f"result card: {card_path}")
@@ -425,8 +458,13 @@ def main(argv: list[str] | None = None) -> int:
                         help="seconds to pause before each step (default: 2.0; use 0 for CI)")
     parser.add_argument("--json", action="store_true",
                         help="print one JSON document on stdout instead of narrating")
+    parser.add_argument("--port", type=int, default=None, metavar="PORT",
+                        help="issue #408: included in the printed ui hint "
+                             "('shal-arena ui --run <id> --port PORT') for whoever will "
+                             "later run that command with a fixed port -- never binds "
+                             "anything itself")
     args = parser.parse_args(argv)
-    return run_story(pause=args.pause, json_mode=args.json)
+    return run_story(pause=args.pause, json_mode=args.json, port=args.port)
 
 
 if __name__ == "__main__":
