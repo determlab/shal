@@ -188,11 +188,9 @@ is yours to change.
 `arena/tests/test_readme_examples.py` runs both minimal examples this same
 way, in CI, so copying them keeps working.
 
-**What `open` looks like.** One of the faults a card can hide is `open`: the
-instrument simply does not answer — every hop to it raises, the same as a
-cut cable. Your driver does not need to detect this itself; just let the
-exchange raise, same as `minimal_dmm_driver.py` above already does. `measure`
-reports it as a normal failure, never a crash:
+**When an instrument does not answer.** Your driver does not need to detect
+this itself: let the exchange raise, same as `minimal_dmm_driver.py` above
+already does. `measure` reports it as a normal failure, never a crash:
 
 ```
 $ shal-arena measure <run-id> dmm0 examples/minimal_dmm_driver.py --json
@@ -209,8 +207,7 @@ at 'dmm0' (hop: sim-scpi, delivered=no)
 ```
 
 Exit code 1 — the op failed, same family as `shal call`'s own "op failed"
-outcome, not a crash in the check machinery. A failure shaped exactly like
-this, on an otherwise-correct driver, is itself the signal: answer `open`.
+outcome, not a crash in the check machinery.
 
 Answer and close the run. `ok` below is a placeholder answer to show the
 command's shape — the real method for picking a value is reading the
@@ -362,16 +359,13 @@ Issue #312 adds the rest of what it takes to actually score a run:
 - **Fault injection at run time.** `shal-arena run`'s seed still picks the
   fault; the probing instrument's reading is bound to a topology generated
   **in memory only** (never written to any file) that wires the realized
-  fault into the sim: `low_voltage`/`noise` shift or add ripple to the
-  reading, `open` sets `fault: unplugged` (the same sim-only mechanism
-  `shal` core ships for issue #304) so the instrument is simply unreachable.
-  `noise`'s own ripple sample is seeded from the run's own seed mixed with
-  the run's own `turns` count at the moment of that call (issue #431) — so
-  a replay of a `noise` run depends on the FULL call order, not just which
-  calls were measurements: `check-driver` and `drive` also add a turn
-  (issue #436), and reordering any of them changes every `noise` reading
-  from that point on, even though only `measure`/`call` write to the sim
-  log at all.
+  fault into the sim (how each fault is injected is documented in
+  `shal_arena/fault.py`, not here). Any per-call randomness is seeded from
+  the run's own seed mixed with the run's own `turns` count at the moment
+  of that call (issue #431) — so a replay depends on the FULL call order,
+  not just which calls were measurements: `check-driver` and `drive` also
+  add a turn (issue #436), and reordering any of them can change later
+  readings, even though only `measure`/`call` write to the sim log at all.
 - **`measure` — the player's own reading.** `check-driver` only validates
   your driver (every player runs it, pass or fail, to light the tile); it
   never touches the sim log. `shal-arena measure` is the deliberate act of
@@ -380,16 +374,15 @@ Issue #312 adds the rest of what it takes to actually score a run:
   `measure` entry (address and time, nothing else — identical whatever
   happens next); a successful read also appends its own `query` entry (same
   format whether it came from the CLI, MCP, or Python — captured at `shal`'s
-  own structured bus log). An unreachable instrument (or a driver bug)
-  raises `MeasurementFailed` live, to you, after that `measure` entry is
-  already written — a file naming *how* a read failed would, in practice,
-  name the `open` fault, since nothing else makes a correct driver fail to
-  read, so nothing about the failure itself is ever written down.
+  own structured bus log). A failed read raises `MeasurementFailed` live,
+  to you, after that `measure` entry is already written — a file naming
+  *how* a read failed could give the answer away, so nothing about the
+  failure itself is ever written down.
 - **Disqualification.** `shal-arena answer` refuses to credit an answer with
   no `measure` entry at any probe instrument's address: `"disqualified":
   true` means you never called `measure` for one, full stop — not whether
-  the read that followed succeeded, so a fault like `open`, unreachable by
-  design, can still be answered correctly and counted.
+  the read that followed succeeded, so a run whose reads fail can still be
+  answered correctly and counted.
 - **Score file.** `shal-arena answer` also writes `<run_id>.score.json`
   (13 fields — `task_id`, `seed`, `fault_type`, `faults_total`,
   `faults_caught`, `false_fails`, `error_fail_correct`, `duration_s`,
@@ -450,9 +443,8 @@ The `relay-rail` task adds a fourth instrument on a third protocol: `psu0`
 and `dmm0` as above, plus `relay0` (a Modbus-framed relay switching the
 card's own power, over `shal,sim-msg`, request/reply as plain dicts — no
 `pymodbus`, no TCP) and `temp0` (an `sht31`-style temperature sensor on
-`shal,sim-i2c`, probing the regulator) — with a fourth fault, `overheat`
-(the regulator runs hot while the 3V3 rail still reads nominal, so only an
-agent that reads all four instruments gets it right). `relay0`'s coil ops
+`shal,sim-i2c`, probing the regulator) — and its answer set adds a fourth fault id,
+`overheat`. `relay0`'s coil ops
 play through one generic path, `shal-arena call <run-id> <address>
 ./driver.py <op> [args...] --json`, which runs any op of your own driver
 through SHAL's normal gate/limits/approval (AGENTS.md) instead of a
