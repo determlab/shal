@@ -210,13 +210,15 @@ def _notes(run_id: str, store: RunStore) -> list[dict[str, Any]]:
     inside the measurement rows"). Each entry names the command it was
     attached to, so a reader can still tell it apart from, or line it up
     against, a nearby reading in the Timeline above. `has_reading` is
-    whether THAT SAME call's own `--json` payload carried a `reading` --
-    the CTO's call: no conflict detection (the fixed line below never
-    depends on what the note says), but the line is shown whenever a
-    reading was there to compare against, agreement or not.
-    `<run>.cli.jsonl` may not exist yet (no command has been logged), and
-    a line already on disk is read as-is -- `_log_cli_call` is the one
-    writer, and it always produces a whole, valid JSON line."""
+    whether THAT SAME call took a reading: a `measure` that exited 0 -- the
+    one subcommand that logs a `reading` (a read op through `call` marks
+    the instrument measured, never a `reading` line). It is based on the
+    call, not its output format (CTO review: a plain-text `measure` logs
+    `json: null`). No conflict detection: the fixed line below never
+    depends on what the note says.
+    `<run>.cli.jsonl` may not exist yet (no command has been logged). A line
+    that does not parse (a crash mid-append) is skipped: this list is a
+    display, not the record, and one bad line must not take the page down."""
     path = store.cli_log_path(run_id)
     if not path.is_file():
         return []
@@ -224,15 +226,16 @@ def _notes(run_id: str, store: RunStore) -> list[dict[str, Any]]:
     for line in path.read_text(encoding="utf-8").splitlines():
         if not line.strip():
             continue
-        entry = json.loads(line)
-        note = entry.get("note")
-        if note is None:
+        try:
+            entry = json.loads(line)
+        except ValueError:
+            continue
+        if not isinstance(entry, dict) or entry.get("note") is None:
             continue
         argv = entry.get("argv") or []
         command = next((a for a in argv if not a.startswith("-")), "")
-        payload = entry.get("json") or {}
-        notes.append({"command": command, "note": note, "time": entry.get("time"),
-                     "has_reading": payload.get("reading") is not None})
+        notes.append({"command": command, "note": entry["note"], "time": entry.get("time"),
+                     "has_reading": command == "measure" and entry.get("exit_code") == 0})
     return notes
 
 

@@ -594,15 +594,9 @@ function renderDriverCode(payload) {
   }
 }
 
-// issue #470: "agent notes, in its own words" -- its own block, never
-// folded into a timeline/measurement row. A note is free text an agent
-// wrote with --note; it is rendered with textContent only (never
-// innerHTML), the same rule every other untrusted string on this page
-// already follows (renderDriverCode above). No conflict detection: a note
-// and a reading from the same call are each shown in their own place
-// (this block, and the Timeline above it), never merged into one row.
-// issue #470. Heading and record line are the CMO's own exact text
-// (2026-10-07), shown verbatim -- the heading always, the record line
+// issue #470: the agent's notes -- their own block, never folded into a
+// timeline/measurement row. Heading and record line are the CMO's own
+// exact text (2026-10-07), shown verbatim -- the heading always, the record line
 // under every note whose own call also carried a reading, agreement or
 // not (the CTO's call: no conflict detection, so the text never depends
 // on what the note says). Built with textContent/createTextNode only,
