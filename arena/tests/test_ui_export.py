@@ -50,7 +50,8 @@ def test_export_shows_the_replay_label(tmp_path: Path) -> None:
     html = build_export(run_id, state_dir=tmp_path, agent="claude-sonnet-5")
     assert "Replay of a recorded run" in html
     assert "claude-sonnet-5" in html
-    assert "simulated instruments" in html
+    # issue #447: the label sits in the footer, after the fixed safety line
+    assert "Simulated instruments only." in html
 
 
 def test_export_never_names_a_driver_py_filename_as_text(tmp_path: Path) -> None:

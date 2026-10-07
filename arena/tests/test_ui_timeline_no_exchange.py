@@ -84,7 +84,8 @@ def _render_with_node(payload: dict) -> dict:
     with tempfile.TemporaryDirectory() as d:
         path = Path(d) / "render.js"
         path.write_text(script, encoding="utf-8")
-        proc = subprocess.run([node, str(path)], capture_output=True, text=True, timeout=30)
+        proc = subprocess.run([node, str(path)], capture_output=True, text=True,
+                              encoding="utf-8", timeout=30)
     assert proc.returncode == 0, proc.stderr
     return json.loads(proc.stdout)
 
@@ -102,7 +103,8 @@ def _render_single_row_html(entry: dict) -> str:
     with tempfile.TemporaryDirectory() as d:
         path = Path(d) / "row.js"
         path.write_text(script, encoding="utf-8")
-        proc = subprocess.run([node, str(path)], capture_output=True, text=True, timeout=30)
+        proc = subprocess.run([node, str(path)], capture_output=True, text=True,
+                              encoding="utf-8", timeout=30)
     assert proc.returncode == 0, proc.stderr
     return proc.stdout
 
@@ -140,7 +142,12 @@ def test_rendered_step_count_is_the_same_with_the_exchange_log_on_or_off(tmp_pat
     elements_off = _render_with_node(payload_off)
 
     assert elements_on["verdict-bar"]["html"] == elements_off["verdict-bar"]["html"]
-    assert elements_on["timeline-list"]["html"] == elements_off["timeline-list"]["html"]
+    # issue #447: the rows are the #457 log table now, so the "on" run's
+    # rows also carry what went over the wire -- but the rows themselves
+    # (count, order, each step's function) are the same either way.
+    what = re.compile(r'<div class="what">([^<]*)</div>')
+    assert (what.findall(elements_on["timeline-list"]["html"])
+            == what.findall(elements_off["timeline-list"]["html"]))
 
 
 def test_no_timeline_row_holds_raw_protocol_text(tmp_path: Path) -> None:
@@ -197,8 +204,9 @@ def test_question_text_appears_under_the_title_live_and_in_export(tmp_path: Path
     elements_export = _render_with_node(export_payload)
     assert elements_export["question"]["text"] == export_payload["question"]
 
+    # issue #447 page text: the title IS the task's own question (the h1)
     shell_html = _shell(run_id)
-    assert shell_html.index('id="title"') < shell_html.index('id="question"')
+    assert '<h1 id="question">' in shell_html
 
 
 def test_drive_row_still_reads_exactly_through_the_shal_gate(tmp_path: Path) -> None:
