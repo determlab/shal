@@ -145,13 +145,15 @@ HISTORY_FORMAT = (
 
 
 def _history_error(path: Path, message: str, *, index: int | None = None) -> ValueError:
-    """CTO review on #467, must-fix 4: name which entry is bad, and the
-    next step -- fix that entry, or drop --history entirely (this run then
-    shows day 1 of 3 on its own, never an error)."""
-    where = f"entry {index}" if index is not None else "the file"
+    """CTO review on #467, must-fix 4 (and the round-3 nit: the same next-
+    step line for a whole-file error, not only a bad entry): name which
+    entry is bad, or that the whole file itself is unreadable, and the next
+    step -- fix it, or drop --history entirely (this run then shows day 1
+    of 3 on its own, never an error)."""
+    where = f"entry {index}: " if index is not None else ""
     return ValueError(
-        f"--history {path}: {where}: {message}; expected {HISTORY_FORMAT}. "
-        f"Fix that entry, or drop --history (this run then shows day 1 of 3).")
+        f"--history {path}: {where}{message}; expected {HISTORY_FORMAT}. "
+        f"Fix it, or drop --history (this run then shows day 1 of 3).")
 
 
 def load_history(path: Path) -> list[dict[str, Any]]:
@@ -171,14 +173,11 @@ def load_history(path: Path) -> list[dict[str, Any]]:
     try:
         doc = json.loads(path.read_text(encoding="utf-8"))
     except OSError as e:
-        raise ValueError(f"--history {path}: cannot read file ({e}); expected "
-                         f"{HISTORY_FORMAT}") from e
+        raise _history_error(path, f"cannot read file ({e})") from e
     except json.JSONDecodeError as e:
-        raise ValueError(f"--history {path}: not valid JSON ({e}); expected "
-                         f"{HISTORY_FORMAT}") from e
+        raise _history_error(path, f"not valid JSON ({e})") from e
     if not isinstance(doc, list):
-        raise ValueError(f"--history {path}: expected {HISTORY_FORMAT}, "
-                         f"got {type(doc).__name__}")
+        raise _history_error(path, f"expected a list, got {type(doc).__name__}")
     required = {"date", "run_id", "event", "attempt", "gating_passed"}
     for i, entry in enumerate(doc):
         if not (isinstance(entry, dict) and required <= entry.keys()):
@@ -389,16 +388,33 @@ pre { white-space: pre-wrap; word-break: break-word; margin: 0.3rem 0 0; }
 def today_entry(cells: list[dict[str, Any]], counts: dict[str, Any], *,
                 event: str | None, date: str | None) -> dict[str, Any]:
     """This run, in the same shape a history entry takes -- CTO review on
-    #467, must-fix 1: today is held to the SAME 3 conditions
+    #467 round 1, must-fix 1: today is held to the SAME 3 conditions
     (`event`=="schedule", every gating cell's own `run_attempt` == 1,
-    every gating cell green), not just its cell counts. `run_id` is the
-    same one `_render_header` already shows."""
+    every gating cell green), not just its cell counts.
+
+    Round 2 closes 3 more ways to fool it, found after round 1 shipped:
+    must-fix 1: `gating["cells"] == 0` (an empty evidence dir, or macOS-only
+    cells) used to count as "all green" -- a run with NO gating cells now
+    never passes. must-fix 2: a missing or non-int `run_attempt` used to
+    read as attempt 1 (`_is_retry(None)` is False) -- only a REAL `int 1`
+    counts now; `_is_retry` itself is untouched, since the page's own retry
+    flag on a single cell still wants "not literally > 1". must-fix 3:
+    `run_id` was the first cell's that had one, with the rest never
+    compared -- cells from different runs (a stale artifact, a partial
+    re-run) could be stitched into one false "today". Every gating cell
+    must now share the SAME non-empty `run_id`, or today cannot anchor a
+    streak (folded into `attempt`, same mechanism a real retry already
+    uses -- not a second check gate_status would need to know about)."""
     gating = counts["gating"]
-    gating_passed = gating["failed"] == 0 and gating["missing"] == 0
     gating_cells = [c for c in cells if c["gating"]]
-    attempt_ok = all(not _is_retry(c["run_attempt"]) for c in gating_cells)
-    run_id = next((c["run_id"] for c in cells if c.get("run_id")), None)
-    return {"event": event, "attempt": 1 if attempt_ok else 2, "gating_passed": gating_passed,
+    gating_passed = gating["cells"] > 0 and gating["passed"] == gating["cells"]
+    attempt_ok = all(type(c["run_attempt"]) is int and c["run_attempt"] == 1
+                     for c in gating_cells)
+    run_ids = [c.get("run_id") for c in gating_cells]
+    run_id_consistent = bool(run_ids) and all(r and r == run_ids[0] for r in run_ids)
+    run_id = run_ids[0] if run_id_consistent else None
+    attempt = 1 if (attempt_ok and run_id_consistent) else 2
+    return {"event": event, "attempt": attempt, "gating_passed": gating_passed,
            "date": date, "run_id": run_id}
 
 
@@ -460,7 +476,7 @@ def main(argv: list[str] | None = None) -> int:
         print(json.dumps({**counts, "day": day, "gate_met": gate_met,
                           "page": str(args.out), "side_effect": "write"}))
     else:
-        verdict = "gate met" if gate_met else f"day {day} of 3"
+        verdict = f"day {day} of 3 — gate met" if gate_met else f"day {day} of 3"
         print(f"evidence page written to {args.out}: {counts['cells']} cell(s), "
              f"{counts['passed']} passed, {counts['failed']} failed, "
              f"{counts['missing']} missing (gating: {gating['passed']} passed, "

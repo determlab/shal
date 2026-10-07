@@ -425,3 +425,99 @@ def test_a_bad_history_file_names_the_expected_format(tmp_path):
         capture_output=True, text=True, check=False)
     assert proc.returncode == 2
     assert evidence_page.HISTORY_FORMAT in proc.stderr
+    # CTO review on #467 round 2 nit: the next-step line applies to a
+    # whole-file error too, not only a bad entry.
+    assert "drop --history" in proc.stderr
+
+
+# --------------------------------------------------------------------------- #
+# CTO review on #467 round 2: 3 more ways the gate check could be fooled,
+# found after round 1 shipped -- zero gating cells, an unproven attempt, and
+# cells stitched together from more than one run
+# --------------------------------------------------------------------------- #
+
+def _good_history() -> str:
+    return json.dumps([_qualifying(_DAY_BEFORE, "hist-1"), _qualifying(_YESTERDAY, "hist-2")])
+
+
+def _run_with_history(ev_dir: Path, out: Path, history: Path) -> subprocess.CompletedProcess:
+    return subprocess.run(
+        [sys.executable, str(SCRIPT), str(ev_dir), "--out", str(out),
+         "--history", str(history), "--event", "schedule", "--date", _TODAY],
+        capture_output=True, text=True, check=False)
+
+
+def test_an_empty_evidence_dir_does_not_meet_the_gate(tmp_path):
+    """must-fix 1: 0 gating cells used to count as 'all green' -- an empty
+    `ev/` (gh run download got nothing, or the artifacts expired)."""
+    ev_dir = tmp_path / "ev"
+    ev_dir.mkdir()
+    history = tmp_path / "runs.json"
+    history.write_text(_good_history(), encoding="utf-8")
+
+    out = tmp_path / "evidence.html"
+    proc = _run_with_history(ev_dir, out, history)
+    assert proc.returncode == 0  # 0 gating cells: nothing failed or is missing either
+    page = out.read_text(encoding="utf-8")
+    assert "gate met" not in page
+    assert "day 0 of 3" in page
+
+
+def test_a_macos_only_dir_does_not_meet_the_gate(tmp_path):
+    """must-fix 1, the other real-world shape: every cell present is
+    non-gating, so gating["cells"] is still 0."""
+    ev_dir = tmp_path / "ev"
+    ev_dir.mkdir()
+    mac = _sample()
+    mac["os"] = "macos-latest"
+    _write_cell(ev_dir, "evidence-macos-latest-3.10", mac)
+    history = tmp_path / "runs.json"
+    history.write_text(_good_history(), encoding="utf-8")
+
+    out = tmp_path / "evidence.html"
+    proc = _run_with_history(ev_dir, out, history)
+    assert proc.returncode == 0
+    page = out.read_text(encoding="utf-8")
+    assert "gate met" not in page
+    assert "day 0 of 3" in page
+
+
+def test_a_missing_run_attempt_does_not_count_as_attempt_1(tmp_path):
+    """must-fix 2: `_is_retry(None)` is False, so a cell with no
+    `run_attempt` key used to read as a clean attempt 1."""
+    ev_dir = tmp_path / "ev"
+    ev_dir.mkdir()
+    doc = _sample()
+    del doc["run_attempt"]
+    _write_cell(ev_dir, "evidence-ubuntu-latest-3.10", doc)
+    history = tmp_path / "runs.json"
+    history.write_text(_good_history(), encoding="utf-8")
+
+    out = tmp_path / "evidence.html"
+    _run_with_history(ev_dir, out, history)
+    page = out.read_text(encoding="utf-8")
+    assert "gate met" not in page
+    assert "day 1 of 3" in page
+
+
+def test_gating_cells_from_different_runs_do_not_anchor_a_streak(tmp_path):
+    """must-fix 3: run_id was the first cell's that had one, with the rest
+    never compared -- a stale or partial re-run could stitch a false
+    'today' together from 2 different runs."""
+    ev_dir = tmp_path / "ev"
+    ev_dir.mkdir()
+    a = _sample()
+    a["run_id"] = "102"
+    _write_cell(ev_dir, "evidence-ubuntu-latest-3.10", a)
+    b = _sample()
+    b["os"] = "windows-latest"
+    b["run_id"] = "999"
+    _write_cell(ev_dir, "evidence-windows-latest-3.10", b)
+    history = tmp_path / "runs.json"
+    history.write_text(_good_history(), encoding="utf-8")
+
+    out = tmp_path / "evidence.html"
+    _run_with_history(ev_dir, out, history)
+    page = out.read_text(encoding="utf-8")
+    assert "gate met" not in page
+    assert "day 1 of 3" in page
