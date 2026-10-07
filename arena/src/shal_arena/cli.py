@@ -23,8 +23,6 @@ is never empty.
 from __future__ import annotations
 
 import argparse
-import contextlib
-import io
 import json
 import re
 import sys
@@ -449,6 +447,34 @@ def _build_parser() -> argparse.ArgumentParser:
 _RUN_LINE_RE = re.compile(r"^run (\S+):")
 
 
+class _Tee:
+    """Mirrors every write to the real stdout, flushed through immediately,
+    and keeps a copy for the cli log (#460 round 2 must-fix: `redirect_stdout`
+    held back ALL of a command's output until it returned -- `ui --no-open`
+    serves silently forever with its own `watching ...` URL line never
+    reaching anyone, `demo`'s paced narration became one silent wait then a
+    single dump, and an uncaught exception lost everything already
+    printed). A command that can never name a run (`ui`'s own commands are
+    not among #460's "write one line" set anyway) still streams normally;
+    the mirrored copy is only ever used if the command turns out loggable."""
+
+    def __init__(self, real) -> None:
+        self._real = real
+        self._parts: list[str] = []
+
+    def write(self, s: str) -> int:
+        self._parts.append(s)
+        n = self._real.write(s)
+        self._real.flush()
+        return n
+
+    def flush(self) -> None:
+        self._real.flush()
+
+    def getvalue(self) -> str:
+        return "".join(self._parts)
+
+
 def _redact_cli_line(argv: list[str], payload: dict[str, Any] | None, text: str | None
                      ) -> tuple[list[str], dict[str, Any] | None, str | None]:
     """issue #460: the one place every value written to ``<run>.cli.jsonl``
@@ -459,7 +485,12 @@ def _redact_cli_line(argv: list[str], payload: dict[str, Any] | None, text: str 
     an argv element or a printed line is free text that may merely CONTAIN a
     URL, not a value that IS one end to end (#457 round 2: the same mistake
     mangled unrelated `@`/`:` text and could leave a URL's userinfo in
-    place)."""
+    place).
+
+    `text` gets the URL rule only, never the key-based secret rule
+    `redact_structured` also applies to `json` (round 2 nit): `text` is a
+    command's own PRINTED output, which has no keys to check -- the URL
+    rule is the only one that ever applied to it."""
     argv = [redact_url_in_text(a) for a in redact_secret_args(argv)]
     if payload is not None:
         payload = redact_structured(payload)
@@ -490,7 +521,13 @@ def _log_cli_call(state_dir: str, run_id: str, argv: list[str], exit_code: int,
     lock (`RunStore.append_cli_log`, reusing #436/#442's lock -- agents run
     commands in parallel). `json` is the parsed `--json` output; `text` is
     the printed text when the command ran without `--json` (``json: null``
-    then, so the window still shows the answer)."""
+    then, so the window still shows the answer).
+
+    Intentional (round 2 nit): a command's own error message goes to
+    stderr, not stdout (`_report_error`), so a FAILING command run without
+    `--json` logs `text: ""` here -- only `exit_code` and `argv` say
+    anything went wrong. stderr is never mirrored into this file; `--json`
+    is the one shape that carries the error text itself, in `json.error`."""
     text = None if parsed is not None else printed
     argv, parsed, text = _redact_cli_line(argv, parsed, text)
     entry = {"time": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
@@ -503,13 +540,18 @@ def main(argv: list[str] | None = None) -> int:
     args = parser.parse_args(argv)
     raw_argv = list(argv if argv is not None else sys.argv[1:])
 
-    # issue #460: capture exactly what the command printed, to log it --
-    # the real stdout still gets it, right after, unchanged.
-    buf = io.StringIO()
-    with contextlib.redirect_stdout(buf):
+    # issue #460: mirror what the command prints, to log it, without ever
+    # holding it back from the real stdout (round 2 must-fix: a buffer-then-
+    # replay here made `ui`'s live server line, and `demo`'s paced
+    # narration, silent until the command returned).
+    real_stdout = sys.stdout
+    tee = _Tee(real_stdout)
+    sys.stdout = tee
+    try:
         exit_code = args.func(args)
-    printed = buf.getvalue()
-    sys.stdout.write(printed)
+    finally:
+        sys.stdout = real_stdout
+    printed = tee.getvalue()
 
     parsed: dict[str, Any] | None = None
     if getattr(args, "json", False):

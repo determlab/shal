@@ -57,6 +57,22 @@ All notable changes to this project are documented here. The format follows
   instrument's role straight from the task yaml's own `drives:`/`probe:`
   (never hand-written), and `drive`'s own row names SHAL's gate, not the
   agent's driver op.
+- **A new public run file, `<run>.cli.jsonl`: one line per `shal-arena` CLI
+  call this run served** (#460). `shal-arena` writes `{time, argv,
+  exit_code, json, text}` after each command finishes (`json` is the
+  parsed `--json` output or `null`; `text` is the printed output,
+  URL-redacted, when the command ran without `--json` — not run through
+  the key-based secret rule, unlike `json`). Commands that never name a run
+  (`tasks`, `--help`, `run` before its id exists) write nothing; a run id
+  that cannot be resolved to an existing run (an unknown id, or one with a
+  path separator) is never written, so a bad command never creates or
+  escapes a run's own files. Appended under the same per-run lock #436/#442
+  already added, so parallel agent calls on one run never produce a torn
+  or merged line. `argv`/`text` are redacted through `shal.log`'s shared
+  `redact_url_in_text`/`redact_secret_args`; `json` through
+  `redact_structured`. The demo page's agent-terminal window (#447) reads
+  this file as the one source common to every agent, since the CLI is the
+  one path every agent uses.
 - **`record_version` 3 reserves `Step.ops`, `Measurement.instrument_id`/
   `instrument_simulated`/`limit_source` and `Record.repeatability`** (#409,
   `record.md` §2.1). All new keys are always present in a v3 record, `null`

@@ -7,8 +7,10 @@ from __future__ import annotations
 
 import concurrent.futures
 import json
+import queue
 import subprocess
 import sys
+import threading
 from pathlib import Path
 
 from shal_arena.cli import _redact_cli_line
@@ -158,3 +160,53 @@ def test_tasks_and_help_write_nothing_run_writes_one_line(tmp_path: Path) -> Non
     assert run_proc.returncode == 0, run_proc.stderr
     run_id = json.loads(run_proc.stdout)["run_id"]
     assert len(_lines(state_dir, run_id)) == 1
+
+
+def test_ui_server_stdout_is_not_held_back(tmp_path: Path) -> None:
+    """#460 round 2 must-fix: `main()` used to buffer a WHOLE command's
+    stdout and replay it only after the command returned, so `ui`'s own
+    `watching <run> at <url>` line -- printed once, before it serves
+    forever -- never reached anyone while `--no-open` kept a live server
+    running under `--port 0` (a fresh, otherwise-unknown port an agent can
+    only learn from that line)."""
+    state_dir = tmp_path / "state"
+    run_proc = _run_cli("run", str(SAMPLE_TASK), "--state-dir", str(state_dir), "--json")
+    assert run_proc.returncode == 0, run_proc.stderr
+    run_id = json.loads(run_proc.stdout)["run_id"]
+
+    proc = subprocess.Popen(
+        [sys.executable, "-m", "shal_arena.cli", "ui", "--run", run_id,
+         "--no-open", "--port", "0", "--state-dir", str(state_dir)],
+        stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+    try:
+        q: queue.Queue[str] = queue.Queue()
+        threading.Thread(target=lambda: q.put(proc.stdout.readline()), daemon=True).start()
+        try:
+            line = q.get(timeout=10)
+        except queue.Empty:
+            raise AssertionError("the 'watching ...' line never arrived within 10s") from None
+        assert "watching" in line and run_id in line
+    finally:
+        proc.terminate()
+        proc.wait(timeout=10)
+
+
+def test_an_unknown_or_escaping_run_id_creates_no_cli_log(tmp_path: Path) -> None:
+    """#460 round 2 must-fix: the run id comes straight from argv/a reply,
+    unchecked -- `answer no-such-run ok` used to leave an orphan
+    `no-such-run.cli.jsonl` (and lock file), and a run id containing a path
+    separator could write `<run>.cli.jsonl` outside the state dir
+    entirely."""
+    state_dir = tmp_path / "state"
+    state_dir.mkdir()
+
+    unknown_proc = _run_cli("answer", "no-such-run", "ok",
+                            "--state-dir", str(state_dir), "--json")
+    assert unknown_proc.returncode != 0
+    assert list(state_dir.glob("*.cli.jsonl")) == []
+
+    escape_proc = _run_cli("answer", "../escaped", "ok",
+                           "--state-dir", str(state_dir), "--json")
+    assert escape_proc.returncode != 0
+    assert list(state_dir.glob("*.cli.jsonl")) == []
+    assert list(tmp_path.glob("*.cli.jsonl")) == []  # never escaped to the parent either
