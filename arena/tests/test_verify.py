@@ -152,6 +152,29 @@ def test_current_week_challenge_file_exists() -> None:
     assert (challenges_dir / f"{WEEK}.yaml").is_file()
 
 
+@pytest.mark.parametrize("bad_line", ["{not json", "[1, 2]", "\"measure\""])
+def test_a_malformed_simlog_line_is_refused_not_raised(tmp_path: Path, bad_line: str) -> None:
+    # CTO review on #393: one bad sim-log line raised JSONDecodeError, which
+    # broke "never raises for a bad submission".
+    _copy_fixtures(tmp_path)
+    good = (tmp_path / "simlog.jsonl").read_text(encoding="utf-8")
+    (tmp_path / "simlog.jsonl").write_text(good + bad_line + "\n", encoding="utf-8")
+
+    result = verify(tmp_path / "score.json", week=WEEK)
+    assert result["ok"] is False
+    assert result["result"] == "refused"
+    assert result["reason"].startswith("simlog_invalid_json")
+    assert "exactly as shal-arena wrote it" in result["reason"]
+
+
+def test_a_non_utf8_simlog_is_refused_not_raised(tmp_path: Path) -> None:
+    _copy_fixtures(tmp_path)
+    (tmp_path / "simlog.jsonl").write_bytes(b"\xff\xfe\n")
+    result = verify(tmp_path / "score.json", week=WEEK)
+    assert result["result"] == "refused"
+    assert result["reason"].startswith("simlog_invalid_json")
+
+
 def test_a_score_from_another_game_version_is_refused(tmp_path: Path) -> None:
     _copy_fixtures(tmp_path)
     score = json.loads((tmp_path / "score.json").read_text())

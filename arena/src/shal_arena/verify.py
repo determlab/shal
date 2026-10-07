@@ -19,6 +19,18 @@ own layout, e.g. a PR's ``submissions/<week>/...``); else the CURRENT ISO
 week, so the plain Agent-path invocation (no ``--week``) checks a score
 file against whichever challenge is open right now.
 
+What verify proves, and what it cannot (CTO review on #393): a verified
+submission is CONSISTENCY-CHECKED, NOT PROOF OF A RUN. verify proves only
+that the files agree with each other and with the published seed: the record
+hashes to ``record_sha256``, the realized fault recomputed from the seed
+matches the record, the answer matches that fault, the score fields recompute,
+and the sim log has at least one ``measure`` line. It cannot prove that
+anyone ran the sim: the seed is public and the code is open, so
+``realized_fault(card, seed)`` gives the answer offline, and a hand-written
+record with that answer plus one ``{"kind": "measure"}`` line verifies.
+``turns``, ``duration_s`` and ``gate_stops`` are only schema-checked --
+nothing recomputes them -- so a leaderboard must never rank on them.
+
 Trust model (the sim is open-source, so only the keys below are load-bearing):
 
 - The week's ``task_id`` and ``seed`` come ONLY from ``arena/challenges/
@@ -180,7 +192,7 @@ def verify(score_path: str | Path, *, week: str | None = None) -> dict[str, Any]
         return _refused(f"score file not found: {score_path}", week).as_dict()
     try:
         score = json.loads(score_path.read_text(encoding="utf-8"))
-    except json.JSONDecodeError as e:
+    except ValueError as e:  # JSONDecodeError, or bytes that are not UTF-8
         return _refused(f"score file is not valid JSON: {e}", week).as_dict()
     try:
         validate_score(score)
@@ -224,8 +236,10 @@ def verify(score_path: str | Path, *, week: str | None = None) -> dict[str, Any]
                         week).as_dict()
     try:
         record = json.loads(record_path.read_text(encoding="utf-8"))
-    except json.JSONDecodeError as e:
+    except ValueError as e:
         return _refused(f"record file is not valid JSON: {e}", week).as_dict()
+    if not isinstance(record, dict):
+        return _refused(f"record file is not a JSON object: {record_path}", week).as_dict()
 
     record_bytes = record_path.read_bytes()
     actual_sha256 = hashlib.sha256(record_bytes).hexdigest()
@@ -251,10 +265,25 @@ def verify(score_path: str | Path, *, week: str | None = None) -> dict[str, Any]
 
     simlog_path = _sibling(score_path, "simlog.jsonl")
     entries: list[dict[str, Any]] = []
-    if simlog_path.is_file():
-        for line in simlog_path.read_text(encoding="utf-8").splitlines():
-            if line.strip():
-                entries.append(json.loads(line))
+    try:
+        simlog_text = simlog_path.read_text(encoding="utf-8") if simlog_path.is_file() else ""
+    except UnicodeDecodeError as e:
+        return _refused(f"simlog_invalid_json: {simlog_path} is not UTF-8 ({e}) -- submit the "
+                        "sim log exactly as shal-arena wrote it", week).as_dict()
+    for n, line in enumerate(simlog_text.splitlines(), 1):
+        if not line.strip():
+            continue
+        try:
+            entry = json.loads(line)
+        except json.JSONDecodeError as e:
+            return _refused(
+                f"simlog_invalid_json: {simlog_path} line {n} is not valid JSON ({e}) -- "
+                "submit the sim log exactly as shal-arena wrote it", week).as_dict()
+        if not isinstance(entry, dict):
+            return _refused(
+                f"simlog_invalid_json: {simlog_path} line {n} is not a JSON object -- "
+                "submit the sim log exactly as shal-arena wrote it", week).as_dict()
+        entries.append(entry)
     measured = any(e.get("kind") == "measure" for e in entries)
     if not measured:
         return _disqualified(

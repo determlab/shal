@@ -466,3 +466,9 @@ replays a closed run from `arena/challenges/<week>.yaml`'s published seed and
 prints `{"ok", "result": "verified"|"disqualified"|"refused", "reason",
 "week", "side_effect": "none"}`, exit 0 only on `verified` — a PR with a
 score file and its run record can be checked without a server.
+A `verified` result is consistency-checked, not proof of a run: verify
+proves the score, record, sim log and published seed agree with each other
+(record hash, fault recomputed from the seed, answer, score fields, at least
+one `measure` line), but with the seed public and the sim open the answer can
+be computed offline, so it cannot prove anyone ran the sim. `turns`,
+`duration_s` and `gate_stops` are not checked — never rank on them.
