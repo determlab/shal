@@ -25,7 +25,4 @@ class MinimalTempDriver(Driver):
         return -45.0 + 175.0 * t_raw / 65535.0
 
 
-# issue #407: override=True -- see minimal_dmm_driver.py's own comment on
-# this line: a second in-process call re-execs this file fresh, and without
-# override=True the registry can't resolve the resulting 2 candidates.
-registry.register(MinimalTempDriver, override=True)
+registry.register(MinimalTempDriver)

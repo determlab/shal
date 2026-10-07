@@ -36,7 +36,4 @@ class MinimalRelayDriver(Driver):
         self.bus.exchange(self.addr, {"fc": 5, "address": channel, "value": bool(on)})
 
 
-# issue #407: override=True -- see minimal_dmm_driver.py's own comment on
-# this line: a second in-process call re-execs this file fresh, and without
-# override=True the registry can't resolve the resulting 2 candidates.
-registry.register(MinimalRelayDriver, override=True)
+registry.register(MinimalRelayDriver)
