@@ -469,6 +469,50 @@ def test_tcp_exchange_roundtrip(tmp_path):
         server.shutdown()
 
 
+# ---- scpi-raw exchange log: round 4 security fix shared with the arena
+# sim buses (`shal.log.redact_url_in_text`) -- a comma inside a URL's own
+# userinfo must never cut the match there and leave the password raw -----
+
+_COMMA_USERINFO_REPLY = "ftp://admin:1234,5678@host"
+
+
+class _ScpiEcho(socketserver.StreamRequestHandler):
+    def handle(self):
+        for _ in self.rfile:
+            self.wfile.write((_COMMA_USERINFO_REPLY + "\n").encode())
+            self.wfile.flush()
+
+
+def test_scpi_raw_exchange_log_never_leaks_a_comma_in_the_userinfo(tmp_path):
+    from shal.log import exchange_sink
+
+    server = socketserver.ThreadingTCPServer(("127.0.0.1", 0), _ScpiEcho)
+    port = server.server_address[1]
+    threading.Thread(target=server.serve_forever, daemon=True).start()
+    try:
+        p = write(tmp_path, f"""
+            shal_version: 1
+            root:
+              bench:
+                id: bench
+                driver: shal,scpi-raw
+                address: 127.0.0.1:{port}
+                insecure: true
+        """)
+        captured = []
+        with shal.load(p) as hal, exchange_sink(captured.append):
+            bus = hal.get_node("bench").driver
+            reply = bus.exchange("psu1", {"scpi": "GET?", "query": True})
+        assert reply == {"reply": _COMMA_USERINFO_REPLY}  # the real call is untouched
+        (exc,) = captured
+        assert "admin" not in exc.response
+        assert "1234" not in exc.response
+        assert "5678" not in exc.response
+        assert exc.response == "ftp://host"
+    finally:
+        server.shutdown()
+
+
 # ---- secret redaction (issue #20): credentials never reach logs/errors -----------
 
 @pytest.mark.parametrize("raw, expected", [

@@ -94,16 +94,29 @@ def redact_secret_args(argv: Sequence[str]) -> list[str]:
     return out
 
 
-#: A `scheme://...` substring, stopping before trailing punctuation a URL
-#: is normally wrapped in rather than swallowing it (CTO review round 3:
-#: "(http://u:p@h/x?token=a)" must keep its own ")"; the old `\S+` ate it,
-#: and `redact_url`'s query-drop then silently dropped it for good). Still
-#: deliberately narrower than "contains a URL": `redact_url` itself was
-#: written for a value that IS an address end to end (a bare `host:port`
-#: counts too), not for free text that happens to contain an `@` for an
-#: unrelated reason (round 2: a real SCPI channel list, `MEAS:VOLT? (@1)`,
-#: has no `://` anywhere and must never be touched).
-_URL_SUBSTRING_RE = re.compile(r"""[A-Za-z][\w+.-]*://[^\s"')\]}>,;]+""")
+#: A `scheme://...` substring, greedy to the next whitespace -- deliberately
+#: narrower than "contains a URL": `redact_url` itself was written for a
+#: value that IS an address end to end (a bare `host:port` counts too), not
+#: for free text that happens to contain an `@` for an unrelated reason
+#: (round 2: a real SCPI channel list, `MEAS:VOLT? (@1)`, has no `://`
+#: anywhere and must never be touched).
+#:
+#: round 3 security fix: an EARLIER version of this pattern stopped the
+#: match before trailing punctuation (`"')]}>,;`) directly, to keep a URL's
+#: own wrapping intact. That was wrong: RFC 3986 allows `' ) , ;` unescaped
+#: in a URL's userinfo as sub-delimiters, so stopping there could cut the
+#: match INSIDE the userinfo -- `ftp://admin:1234,5678@host` matched only
+#: `ftp://admin:1234`, which `redact_url` parses as a bare `host:port` with
+#: no `@` left to redact, logging the password in full. The trailing-
+#: punctuation strip has to happen AFTER the match, not as part of it --
+#: see `redact_url_in_text`.
+_URL_SUBSTRING_RE = re.compile(r"[A-Za-z][\w+.-]*://\S+")
+
+#: A trailing run of closing/punctuation characters a URL is commonly
+#: wrapped or followed by in free text -- peeled off the END of a matched
+#: substring (never from inside it) so "(http://u:p@h/x?token=a)" keeps its
+#: own ")" instead of losing it to `redact_url`'s query-drop.
+_TRAILING_PUNCT_RE = re.compile(r"""["')\]}>,;.]+$""")
 
 
 def redact_url_in_text(value: str) -> str:
@@ -114,23 +127,30 @@ def redact_url_in_text(value: str) -> str:
     mangled ordinary text with an unrelated `@` (`MEAS:VOLT? (@1)`, a real
     SCPI channel list) and, worse, could leave a URL's own userinfo in
     place depending on where in the string it fell. Finds each
-    `scheme://...` substring and runs the real `redact_url` on just that
-    piece.
+    `scheme://...` substring, peels any trailing closing punctuation off
+    the END of it (never from inside -- round 3 security fix, see
+    `_URL_SUBSTRING_RE`), and runs the real `redact_url` on just the core
+    that's left, re-appending the peeled tail unchanged.
 
-    Total, never raising (CTO review round 3): a malformed address inside
-    otherwise-ordinary text (an unterminated IPv6 literal, a port cut short
-    by the punctuation-stopping above, a stray space in the host) makes
+    Total, never raising (CTO review round 3): a malformed core (an
+    unterminated IPv6 literal, a stray space in the host) makes
     `redact_url`'s `urlsplit` raise `ValueError`. Turning on the exchange
-    log must never change what a bus call returns, so a substring that
-    fails to parse is replaced with a placeholder naming only its scheme —
-    never passed through raw, which would leak the userinfo it was trying
-    to strip."""
+    log must never change what a bus call returns, so a core that fails to
+    parse is replaced with a placeholder naming only its scheme — never
+    passed through raw, and never partially: the whole core becomes the
+    placeholder, not just the piece `urlsplit` choked on, or a password
+    could still ride along in whatever part parsed."""
     def _sub(m: re.Match) -> str:
+        whole = m.group(0)
+        tail_m = _TRAILING_PUNCT_RE.search(whole)
+        core, tail = (whole, "") if tail_m is None else (
+            whole[:tail_m.start()], whole[tail_m.start():])
         try:
-            return redact_url(m.group(0))
+            cleaned = redact_url(core)
         except ValueError:
-            scheme = m.group(0).split("://", 1)[0]
-            return f"{scheme}://<redacted>"
+            scheme = core.split("://", 1)[0]
+            cleaned = f"{scheme}://<redacted>"
+        return cleaned + tail
     return _URL_SUBSTRING_RE.sub(_sub, value)
 
 
