@@ -76,7 +76,10 @@ only after bind (never in `__init__`), i.e. in every op method:
 | `self.log` | structured logger (`self.log.debug("msg", event="...")`) |
 
 **Class attributes you set:** `compatible` (required), `kind` (required unless
-the driver sits at root), `llm_ready = True` (required for device drivers).
+the driver sits at root), `llm_ready = True` (required for device drivers),
+`simulated = True` (only on a SHAL simulator — default `False`; every call
+result and log/audit line carries it, never inferred from `compatible` or the
+node id, issue #347).
 
 **A root driver wraps a library instead of a bus.** When a Python library or
 vendor SDK already reaches the device, leave `kind = None` (the default): the

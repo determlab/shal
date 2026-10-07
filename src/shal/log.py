@@ -11,6 +11,14 @@ Record schema (rule 5) — stable `extra` fields, uniform across the tree:
     path, hop, bus_family, addr, txn, attempt, op, duration_ms, delivered, via
     `via` (#236) names the route of a node with `routes:`; it is ABSENT on a
     node without routes, so those records are unchanged.
+    device, address, simulated (#347) — on every call result and audit line
+    (not the DriverLogAdapter's `id`/`path`, which are bound once at logger
+    creation). `audit`'s own `id` and `path` and `call_identity`'s `device`
+    (`node.id or node.path`) are deliberately three copies of one fact, not
+    an oversight: `id`/`path` are the audit record's own long-standing shape,
+    `device` is the #347 identity triple's own name, used the same way across
+    every caller of `call_identity` regardless of whether that caller already
+    had `id`/`path` to hand.
 Formatters that render these live in shal.logging (opt-in, app-side).
 """
 from __future__ import annotations
@@ -63,7 +71,20 @@ def redact_url(value: str) -> str:
         if p.port is not None:
             netloc = f"{netloc}:{p.port}"
         return urllib.parse.urlunsplit((p.scheme, netloc, p.path, "", ""))
-    return value.rsplit("@", 1)[-1]  # bare host:port — drop any userinfo prefix
+    # bare host:port — drop any userinfo prefix, and any query/fragment (#347
+    # round 2: a scheme-less address can still carry a secret as a query
+    # param, e.g. "h:5025?token=s" — the userinfo strip alone left it in)
+    bare = value.rsplit("@", 1)[-1]
+    return re.split(r"[?#]", bare, maxsplit=1)[0]
+
+
+def redact_address(addr):
+    """A node's configured address, shown safely (#347 nit): a string address
+    is `${ENV}`-resolved and may carry userinfo or a query token, so it goes
+    through `redact_url`; anything else (an int bus address) is reported
+    as-is. The one place `call_identity` and `declared_routes` share this
+    rule, instead of each repeating the `isinstance` check."""
+    return redact_url(addr) if isinstance(addr, str) else addr
 
 
 # #457/#460: the text rule and the key-based secret rule, shared by the bus

@@ -8,10 +8,10 @@ from collections.abc import Mapping
 
 from . import driver as _driver
 from . import limits
-from .driver import _effective_gated, inferred_side_effect
+from .driver import _effective_gated, call_identity, inferred_side_effect
 from .errors import ApprovalDenied, Error, HopError, LimitError, LoadError
 from .loader import load_tree
-from .log import redact_url
+from .log import redact_address
 from .node import Node
 from .routes import RouteSet, last_via
 from .transport import Transport
@@ -164,13 +164,27 @@ class Hal:
         "Failures the agent must be able to read"). A node without routes has no
         ``via`` key at all, so its results are unchanged. ``arguments["via"]`` pins
         a route (#237); an unknown name is ``{"ok": False, "error": ..., "routes":
-        [<the valid names>]}``, refused before any I/O."""
+        [<the valid names>]}``, refused before any I/O.
+
+        Every result, success or failure, also carries ``device`` (the node id,
+        or its path if it has none), ``address`` (the address of the route that
+        actually carried or was attempted — the main route by default, or the
+        pinned/active one on a node with routes — redacted with
+        ``shal.log.redact_url`` when it is a string) and ``simulated`` (the
+        driver's own ``simulated`` class attribute OR'd with the carrying
+        transport's, issue #347): a measurement can always be traced to the
+        instrument that took it, never inferred from the id."""
         idx = self._tool_index()
         if name not in idx:
             raise LoadError(f"no tool '{name}' (see tool_schemas())")
         node, opname = idx[name]
         method = getattr(node.driver, opname)
         routed = isinstance(getattr(node.driver, "bus", None), RouteSet)
+        # device/address/simulated (issue #347 round 2): computed AFTER the
+        # call, from the route that actually carried it (or was pinned/
+        # attempted), never before — a pinned `via="jump"` call must report
+        # that route's own address, not always the node's main one
+        pin = (arguments or {}).get("via") if routed else None
         token = last_via.set(None)
         try:
             result = method(**(arguments or {}))
@@ -178,34 +192,37 @@ class Hal:
             # structured refusal: nothing was sent (no `delivered` key on purpose) —
             # the violations let an agent self-correct in one step (issue #10)
             return {"ok": False, "error": str(e), "rejected": "limits",
-                    "violations": e.violations}
+                    "violations": e.violations, **call_identity(node, via=pin)}
         except ApprovalDenied as e:
             # human-in-the-loop refusal: pre-I/O, nothing sent (no `delivered`
             # key) — distinct from a limit rejection so an agent can tell why
             # it was stopped and route to a human (issue #14). `reason` is
             # "no-approver" when no one could be asked, else None (#186)
             return {"ok": False, "error": str(e), "rejected": "approval",
-                    "op": e.op, "device": node.id or node.path, "reason": e.reason}
+                    "op": e.op, "reason": e.reason, **call_identity(node, via=pin)}
         except HopError as e:
             if not routed:
-                return {"ok": False, "error": str(e), "delivered": e.delivered}
+                return {"ok": False, "error": str(e), "delivered": e.delivered,
+                        **call_identity(node)}
             # every route failed (3e): the RFC text "<path>: no route delivered — …";
             # else the route that failed is in the text. The fix has its own key
             error = f"{e.path}: {e._msg}" if e.via is None else e._text(with_fix=False)
             return {"ok": False, "error": error, "delivered": e.delivered,
-                    "via": e.via, "fix": e.fix}
+                    "via": e.via, "fix": e.fix, **call_identity(node, via=e.via)}
         except Error as e:
-            pin = (arguments or {}).get("via")
             if routed and pin is not None and pin not in route_names(node):
-                # an unknown route name (#237): the valid names, for the next call
-                return {"ok": False, "error": str(e), "routes": route_names(node)}
-            return {"ok": False, "error": str(e)}
+                # an unknown route name (#237): the valid names, for the next call —
+                # the pin itself was never a route, so report the main one
+                return {"ok": False, "error": str(e), "routes": route_names(node),
+                        **call_identity(node)}
+            return {"ok": False, "error": str(e), **call_identity(node, via=pin)}
         finally:
             via = last_via.get()
             last_via.reset(token)
         if routed:
-            return {"ok": True, "result": result, "via": via}
-        return {"ok": True, "result": result}
+            return {"ok": True, "result": result, "via": via,
+                    **call_identity(node, via=via)}
+        return {"ok": True, "result": result, **call_identity(node)}
 
     def _by_path(self, path: str) -> Node | None:
         parts = [p for p in path.split("/") if p]
@@ -442,17 +459,16 @@ def declared_routes(node: Node) -> list[dict]:
     """What the file declares for ``node``'s routes, in order: each route's
     ``name``, ``via`` (its bus path) and ``address``. A node without routes has
     its one main route (its parent bus); a root node has none. No up/down state
-    (RFC-001: that is M3). A string address goes through ``redact_url``: it is
+    (RFC-001: that is M3). A string address goes through ``redact_url`` (#347
+    nit: shared with ``call_identity`` as ``shal.log.redact_address``): it is
     ${ENV}-resolved, so it may carry userinfo or a query token (#20)."""
-    def shown(addr):
-        return redact_url(addr) if isinstance(addr, str) else addr
     if node.routes:
-        return [{"name": name, "via": bus.path, "address": shown(addr)}
+        return [{"name": name, "via": bus.path, "address": redact_address(addr)}
                 for name, bus, addr in node.routes]
     if node.parent is None:
         return []
     return [{"name": node.parent.name, "via": node.parent.path,
-             "address": shown(node.address)}]
+             "address": redact_address(node.address)}]
 
 
 # -- LLM tool-schema helpers ----------------------------------------------------

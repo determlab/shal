@@ -383,10 +383,54 @@ def inferred_side_effect(fn: Callable) -> str:
     return "actuator"
 
 
+def call_identity(node: Node, via: str | None = None) -> dict:
+    """``device``/``address``/``simulated`` for one node's driver (issue #347) —
+    additive fields on every call result (``Hal.call_tool``) and every log/audit
+    line the op wrapper emits, so a measurement can be traced to the instrument
+    that took it.
+
+    ``via`` (issue #347 round 2) names the route that actually carried the
+    call, on a node with ``routes:``; without it (or on an unrouted node) the
+    main route/bus is used. The address reported is THAT route's address, not
+    always the node's own configured one — a call pinned to ``via="jump"``
+    must report the address that route answered on, not the main route's.
+
+    ``simulated`` is the driver's own ``simulated`` class attribute (default
+    ``False``) OR'd with the ``simulated`` flag of the transport that carried
+    the call (issue #347 round 2 must-fix 1): most reference drivers and
+    benches run a real-instrument driver on a ``shal,sim-*`` bus for local
+    testing, and a reading taken that way is still simulated even though the
+    driver itself never declares it. Neither half is ever inferred from the
+    node id or `compatible` — both are declared facts.
+
+    A string address is passed through :func:`shal.log.redact_url` (issue
+    #20): it may be `${ENV}`-resolved and carry userinfo or a query token; a
+    non-string address (an int bus address) is reported as-is."""
+    if node.routes:
+        name = via if via is not None else node.routes[0][0]
+        addr = next((a for n, _, a in node.routes if n == name), node.address)
+        bus_node = next((b for n, b, _ in node.routes if n == name), None)
+        bus = bus_node.bus if bus_node is not None else node.parent_bus
+    else:
+        addr = node.address
+        bus = node.parent_bus
+    simulated = bool(getattr(node.driver, "simulated", False)) or bool(
+        getattr(bus, "simulated", False))
+    return {
+        "device": node.id or node.path,
+        "address": _log.redact_address(addr),
+        "simulated": simulated,
+    }
+
+
 class Driver:
     compatible: str = ""
     kind: type | None = None  # transport kind required of the parent bus
     llm_ready: bool = False   # opt-in: require @shal.op metadata on every op (bind-time)
+    # true = this driver is a SHAL simulator; a real-instrument driver leaves it
+    # False (issue #347). Read by `call_identity` for every result/log line — the
+    # driver declares it, it is never inferred from the node id or `compatible`.
+    simulated: bool = False
 
     # framework-injected (bind time):
     node: Node
@@ -601,6 +645,7 @@ class Driver:
                                                "id": self.node.id or "",
                                                "path": self.node.path, "op": op,
                                                "outcome": "rejected", **route,
+                                               **call_identity(self.node, via=route.get("via")),
                                                "txn": _log.current_txn.get()})
                         raise
                 # limits passed -> ask before moving (pre-I/O, unbypassable)
@@ -648,13 +693,14 @@ class Driver:
                     route = {"via": carried[-1] if carried else None}
                     _last_via.set(route["via"])
                 self.log.debug("%s ok", op, event="call", op=op, duration_ms=duration,
-                               **route)
+                               **route, **call_identity(self.node, via=route.get("via")))
                 if audited:
                     _audit.info("%s %s ok", self.node.id or self.node.path, op,
                                 extra={"event": "audit", "id": self.node.id or "",
                                        "path": self.node.path, "op": op,
                                        "outcome": "ok", "duration_ms": duration,
                                        "attempt": attempt, **dropped, **route,
+                                       **call_identity(self.node, via=route.get("via")),
                                        "txn": _log.current_txn.get()})
                 return result
             except HopError as e:
@@ -666,7 +712,8 @@ class Driver:
                 self.log.debug("%s raising %s (delivered=%s)",
                                op, type(e).__name__, e.delivered,
                                event="raise", op=op, hop=e.hop,
-                               delivered=e.delivered, duration_ms=duration, **route)
+                               delivered=e.delivered, duration_ms=duration, **route,
+                               **call_identity(self.node, via=route.get("via")))
                 if audited:
                     _audit.info("%s %s failed (delivered=%s)",
                                 self.node.id or self.node.path, op, e.delivered,
@@ -675,6 +722,7 @@ class Driver:
                                        "outcome": "error", "delivered": e.delivered,
                                        "duration_ms": duration, "attempt": attempt,
                                        **dropped, **route,
+                                       **call_identity(self.node, via=route.get("via")),
                                        "txn": _log.current_txn.get()})
                 raise
             except _ShalError as e:
@@ -695,6 +743,7 @@ class Driver:
                                        "outcome": "device-error",
                                        "duration_ms": duration, "attempt": attempt,
                                        **dropped, **route,
+                                       **call_identity(self.node, via=route.get("via")),
                                        "txn": _log.current_txn.get()})
                 raise
             finally:
@@ -770,6 +819,7 @@ def _approve_or_raise(driver, op: str, side_effect: str, sig, args, kwargs,
                 extra={"event": "audit", "id": node.id or "",
                        "path": node.path, "op": op, "outcome": outcome,
                        "side_effect": side_effect, "txn": txn, **route,
+                       **call_identity(node, via=route.get("via")),
                        # the ACTIVE gated set that decided it, so a narrowing
                        # leaves a trace (ADR-001 addendum 5, D27)
                        "gated": sorted(gated),

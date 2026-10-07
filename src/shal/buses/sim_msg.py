@@ -52,6 +52,7 @@ class SimMsgBus(SimFaultMixin, Driver, Transport, MessageTransport):
 
     compatible = "shal,sim-msg"
     kind = None
+    simulated = True  # issue #347 round 2: a real driver on this bus is still a sim
 
     def __init__(self, node: Node) -> None:
         Transport.__init__(self, node)
