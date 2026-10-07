@@ -38,6 +38,18 @@ def test_question_text_is_exactly_the_new_sentence_with_no_rail_or_limit_hint():
         assert word not in _TASK.question.text
 
 
+def test_the_title_also_carries_no_rail_or_limit_hint():
+    """CMO/CTO must-fix on PR #465: the title is player-visible too --
+    `task.title` in `start_run`'s own output, `shal-arena tasks --json`,
+    and the demo page's header (#447) -- so it leaks where to look just as
+    much as the question text would. "A card came back from the line" is
+    the CTO's own title (PR #465 comment, 2026-10-07 01:49), not a
+    description of what to check."""
+    assert _TASK.title == "A card came back from the line"
+    for word in ("3V3", "regulator", "temperature"):
+        assert word not in _TASK.title
+
+
 def test_the_power_up_line_stays_per_the_cto_ruling():
     """The input voltage and power path are the test's own operating
     conditions, not a hint about where the fault is (CTO ruling) -- they

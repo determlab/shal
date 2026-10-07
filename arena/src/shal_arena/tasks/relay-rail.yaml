@@ -1,6 +1,6 @@
 arena_task: 1
 id: relay-rail
-title: "Is the 3V3 rail in spec, and is the regulator running hot?"
+title: "A card came back from the line"
 level: medium
 card: ../cards/buck-12v-relay.yaml
 instruments:

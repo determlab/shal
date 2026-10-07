@@ -74,7 +74,8 @@ shal-arena run rail-3v3 --seed 1 --json
     "title": "Is the 3V3 rail in spec?",
     "level": "easy",
     "card_description": "Fictional card, no real part. 5 V input, buck to 3.3 V, one test point tp_3v3.",
-    "question": "Power the card at 5.0 V. Is the 3V3 rail in spec? Answer ok, or name the fault."
+    "question": "Power the card at 5.0 V. Is the 3V3 rail in spec? Answer ok, or name the fault.",
+    "answer": {"kind": "enum", "values": ["ok", "low_voltage", "noise", "open"]}
   },
   "instruments": [
     {

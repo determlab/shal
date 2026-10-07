@@ -544,7 +544,10 @@ def start_run(task_path: str, *, seed: int | None = None,
             # answers (the task yaml's own `question.answer.values`) stay
             # visible here, machine-readable, same as `rails`/`temp_points`
             # below (#451's precedent): an agent reads the choices from
-            # data, never by guessing from prose.
+            # data, never by guessing from prose. `values` is `[]` for a
+            # `kind: number` task (none ship today) -- `unit`/`tol` live on
+            # `task.question.answer` too but aren't surfaced here, since no
+            # task needs them yet; add them here if one does.
             "answer": {"kind": task.question.answer.kind,
                       "values": list(task.question.answer.values)},
         },
