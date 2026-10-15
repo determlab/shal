@@ -65,10 +65,18 @@ def open_residual_v(rail: Rail, seed: int) -> float:
 # its own seed-only RNG -- so its DMM reading alone looks like ``open``.
 _BROKEN_PROBE_RESIDUAL_FRACTION = 0.005
 
-#: issue #478: faults added to the packaged cards after game 0.4.1. A run
-#: stored before runs carried their own fault list (no ``fault_ids``) was
-#: drawn from its card's faults without these.
-_FAULTS_ADDED_AFTER_0_4_1 = frozenset({"broken_probe"})
+#: issue #478: each packaged card's ``faults:`` list as it stood at game
+#: 0.4.1, in order. A run stored before runs carried their own fault list
+#: (no ``fault_indices``) was drawn from exactly this list. It is an
+#: allow-list fixed at 0.4.1: a fault added to a card later never joins it,
+#: so it never changes what an old run replays to. Never edit it.
+_FAULT_IDS_AT_0_4_1: dict[str, tuple[str, ...]] = {
+    "buck-12v-5v": ("ok", "low_voltage", "noise", "open"),
+    "buck-12v-relay": ("ok", "low_voltage", "open", "overheat"),
+    "buck-5v-3v3": ("ok", "low_voltage", "noise", "open"),
+    "buck-9v-3v3-tight": ("ok", "low_voltage", "high_voltage", "noise", "open"),
+    "ldo-5v-3v3": ("ok", "low_voltage", "noise", "open"),
+}
 
 
 def broken_probe_residual_v(rail: Rail, seed: int) -> float:
@@ -79,9 +87,13 @@ def broken_probe_residual_v(rail: Rail, seed: int) -> float:
 
 
 def legacy_fault_ids(card: Card) -> list[str]:
-    """The fault list a run with no stored ``fault_ids`` was drawn from:
-    the card's faults as they stood at game 0.4.1 (issue #478)."""
-    return [f.id for f in card.faults if f.id not in _FAULTS_ADDED_AFTER_0_4_1]
+    """The fault list a run with no stored ``fault_indices`` was drawn from:
+    the card's faults as they stood at game 0.4.1 (issue #478). A card that
+    was not packaged at 0.4.1 has no older list, so its own list is used."""
+    pinned = _FAULT_IDS_AT_0_4_1.get(card.id)
+    if pinned is None:
+        return [f.id for f in card.faults]
+    return list(pinned)
 
 
 def fault_ids_at(card: Card, indices: Sequence[int]) -> list[str]:

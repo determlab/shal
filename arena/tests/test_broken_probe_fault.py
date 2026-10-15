@@ -10,12 +10,13 @@ list) is read as the old 4-fault list, and still replays and renders.
 """
 from __future__ import annotations
 
-import hashlib
+import dataclasses
 import json
 import shutil
 from pathlib import Path
 
 import pytest
+import yaml
 
 from shal_arena import fault as fault_mod
 from shal_arena.loader import load_task
@@ -23,11 +24,13 @@ from shal_arena.replay.card import build_result_card
 from shal_arena.runner import (
     answer,
     drive_input,
+    has_any_measurement,
     pick_fault,
     run_fault_ids,
     start_run,
     take_measurement,
 )
+from shal_arena.schema import Fault, validate_card
 from shal_arena.score import GAME_VERSION, build_score
 from shal_arena.store import RunStore
 
@@ -201,15 +204,13 @@ def test_an_old_relay_rail_run_replays_to_the_same_fault_and_score(tmp_path):
 
     again = build_score(task_id=score["task_id"], seed=state.seed, fault_id=record["fault_id"],
                         given=record["given"], correct=record["correct"],
-                        disqualified=False, created_at=state.created_at,
+                        disqualified=not has_any_measurement(run_id, state_dir),
+                        created_at=state.created_at,
                         closed_at=record["closed_at"], turns=state.turns,
                         record_path=RunStore(state_dir).record_path(run_id))
     assert {k: again[k] for k in _RULE_KEYS} == {k: score[k] for k in _RULE_KEYS}
-    # the stored score still hashes this record (git may check the fixture
-    # out with CRLF on Windows; the run wrote it with LF)
-    record_bytes = RunStore(state_dir).record_path(run_id).read_bytes()
-    assert hashlib.sha256(record_bytes.replace(b"\r\n", b"\n")).hexdigest() == (
-        score["record_sha256"])
+    # the fixtures are checked out byte-for-byte (`.gitattributes`: -text)
+    assert again["record_sha256"] == score["record_sha256"]
 
     html = build_result_card(run_id, state_dir=state_dir)
     assert "1 of 1 faults caught." in html
@@ -223,3 +224,54 @@ def test_an_old_0_4_0_run_still_replays_to_its_fault(tmp_path):
     card = load_task(str(_REPO_ROOT / state.task_path)).card
     assert pick_fault(card, state.seed, run_fault_ids(card, state)) == record["fault_id"]
     assert "1 of 1 faults caught." in build_result_card(run_id, state_dir=state_dir)
+
+
+def _with_an_appended_fault(card):
+    """A copy of ``card`` with one more fault at the end of ``faults:``."""
+    return dataclasses.replace(
+        card, faults=card.faults + (Fault(id="dummy_added_later", extra={"rail": "3v3"}),))
+
+
+def test_adding_a_fault_never_changes_what_an_old_run_replays_to(tmp_path):
+    """CTO review on #485: the list a pre-0.4.2 run was drawn from is an
+    allow-list fixed at 0.4.1. A fault appended to the card later changes
+    neither `legacy_fault_ids` nor the fault the 0.4.1 fixture replays to."""
+    card = _card()
+    grown = _with_an_appended_fault(card)
+    assert fault_mod.legacy_fault_ids(grown) == fault_mod.legacy_fault_ids(card) == [
+        "ok", "low_voltage", "open", "overheat"]
+
+    run_id, state_dir, record, _ = _replay(_OLD_RELAY_RAIL_RUN, tmp_path)
+    state = RunStore(state_dir).load(run_id)
+    assert pick_fault(grown, state.seed, run_fault_ids(grown, state)) == record["fault_id"]
+    assert record["fault_id"] == "open"
+
+
+_PACKAGED_CARDS = Path(fault_mod.__file__).resolve().parent / "cards"
+#: each packaged card's `faults:` list today. Each is a required prefix of
+#: the card's list: append a new fault (and its id here), never reorder,
+#: insert or delete. A new card gets its own entry.
+_FAULTS_PREFIX = {
+    "buck-12v-5v": ["ok", "low_voltage", "noise", "open"],
+    "buck-12v-relay": ["ok", "low_voltage", "open", "overheat", "broken_probe"],
+    "buck-5v-3v3": ["ok", "low_voltage", "noise", "open"],
+    "buck-9v-3v3-tight": ["ok", "low_voltage", "high_voltage", "noise", "open"],
+    "ldo-5v-3v3": ["ok", "low_voltage", "noise", "open"],
+}
+
+
+@pytest.mark.parametrize("card_file", sorted(p.name for p in _PACKAGED_CARDS.glob("*.yaml")))
+def test_faults_list_is_append_only(card_file):
+    """CTO review on #485: a run stores its fault list as positions in the
+    card's `faults:` list, so that list may only grow at the end."""
+    card = validate_card(yaml.safe_load((_PACKAGED_CARDS / card_file).read_text(encoding="utf-8")))
+    assert card.id in _FAULTS_PREFIX, (
+        f"{card_file}: new packaged card; add its `faults:` ids to _FAULTS_PREFIX")
+    pinned = _FAULTS_PREFIX[card.id]
+    current = [f.id for f in card.faults]
+    assert current[:len(pinned)] == pinned, (
+        f"{card_file}: `faults:` is append-only; add at the end and bump GAME_VERSION "
+        f"(was {pinned}, now {current})")
+    # the 0.4.1 list a pre-0.4.2 run replays from is a prefix too
+    legacy = fault_mod.legacy_fault_ids(card)
+    assert current[:len(legacy)] == legacy
