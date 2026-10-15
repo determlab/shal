@@ -90,8 +90,13 @@ def _measure_failure_cause(measure_doc: dict[str, Any]) -> str:
     return "transport" if ("HopError" in message or "HopTimeout" in message) else "driver"
 
 
+#: issue #495: a card drawing at least this much supply current works (same
+#: threshold as `shal_arena.demo.PROBE_MIN_CURRENT_A`); an `open` one draws ~0 A.
+PROBE_MIN_CURRENT_A = 0.01
+
+
 def _diagnose(nominal_v: float, tol_pct: float, readings: list[float],
-             allowed: set[str]) -> str:
+             allowed: set[str], current_a: float | None = None) -> str:
     """A guess from the measurements alone (same logic as `shal_arena.demo`'s
     own `_diagnose`, parametrized on the rail's numbers instead of a `Rail`
     object this script has no import for, and on several readings instead of
@@ -106,6 +111,9 @@ def _diagnose(nominal_v: float, tol_pct: float, readings: list[float],
     falls back to `noise` when the task even offers it."""
     if not readings:
         return "error"
+    if (abs(readings[-1]) < OPEN_FRACTION * nominal_v and "probe" in allowed
+            and current_a is not None and abs(current_a) >= PROBE_MIN_CURRENT_A):
+        return "probe"      # issue #495: ~0 V but the card draws its normal current
     if abs(readings[-1]) < OPEN_FRACTION * nominal_v and "open" in allowed:
         return "open"
     band = nominal_v * tol_pct / 100
@@ -183,7 +191,8 @@ def check_arena_score_file(level: str, score_exists: bool, answer_doc: dict[str,
     realized fault was not `ok` (`score["fault_type"]`, same test
     `build_score`'s own `caught` uses) -- at least one fault caught."""
     score = answer_doc.get("score") or {}
-    has_fault = score.get("fault_type") not in (None, "ok")
+    # `broken_probe` is a good card (issue #478): no card fault to catch
+    has_fault = score.get("fault_type") not in (None, "ok", "broken_probe")
     ok = (score_exists and bool(score)
          and answer_doc.get("correct") is True
          and answer_doc.get("disqualified") is False
@@ -338,14 +347,16 @@ def run_arena_task_score_file(venv_python: str, level: str, state_dir: Path, *,
         measure_argv = ["-m", "shal_arena.cli", "measure", run_id, str(probe_inst["address"]),
                        str(driver_path), "--state-dir", str(state_dir), "--json"]
         readings: list[float] = []
+        current_a: float | None = None
         for _ in range(_N_READS):
             measure_doc, measure_ec = _run_json(venv_python, measure_argv)
             if measure_ec != EXIT_PASS:
                 readings = []   # a broken link to the bench, not a card fault (#477)
                 break
             readings.append(measure_doc["reading"])
+            current_a = measure_doc.get("current_a")
 
-    given = _diagnose(rail["nominal_v"], rail["tol_pct"], readings, allowed)
+    given = _diagnose(rail["nominal_v"], rail["tol_pct"], readings, allowed, current_a)
     if given == "error":
         # issue #477: nothing to answer -- the run is an `error`, never
         # scored as a correct `fail`
