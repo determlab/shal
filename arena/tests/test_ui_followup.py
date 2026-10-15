@@ -1,8 +1,8 @@
-"""issue #427 (demo follow-up to #406): the CMO problem text is on every
-page, `drivers` round-trips into the embedded payload and is never
-interpreted as markup, `rails`/`level` are in the payload for the answer
-sentence, and the static shell has the separate containers the scripted
-section and the driver-code fold need."""
+"""issue #427 (demo follow-up to #406): `drivers` round-trips into the
+embedded payload and is never interpreted as markup, and `rails`/`level`
+are in the payload for the answer sentence. issue #447 removed the CMO
+problem text, the step captions and the scripted section from the page
+(they become README and post text); a test below checks they are gone."""
 from __future__ import annotations
 
 import json
@@ -14,7 +14,7 @@ from shal_arena.runner import answer, drive_input, start_run, take_measurement
 from shal_arena.simlog import SimLog
 from shal_arena.ui.data import run_payload
 from shal_arena.ui.export import build_export
-from shal_arena.ui.page import PROBLEM_LINES, render_watch_page
+from shal_arena.ui.page import render_watch_page
 
 from .conftest import (
     BUGGY_DMM_DRIVER,
@@ -35,53 +35,29 @@ _BASE_PAYLOAD = {
 }
 
 
-def test_problem_lines_are_on_the_static_shell() -> None:
-    html = render_watch_page("run-x", _BASE_PAYLOAD)
-    for line in PROBLEM_LINES:
-        assert line in html
-
-
-_STEP_CAPTIONS = (
+# issue #447 page text: "The three problem lines and the step captions from
+# #406 are removed from this page (they become README and post text)", and
+# the page shows no paragraph text beyond the title, the one line under it,
+# the result line and the footer -- the scripted-checks section goes too.
+_REMOVED_TEXT = (
+    "A good unit fails on the line. The line stops.",
+    "An agent driving real instruments can destroy a card with one wrong",
+    "SHAL tells a cable fault (error) from a bad unit (fail)",
     "The agent reads each instrument's datasheet.",
     "It writes a driver for each one and checks it.",
     "The bench: power supply, multimeter, card.",
     "It powers the card and measures the 3.3 V rail.",
+    "It switches the card on through the relay, then measures the 3.3 V ",
     "The answer: which measurement failed, against which limit.",
+    "Not in this run: two checks from the scripted demo",
+    "In the scripted demo",
 )
 
 
-def test_four_instrument_bench_subtitle_matches_the_exact_cmo_wording() -> None:
-    """issue #432 CMO wording (CTO-approved, exact text)."""
+def test_problem_lines_captions_and_scripted_section_are_removed() -> None:
     html = render_watch_page("run-x", _BASE_PAYLOAD)
-    assert "It switches the card on through the relay, then measures the 3.3 V " in html
-    assert "rail and the regulator temperature." in html
-
-
-def test_all_seven_step_captions_are_verbatim_on_the_page() -> None:
-    """issue #427 CTO review round 2: captions 1, 2, 4, 6 and 7 were
-    missing. All seven, exact text, from the #406 issue body."""
-    html = render_watch_page("run-x", _BASE_PAYLOAD)
-    for caption in _STEP_CAPTIONS:
-        assert caption in html, caption
-
-
-def test_scripted_section_title_and_lines_match_the_exact_cmo_wording() -> None:
-    """issue #444: the scripted checks did not happen in THIS replayed run
-    -- the heading and both lines say so explicitly, exact CMO text."""
-    html = render_watch_page("run-x", _BASE_PAYLOAD)
-    assert "Not in this run: two checks from the scripted demo" in html
-    assert "In the scripted demo (<code>shal-arena demo</code>), a step asks for 30 V " in html
-    assert "on purpose. The gate stops it before anything is sent." in html
-    assert "In the scripted demo, a cable is unplugged. The result is error, not fail: " in html
-    assert "the card is not blamed." in html
-    assert "Two more checks, scripted" not in html
-
-
-def test_shell_has_the_driver_code_and_scripted_containers() -> None:
-    html = render_watch_page("run-x", _BASE_PAYLOAD)
-    assert '<div id="driver-code-section">' in html
-    assert '<div id="scripted-section">' in html
-    assert '<div id="plain-line" class="plain-line">' in html
+    for text in _REMOVED_TEXT:
+        assert text not in html, text
 
 
 def test_payload_carries_level_and_rails_for_the_answer_sentence() -> None:
