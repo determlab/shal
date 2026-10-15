@@ -290,6 +290,50 @@ def _role(instrument: Any) -> str:
     return f"probes {instrument.probe}"
 
 
+#: issue #489: an answer in the commands window is cut to about this long.
+_CLI_ANSWER_MAX = 120
+
+
+def _cli_answer(entry: dict[str, Any]) -> str:
+    """The short form of one logged call's answer: its JSON on one line, or
+    (`json: null`) its printed text; cut with an ellipsis. Values are shown
+    as the file has them -- already redacted by #460, never redacted again."""
+    if entry.get("json") is not None:
+        shown = json.dumps(entry["json"], ensure_ascii=False)
+    else:
+        shown = " ".join(str(entry.get("text") or "").split())
+    return shown[:_CLI_ANSWER_MAX] + "…" if len(shown) > _CLI_ANSWER_MAX else shown
+
+
+def _cli_log(store: RunStore, run_id: str) -> dict[str, Any]:
+    """issue #489: the rows of `<run>.cli.jsonl` (#460), one per line in file
+    order, for the page's "shal-arena commands" window. A missing file is no
+    rows; a line that is not a JSON object with a list `argv` and an integer
+    `exit_code` is skipped and counted in `skipped`, never raised."""
+    path = store.cli_log_path(run_id)
+    rows, skipped = [], 0
+    if path.is_file():
+        for line in path.read_text(encoding="utf-8", errors="replace").split("\n"):
+            if not line.strip():
+                continue
+            try:
+                entry = json.loads(line)
+            except ValueError:
+                skipped += 1
+                continue
+            argv, code = (entry.get("argv"), entry.get("exit_code")) \
+                if isinstance(entry, dict) else (None, None)
+            if not isinstance(argv, list) or isinstance(code, bool) or not isinstance(code, int):
+                skipped += 1
+                continue
+            command = " ".join(str(a) for a in argv)
+            if not command.startswith("shal-arena"):
+                command = f"shal-arena {command}".rstrip()
+            rows.append({"command": command, "exit_code": code, "failed": code != 0,
+                         "answer": _cli_answer(entry)})
+    return {"rows": rows, "skipped": skipped}
+
+
 def run_payload(run_id: str, *, state_dir: str | Path = DEFAULT_STATE_DIR) -> dict[str, Any]:
     """Everything the page needs for one run, live or finished. Raises
     `shal_arena.errors.UnknownRun` (same as every other reader) for a run id
@@ -365,6 +409,7 @@ def run_payload(run_id: str, *, state_dir: str | Path = DEFAULT_STATE_DIR) -> di
             for b in loaded.card.blocks
         ],
         "timeline": _timeline(run_id, store),
+        "cli_log": _cli_log(store, run_id),
         "record": record,
         "score": score,
     }
