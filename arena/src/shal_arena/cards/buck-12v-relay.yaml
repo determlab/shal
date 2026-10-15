@@ -11,6 +11,9 @@ damage:
   - {input: vin, above_v: 13.0, effect: protection, source: "datasheet 7.3 OVP (fictional datasheet)"}
   - {input: vin, above_v: 14.0, effect: destroyed, source: "datasheet 6.1 abs max (fictional datasheet)"}
 faults:
+  # issue #478: listed first so `ok` keeps >= 20% of seeds 0-29 (#461); a run
+  # stored before it existed draws from this list without it (fault.py).
+  - {id: broken_probe, rail: 3v3, answer: probe}
   - {id: ok, rail: 3v3}
   - {id: low_voltage, rail: 3v3, shift_v: -0.40}
   - {id: open, rail: 3v3}

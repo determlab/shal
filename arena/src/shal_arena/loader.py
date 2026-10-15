@@ -159,7 +159,7 @@ def _cross_check(task: Task, card: Card, task_path: Path) -> None:
                     fix=f"set probe to one of {sorted('card.' + t for t in test_points)}")
 
     if task.question.answer.kind == "enum":
-        fault_ids = {f.id for f in card.faults}
+        fault_ids = {str(f.extra.get("answer", f.id)) for f in card.faults}  # issue #478
         answer_values = set(task.question.answer.values)
         if answer_values != fault_ids:
             raise TaskFormatError(

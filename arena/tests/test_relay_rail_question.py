@@ -95,7 +95,7 @@ def test_no_hint_word_reaches_what_the_agent_actually_receives(tmp_path):
 # the answer values are still visible in the run JSON
 # --------------------------------------------------------------------------- #
 
-def test_cli_run_still_lists_the_four_answer_values(tmp_path):
+def test_cli_run_still_lists_the_answer_values(tmp_path):
     proc = subprocess.run(
         [sys.executable, "-m", "shal_arena.cli", "run", str(RELAY_RAIL_TASK),
          "--state-dir", str(tmp_path / "state"), "--json"],
@@ -104,7 +104,7 @@ def test_cli_run_still_lists_the_four_answer_values(tmp_path):
     doc = json.loads(proc.stdout)
     assert doc["ok"] is True
     assert doc["task"]["answer"]["values"] == [
-        "ok", "low_voltage", "open", "overheat"]
+        "ok", "low_voltage", "open", "overheat", "probe"]
 
 
 # --------------------------------------------------------------------------- #

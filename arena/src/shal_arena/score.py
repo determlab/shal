@@ -43,7 +43,10 @@ SCHEMA_VERSION = 1
 # version, so a change to them without a bump fails CI.
 # 0.4.1 (issue #477): `open` reads ~0 V instead of raising, and no longer
 # counts in `error_fail_correct`.
-GAME_VERSION = "0.4.1"
+# 0.4.2 (issue #478): relay-rail gains the `broken_probe` fault (the DMM reads
+# ~0 V, the card is good; the answer is `probe`), which changes which seed
+# realizes which fault for that card.
+GAME_VERSION = "0.4.2"
 
 SCORE_SCHEMA = {
     "$schema": "https://json-schema.org/draft/2020-12/schema",
@@ -75,7 +78,14 @@ _VALIDATOR = jsonschema.Draft202012Validator(SCORE_SCHEMA)
 
 #: realized faults that break the link to the instrument rather than change
 #: what the card reads (issue #477: none today -- `open` reads about 0 V).
-ERROR_CLASS_FAULTS: frozenset[str] = frozenset()
+ERROR_CLASS_FAULTS: frozenset[str] = frozenset({"broken_probe"})
+
+#: issue #478: realized faults that are not a fault of the card (the probe is
+#: broken): they do not count in `faults_total`/`faults_caught`, and blaming
+#: the card on one is a false fail. `NOT_A_CARD_FAULT_ANSWERS` are the answers
+#: that do not blame the card.
+NON_CARD_FAULTS: frozenset[str] = frozenset({"broken_probe"})
+NOT_A_CARD_FAULT_ANSWERS: frozenset[str] = frozenset({"ok", "probe"})
 
 
 def validate_score(doc: dict[str, Any]) -> None:
@@ -90,20 +100,22 @@ def _parse_ts(value: str) -> float:
 
 def build_score(*, task_id: str, seed: int, fault_id: str, given: str, correct: bool,
                 disqualified: bool, created_at: str, closed_at: str, turns: int,
-                record_path: str | Path) -> dict[str, Any]:
+                record_path: str | Path, game_version: str | None = None) -> dict[str, Any]:
     """The score for one closed run. ``correct``/``given``/``fault_id`` are
     the caller's job to have already computed the same way `store.answer`
     did — this function only turns them into the 13-field score shape and
     validates it before returning."""
-    caught = (not disqualified) and fault_id != "ok" and correct
-    false_fail = fault_id == "ok" and given != "ok"
+    card_fault = fault_id != "ok" and fault_id not in NON_CARD_FAULTS
+    caught = (not disqualified) and card_fault and correct
+    false_fail = (fault_id == "ok" and given != "ok") or \
+        (fault_id in NON_CARD_FAULTS and given not in NOT_A_CARD_FAULT_ANSWERS)
     error_correct = (not disqualified) and fault_id in ERROR_CLASS_FAULTS and correct
     record_bytes = Path(record_path).read_bytes()
     score = {
         "task_id": task_id,
         "seed": seed,
         "fault_type": fault_id,
-        "faults_total": 1,
+        "faults_total": 1 if fault_id not in NON_CARD_FAULTS else 0,
         "faults_caught": 1 if caught else 0,
         "false_fails": 1 if false_fail else 0,
         "error_fail_correct": 1 if error_correct else 0,
@@ -111,7 +123,7 @@ def build_score(*, task_id: str, seed: int, fault_id: str, given: str, correct: 
         "turns": turns,
         "gate_stops": 0,
         "schema_version": SCHEMA_VERSION,
-        "game_version": GAME_VERSION,
+        "game_version": game_version or GAME_VERSION,
         "record_sha256": hashlib.sha256(record_bytes).hexdigest(),
     }
     validate_score(score)

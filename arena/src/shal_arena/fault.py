@@ -40,12 +40,33 @@ _NOISE_SCALE_RANGE = (0.7, 1.3)
 _OPEN_RESIDUAL_FRACTION = 0.005
 
 
-def open_residual_v(rail: Rail, seed: int) -> float:
+def open_residual_v(rail: Rail, seed: int, kind: str = "open") -> float:
     """The reading an ``open`` ``rail`` gives for ``seed``: about 0 V, the
     same for every call of the same seed (no ``nonce``), rounded to the
-    DMM's own 6 decimals so it formats identically everywhere."""
-    rng = random.Random(f"open:{seed}")
+    DMM's own 6 decimals so it formats identically everywhere. A
+    ``broken_probe`` (issue #478) reads the same way, from its own RNG key."""
+    rng = random.Random(f"{kind}:{seed}")
     return round(rng.uniform(0.0, _OPEN_RESIDUAL_FRACTION) * rail.nominal_v, 6)
+
+#: issue #478: faults that are not a fault of the card (the probe is broken).
+#: Added to a card's ``faults`` AFTER the original four, so a run stored with
+#: the old list (or none) still draws the same fault from it.
+PROBE_FAULT = "broken_probe"
+
+
+def legacy_fault_ids(card: Card) -> list[str]:
+    """The fault list a run without a stored one was drawn from: the card's
+    faults as they were before ``broken_probe`` (issue #478)."""
+    return [f.id for f in card.faults if f.id != PROBE_FAULT]
+
+
+def answer_for(card: Card, fault_id: str) -> str:
+    """The answer that names ``fault_id``: the fault entry's own ``answer:``
+    when it has one (``broken_probe`` -> ``probe``), else its id."""
+    for f in card.faults:
+        if f.id == fault_id:
+            return str(f.extra.get("answer", fault_id))
+    return fault_id
 
 
 @dataclass(frozen=True)
@@ -54,12 +75,17 @@ class RealizedFault:
     extra: dict[str, Any] = field(default_factory=dict)
 
 
-def realized_fault(card: Card, seed: int) -> RealizedFault:
+def realized_fault(card: Card, seed: int,
+                   fault_ids: list[str] | None = None) -> RealizedFault:
     """The fault this run has, realized deterministically from ``seed``
     alone: same seed -> same `RealizedFault` (fault id AND noise), a
-    different seed can give a different one of either."""
+    different seed can give a different one of either. ``fault_ids`` is the
+    list the run was drawn from (issue #478: stored on the run); `None` is
+    every fault the card has now."""
     rng = random.Random(seed)
-    fault = rng.choice(card.faults)
+    faults = card.faults if fault_ids is None else \
+        tuple(next(f for f in card.faults if f.id == i) for i in fault_ids)
+    fault = rng.choice(faults)
     noise_scale = rng.uniform(*_NOISE_SCALE_RANGE)
     extra = dict(fault.extra)
     if fault.id == "noise" and "ripple_vpp" in extra:
@@ -96,6 +122,9 @@ def harness_for_run(case: Any, *, rail: Rail, realized: RealizedFault, seed: int
     - ``open`` (issue #477): the node gets a ``config:`` with ``open_v``, the
       seed's own `open_residual_v` -- the sim model reads it instead of the
       rail's nominal, so the instrument answers about 0 V. No hop raises.
+    - ``broken_probe`` (issue #478): the same ``open_v`` config, on the probe
+      instrument only -- the card sim, supply current and temperature are
+      those of an ``ok`` card.
     - ``low_voltage`` / ``noise``: the node gets a ``config:`` carrying the
       rail's nominal voltage plus the realized shift/ripple, read by the
       case's sim model at bind time (``bind_sim``, the same hook shal core's
@@ -120,9 +149,9 @@ def harness_for_run(case: Any, *, rail: Rail, realized: RealizedFault, seed: int
     bench = next(iter(doc["root"].values()))
     _child_key, child = next(iter(bench["children"].items()))
 
-    if realized.fault_id == "open":
+    if realized.fault_id in ("open", PROBE_FAULT):
         child["config"] = {"nominal_v": rail.nominal_v,
-                           "open_v": open_residual_v(rail, seed)}
+                           "open_v": open_residual_v(rail, seed, realized.fault_id)}
         return doc
 
     config: dict[str, Any] = {"nominal_v": rail.nominal_v}

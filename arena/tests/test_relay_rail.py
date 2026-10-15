@@ -117,7 +117,7 @@ def test_overheat_is_indistinguishable_from_ok_on_the_rail_alone(tmp_path: Path)
 # --------------------------------------------------------------------------- #
 
 def test_start_run_never_leaks_the_fault_or_its_vocabulary(tmp_path: Path) -> None:
-    for fault_id in ("ok", "low_voltage", "open", "overheat"):
+    for fault_id in ("ok", "low_voltage", "open", "overheat", "broken_probe"):
         seed = _seed_for(fault_id)
         state_dir = tmp_path / fault_id
         result = start_run(str(RELAY_RAIL_TASK), seed=seed, state_dir=state_dir)
@@ -128,7 +128,7 @@ def test_start_run_never_leaks_the_fault_or_its_vocabulary(tmp_path: Path) -> No
         # `low_voltage`/`overheat` from `_FAULT_WORDS` was never needed.
         answer = result["task"].pop("answer")
         assert answer == {"kind": "enum",
-                          "values": ["ok", "low_voltage", "open", "overheat"]}
+                          "values": ["ok", "low_voltage", "open", "overheat", "probe"]}
         text = json.dumps(result)
         for word in _FAULT_WORDS:
             assert word not in text, (fault_id, word, text)
