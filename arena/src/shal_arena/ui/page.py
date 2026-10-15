@@ -168,6 +168,16 @@ button:focus-visible { outline: 2px solid var(--text); outline-offset: 2px; }
 .step .detail { font: 13px var(--mono); }
 .step[data-state~="cur"] { background: color-mix(in srgb, var(--gate) 14%, transparent); }
 .step[data-state~="stop"] .what { color: var(--bad); }
+.cli-head { display: flex; justify-content: space-between; gap: 4px 12px; flex-wrap: wrap;
+  align-items: baseline; }
+.cli-head .labels { font-size: 13px; }
+.cli-row { display: grid; gap: 2px 12px; padding: 8px; border-bottom: 1px solid var(--line);
+  grid-template-columns: minmax(0, 1fr) auto; font: 13px var(--mono); align-items: start; }
+.cli-row .cmd { overflow-wrap: anywhere; }
+.cli-row .code { color: var(--ok); }
+.cli-row .ans { grid-column: 1 / -1; color: var(--dim); overflow-wrap: anywhere; }
+.cli-row[data-state="failed"] .code { color: var(--bad); font-weight: 700; }
+.cli-note { color: var(--dim); font-size: 13px; margin: 6px 0 0; }
 .pill { font-size: 13px; font-weight: 700; padding: 2px 8px; border-radius: 999px;
   white-space: nowrap; margin-left: 6px; }
 .pill.sent { background: rgba(255,178,36,.15); color: var(--gate); }
@@ -815,6 +825,33 @@ function renderTimeline(payload) {
     !payload.closed && i === agentSteps.length - 1)));
 }
 
+// issue #489: the agent's own `shal-arena` calls, one row per line of
+// `<run>.cli.jsonl` -- every value from the file goes in as text, never markup.
+function renderCliWindow(payload) {
+  const log = payload.cli_log || {rows: [], skipped: 0};
+  const live = payload.mode === "live";
+  const head = el("div", "cli-head");
+  head.appendChild(el("h2", "", "The agent's shal-arena commands, as it ran them"));
+  if (!live) head.appendChild(el("span", "labels", "Replay of a recorded run"));
+  const kids = [head];
+  if (!log.rows.length) {
+    kids.push(el("div", "cli-note", "No shal-arena commands were recorded for this run."));
+  }
+  for (const r of log.rows) {
+    const row = el("div", "cli-row");
+    if (r.failed) row.setAttribute("data-state", "failed");
+    row.appendChild(el("div", "cmd", r.command));
+    row.appendChild(el("div", "code",
+      `exit ${r.exit_code}` + (r.failed ? " · failed" : "")));
+    row.appendChild(el("div", "ans", r.answer));
+    kids.push(row);
+  }
+  if (log.skipped) {
+    kids.push(el("div", "cli-note", `${plural(log.skipped, "line")} could not be read`));
+  }
+  fill(document.getElementById("cli-window"), kids);
+}
+
 // issue #457 (scope added): the page shows each instrument's role as
 // plain words BUILT from the task yaml's own `drives:`/`probe:`/`switches:` field and
 // the rail/temp-point data already in the payload -- "powers VIN",
@@ -875,6 +912,7 @@ function render(payload) {
   renderDiagram(payload);
   renderInstruments(payload);
   renderTimeline(payload);
+  renderCliWindow(payload);
   renderFooter(payload);
   renderReplayButton(payload);
 }
@@ -950,6 +988,7 @@ def _shell(run_id: str, *, banner: str = "") -> str:
       <span class="detail">Reply</span></div>
     <div id="timeline-list"></div>
   </section>
+  <section class="box" id="cli-window" aria-label="The agent's shal-arena commands"></section>
   <footer>{SAFETY_LINE} &middot; <span id="run-label"{fixed}>{banner}</span>
     &middot; <a href="{REPO_URL}">github.com/determlab/shal</a>
   </footer>
