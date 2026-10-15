@@ -57,6 +57,7 @@ class SimScpiBus(SimFaultMixin, Driver, Transport, MessageTransport):
 
     compatible = "shal,sim-scpi"
     kind = None  # may sit at root, or behind any CommandTransport later
+    simulated = True  # issue #347 round 2: a real driver on this bus is still a sim
 
     def __init__(self, node: Node) -> None:
         Transport.__init__(self, node)
@@ -201,6 +202,7 @@ class SimPsu(Driver):
     compatible = "shal,sim-psu"
     kind = MessageTransport
     llm_ready = True
+    simulated = True  # issue #347: a SHAL simulator, never a real instrument
 
     DEFAULT_LOAD_OHMS = 10.0
 
@@ -330,6 +332,7 @@ class SimDmm(Driver):
     compatible = "shal,sim-dmm"
     kind = MessageTransport
     llm_ready = True
+    simulated = True  # issue #347: a SHAL simulator, never a real instrument
 
     def bind(self, node: Node) -> None:
         # it wraps no part: on a real bus it would talk to whatever instrument
