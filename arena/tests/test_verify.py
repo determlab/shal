@@ -252,3 +252,60 @@ def test_sample_record_names_no_local_path() -> None:
         value = record[field]
         assert not Path(value).is_absolute() and ":" not in value and "\\" not in value, value
         assert value.startswith("arena/src/shal_arena/"), value
+
+
+GOLDEN_041_RELAY = (Path(__file__).resolve().parent / "fixtures" / "runs"
+                    / "main-0.4.1-relay-rail-open")
+GOLDEN_041_RELAY_STEM = "run-20261007T092620Z-2b92c03f"
+
+
+def _relay_rail_challenge(tmp_path: Path, monkeypatch, seed: int, game_versions) -> None:
+    import shal_arena.verify as verify_mod
+
+    challenges = tmp_path / "challenges"
+    challenges.mkdir()
+    (challenges / "2026-99.yaml").write_text(
+        f"week: '2026-99'\ntask_id: relay-rail\nseed: {seed}\n"
+        f"game_versions: {json.dumps(game_versions)}\n", encoding="utf-8")
+    monkeypatch.setattr(verify_mod, "challenges_dir", lambda: challenges)
+
+
+def test_a_0_4_1_relay_rail_run_replays_from_the_old_fault_list(tmp_path: Path,
+                                                                  monkeypatch) -> None:
+    # issue #478: seed 5 realizes `open` from relay-rail's 0.4.1 list but
+    # `broken_probe` from its 0.4.2 one; verify must draw from the 0.4.1 list.
+    run_dir = tmp_path / "run"
+    run_dir.mkdir()
+    for suffix in ("score.json", "arena-record.json", "simlog.jsonl"):
+        shutil.copy(GOLDEN_041_RELAY / f"{GOLDEN_041_RELAY_STEM}.{suffix}",
+                    run_dir / f"{GOLDEN_041_RELAY_STEM}.{suffix}")
+    _relay_rail_challenge(tmp_path, monkeypatch, 5, ["0.4.1", "0.4.2"])
+    result = verify(run_dir / f"{GOLDEN_041_RELAY_STEM}.score.json", week="2026-99")
+    assert result["result"] == "verified", result
+
+
+def test_a_0_4_2_broken_probe_run_verifies(tmp_path: Path, monkeypatch) -> None:
+    # a live 0.4.2 run: relay-rail seed 5 is `broken_probe`, answered `probe`
+    from shal_arena.runner import answer, drive_input, start_run, take_measurement
+    from shal_arena.score import GAME_VERSION
+
+    from .conftest import PASSING_DMM_DRIVER, RELAY_RAIL_TASK
+
+    state_dir = tmp_path / "state"
+    run_id = start_run(str(RELAY_RAIL_TASK), seed=5, state_dir=state_dir)["run_id"]
+    drive_input(run_id, "psu0", 12.0, state_dir=state_dir)
+    take_measurement(run_id, "dmm0", PASSING_DMM_DRIVER, state_dir=state_dir)
+    out = answer(run_id, "probe", state_dir=state_dir)
+    assert out["score"]["fault_type"] == "broken_probe"
+    assert out["score"]["error_fail_correct"] == 1
+    _relay_rail_challenge(tmp_path, monkeypatch, 5, [GAME_VERSION])
+
+    score_path = next(state_dir.rglob(f"{run_id}.score.json"))
+    result = verify(score_path, week="2026-99")
+    assert result["result"] == "verified", result
+
+
+def test_every_game_version_has_scoring_rules() -> None:
+    from shal_arena.score import ERROR_CLASS_FAULTS_BY_VERSION, GAME_VERSION
+
+    assert GAME_VERSION in ERROR_CLASS_FAULTS_BY_VERSION

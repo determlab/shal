@@ -61,8 +61,11 @@ Trust model (the sim is open-source, so only the keys below are load-bearing):
   instrument list to check addresses against, only the log; flagged here
   for CTO review the same way ``score.py``'s own ambiguous fields are.
 - The score is recomputed under the rules of its own ``game_version``
-  (``score.ERROR_CLASS_FAULTS_BY_VERSION``; fault realization is the same in
-  every listed version, only scoring differs). A version not in that table
+  (``score.ERROR_CLASS_FAULTS_BY_VERSION``, through the same
+  ``score.score_counts`` ``build_score`` uses). The fault list the seed draws
+  from also follows the version, never the record: a 0.4.0/0.4.1 run draws
+  from ``fault.legacy_fault_ids`` (the card's faults as at 0.4.1), a 0.4.2
+  run from the card's packaged list (issue #478). A version not in that table
   is ``refused`` / ``unknown_game_version``. ``game_version`` sits in the
   score file, which ``record_sha256`` does not cover, so the label alone is
   not trusted: the week's challenge file lists the versions it accepts
@@ -87,9 +90,14 @@ from typing import Any
 import jsonschema
 import yaml
 
-from .fault import realized_fault
+from .fault import answer_for, legacy_fault_ids, realized_fault
 from .loader import LoadedTask, load_task
-from .score import ERROR_CLASS_FAULTS_BY_VERSION, validate_score
+from .score import (
+    ERROR_CLASS_FAULTS_BY_VERSION,
+    LEGACY_FAULT_LIST_VERSIONS,
+    score_counts,
+    validate_score,
+)
 
 # TASKS_DIR travels WITH the installed package (same pattern runner.py's own
 # task resolution already uses) -- a player needs no source checkout to run
@@ -268,7 +276,14 @@ def verify(score_path: str | Path, *, week: str | None = None) -> dict[str, Any]
             f"record_sha256 (expected {score['record_sha256']}, got {actual_sha256})",
             week).as_dict()
 
-    fault_id = realized_fault(loaded.card, challenge["seed"]).fault_id
+    # the fault list comes from the game version, never from the record:
+    # a pre-0.4.2 run was drawn from the card's list as it stood at 0.4.1,
+    # a 0.4.2 run from the card's full packaged list (issue #478).
+    if game_version in LEGACY_FAULT_LIST_VERSIONS:
+        fault_ids: list[str] | None = legacy_fault_ids(loaded.card)
+    else:
+        fault_ids = None
+    fault_id = realized_fault(loaded.card, challenge["seed"], fault_ids).fault_id
     if record.get("fault_id") != fault_id:
         return _disqualified(
             f"fault_mismatch: the record claims fault {record.get('fault_id')!r}, but "
@@ -276,11 +291,13 @@ def verify(score_path: str | Path, *, week: str | None = None) -> dict[str, Any]
             f"{fault_id!r}", week).as_dict()
 
     given = record.get("given")
-    correct = given == fault_id
+    expected_answer = answer_for(loaded.card, fault_id)
+    correct = given == expected_answer
     if record.get("correct") != correct:
         return _disqualified(
             f"correct_mismatch: the record says correct={record.get('correct')!r}, but "
-            f"given {given!r} vs fault {fault_id!r} recomputes to {correct}", week).as_dict()
+            f"given {given!r} vs answer {expected_answer!r} (fault {fault_id!r}) "
+            f"recomputes to {correct}", week).as_dict()
 
     simlog_path = _sibling(score_path, "simlog.jsonl")
     entries: list[dict[str, Any]] = []
@@ -310,15 +327,8 @@ def verify(score_path: str | Path, *, week: str | None = None) -> dict[str, Any]
             "player read an instrument before answering", week).as_dict()
 
     disqualified = not measured  # always False here; kept explicit for build_score parity
-    caught = (not disqualified) and fault_id != "ok" and correct
-    false_fail = fault_id == "ok" and given != "ok"
-    error_correct = (not disqualified) and fault_id in error_class_faults and correct
-    expected = {
-        "faults_caught": 1 if caught else 0,
-        "false_fails": 1 if false_fail else 0,
-        "error_fail_correct": 1 if error_correct else 0,
-        "fault_type": fault_id,
-    }
+    expected = score_counts(fault_id=fault_id, given=given, correct=correct,
+                            disqualified=disqualified, error_class_faults=error_class_faults)
     for field, want in expected.items():
         if score[field] != want:
             return _disqualified(

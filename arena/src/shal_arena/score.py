@@ -86,10 +86,12 @@ _VALIDATOR = jsonschema.Draft202012Validator(SCORE_SCHEMA)
 #: realized faults that break the link to the instrument rather than change
 #: what the card reads, per game version: under 0.4.0 `open` raised; from
 #: 0.4.1 (issue #477) it reads about 0 V, so none count. `verify` scores an
-#: older run under its own version's row; each bump adds one row.
+#: older run under its own version's row; each bump adds one row (the
+#: lookup below fails at import if `GAME_VERSION` has none).
 ERROR_CLASS_FAULTS_BY_VERSION: dict[str, frozenset[str]] = {
     "0.4.0": frozenset({"open"}),
     "0.4.1": frozenset(),
+    "0.4.2": frozenset(),
 }
 ERROR_CLASS_FAULTS: frozenset[str] = ERROR_CLASS_FAULTS_BY_VERSION[GAME_VERSION]
 
@@ -97,6 +99,10 @@ ERROR_CLASS_FAULTS: frozenset[str] = ERROR_CLASS_FAULTS_BY_VERSION[GAME_VERSION]
 #: #478): not counted in ``faults_total``/``faults_caught``; naming them
 #: counts in ``error_fail_correct``, blaming the card is a false fail.
 NOT_CARD_FAULTS: frozenset[str] = frozenset({"broken_probe"})
+
+#: game versions whose runs stored no fault list, so their fault was drawn
+#: from `fault.legacy_fault_ids` (issue #478: runs store one from 0.4.2).
+LEGACY_FAULT_LIST_VERSIONS: frozenset[str] = frozenset({"0.4.0", "0.4.1"})
 
 
 def validate_score(doc: dict[str, Any]) -> None:
@@ -109,6 +115,26 @@ def _parse_ts(value: str) -> float:
     return time.mktime(time.strptime(value, "%Y-%m-%dT%H:%M:%SZ"))
 
 
+def score_counts(*, fault_id: str, given: str, correct: bool, disqualified: bool,
+                 error_class_faults: frozenset[str]) -> dict[str, Any]:
+    """The score fields a run's outcome decides (``fault_type`` and the four
+    counts), under one game version's ``error_class_faults``. `build_score`
+    and `verify`'s replay both call this, so the two cannot drift apart."""
+    card_fault = fault_id != "ok" and fault_id not in NOT_CARD_FAULTS
+    caught = (not disqualified) and card_fault and correct
+    false_fail = ((fault_id == "ok" and given != "ok")
+                  or (fault_id in NOT_CARD_FAULTS and not correct and given != "ok"))
+    error_correct = ((not disqualified) and correct
+                     and fault_id in error_class_faults | NOT_CARD_FAULTS)
+    return {
+        "fault_type": fault_id,
+        "faults_total": 0 if fault_id in NOT_CARD_FAULTS else 1,
+        "faults_caught": 1 if caught else 0,
+        "false_fails": 1 if false_fail else 0,
+        "error_fail_correct": 1 if error_correct else 0,
+    }
+
+
 def build_score(*, task_id: str, seed: int, fault_id: str, given: str, correct: bool,
                 disqualified: bool, created_at: str, closed_at: str, turns: int,
                 record_path: str | Path) -> dict[str, Any]:
@@ -116,21 +142,12 @@ def build_score(*, task_id: str, seed: int, fault_id: str, given: str, correct: 
     the caller's job to have already computed the same way `store.answer`
     did — this function only turns them into the 13-field score shape and
     validates it before returning."""
-    card_fault = fault_id != "ok" and fault_id not in NOT_CARD_FAULTS
-    caught = (not disqualified) and card_fault and correct
-    false_fail = ((fault_id == "ok" and given != "ok")
-                  or (fault_id in NOT_CARD_FAULTS and not correct and given != "ok"))
-    error_correct = ((not disqualified) and correct
-                     and fault_id in ERROR_CLASS_FAULTS | NOT_CARD_FAULTS)
     record_bytes = Path(record_path).read_bytes()
     score = {
         "task_id": task_id,
         "seed": seed,
-        "fault_type": fault_id,
-        "faults_total": 0 if fault_id in NOT_CARD_FAULTS else 1,
-        "faults_caught": 1 if caught else 0,
-        "false_fails": 1 if false_fail else 0,
-        "error_fail_correct": 1 if error_correct else 0,
+        **score_counts(fault_id=fault_id, given=given, correct=correct,
+                       disqualified=disqualified, error_class_faults=ERROR_CLASS_FAULTS),
         "duration_s": max(0.0, _parse_ts(closed_at) - _parse_ts(created_at)),
         "turns": turns,
         "gate_stops": 0,
