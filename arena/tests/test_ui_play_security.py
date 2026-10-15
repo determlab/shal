@@ -246,7 +246,7 @@ def _assert_no_filesystem_path(doc) -> None:
 
 def test_task_list_carries_no_filesystem_path(play_server):
     httpd, _state_dir = play_server
-    status, doc = _get(httpd, "/")
+    status, doc = _get(httpd, "/api/play/tasks")
     assert status == 200
     _assert_no_filesystem_path(doc)
 

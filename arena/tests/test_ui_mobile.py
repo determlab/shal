@@ -9,7 +9,8 @@ from pathlib import Path
 from shal_arena.runner import answer, drive_input, start_run, take_measurement
 from shal_arena.ui.data import run_payload
 from shal_arena.ui.export import build_export
-from shal_arena.ui.page import render_watch_page
+from shal_arena.ui.page import render_play_page, render_watch_page
+from shal_arena.ui.play import list_play_tasks
 
 from .conftest import PASSING_DMM_DRIVER, SAMPLE_TASK
 
@@ -79,3 +80,68 @@ def test_every_phone_text_size_is_13px_or_more(tmp_path: Path) -> None:
             for size in (int(m) for m in re.findall(r"font-size:\s*(\d+)px", body)):
                 actual = size * scale if ".viz" in selector else size
                 assert actual >= 13, f"{selector.strip()!r}: {actual:.1f}px actual < 13px"
+
+
+# --------------------------------------------------------------------------- #
+# issue #407: the Play page's buttons -- the task picker, every instrument
+# control, the answer grid and "Play another task". Same phone rules as the
+# WATCH page: tap targets at least 44 px, nothing that needs a drag.
+# --------------------------------------------------------------------------- #
+
+def _play_page() -> str:
+    return render_play_page(list_play_tasks(), None)
+
+
+def _min_heights(style: str, selector_part: str) -> list[int]:
+    out = []
+    for rule in re.finditer(r"([^{}]+)\{([^}]*)\}", style):
+        if selector_part in rule.group(1):
+            out += [int(m) for m in re.findall(r"min-height:\s*(\d+)px", rule.group(2))]
+    return out
+
+
+def test_play_page_has_the_viewport_meta() -> None:
+    assert '<meta name="viewport" content="width=device-width, initial-scale=1">' in _play_page()
+
+
+def test_play_page_has_no_drag_control() -> None:
+    lowered = _play_page().lower()
+    for marker in _DRAG_MARKERS:
+        assert marker not in lowered
+    # a slider is a drag: the voltage is a typed number plus a tap
+    assert 'type="range"' not in lowered and '"range"' not in lowered
+    assert 'input.type = "number"' in _play_page()
+
+
+def test_every_play_button_is_a_44px_tap_target() -> None:
+    page = _play_page()
+    style = page[page.index("<style>"):page.index("</style>")]
+    # the base rule every <button> on the page inherits
+    assert re.search(r"(^|\n)button \{[^}]*min-height: 44px", style)
+    # every Play-only button class, and the voltage field next to its button
+    for part in ("button.task-btn", "button.ctl-btn", "button.choice", "button.again",
+                 ".ctl input"):
+        heights = _min_heights(style, part)
+        assert heights and min(heights) >= 44, (part, heights)
+
+
+def test_every_play_button_class_used_in_the_script_is_styled() -> None:
+    """A new button class in the Play script must come with its own 44 px
+    rule -- this catches one added later without one."""
+    page = _play_page()
+    script = page[page.index("</style>"):]
+    used = set(re.findall(r'el\("button", "([a-z-]+)', script))
+    assert used, "the Play script builds its buttons with el(\"button\", ...)"
+    style = page[page.index("<style>"):page.index("</style>")]
+    for cls in used:
+        assert _min_heights(style, f"button.{cls}"), cls
+
+
+def test_play_text_is_13px_or_more() -> None:
+    page = _play_page()
+    style = page[page.index("<style>"):page.index("</style>")]
+    for rule in re.finditer(r"([^{}]+)\{([^}]*)\}", style):
+        if ".viz" in rule.group(1):
+            continue   # SVG text: scaled, checked above on the WATCH pages
+        for size in (int(m) for m in re.findall(r"font-size:\s*(\d+)px", rule.group(2))):
+            assert size >= 13, (rule.group(1).strip(), size)

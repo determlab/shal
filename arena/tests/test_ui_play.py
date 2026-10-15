@@ -92,11 +92,56 @@ def test_every_reference_driver_is_inside_the_installed_package() -> None:
 
 def test_start_lists_tasks_before_any_run_is_open(play_server):
     httpd, _state_dir = play_server
-    status, doc = _get(httpd, "/")
+    status, doc = _get(httpd, "/api/play/tasks")
     assert status == 200
     assert doc["ok"] is True
     names = {t["name"] for t in doc["tasks"]}
     assert "rail-3v3" in names
+
+
+def test_root_with_no_run_is_the_styled_play_page(play_server):
+    """issue #407 page round: `GET /` with no run bound is the Play page
+    (styled HTML with the task picker), not JSON -- the JSON an agent reads
+    is `/api/play/tasks`."""
+    httpd, _state_dir = play_server
+    url = f"http://{HOST}:{httpd.server_address[1]}/"
+    with urllib.request.urlopen(url, timeout=5) as resp:
+        assert resp.headers["Content-Type"].startswith("text/html")
+        page = resp.read().decode("utf-8")
+    assert page.startswith("<!doctype html>")
+    assert "<style>" in page and 'id="task-list"' in page
+    assert '"name": "rail-3v3"' in page
+    assert "using the reference drivers" in page
+
+
+def test_choices_come_from_the_runs_own_answer_values(play_server):
+    """CTO condition 3: the Answer grid is the run's own possible-faults
+    list (the same `task.answer.values` the start response carries)."""
+    httpd, _state_dir = play_server
+    status, doc = _get(httpd, "/api/play/choices")
+    assert status == 400 and "fix" in doc["error"]
+    status, started = _post(httpd, "/api/play/start", {"task": "relay-rail", "seed": 1})
+    assert status == 200, started
+    status, doc = _get(httpd, "/api/play/choices")
+    assert status == 200, doc
+    assert doc["values"] == started["task"]["answer"]["values"]
+
+
+def test_has_measurement_turns_on_after_a_measure_and_result_stays_readable(play_server):
+    httpd, _state_dir = play_server
+    status, started = _post(httpd, "/api/play/start", {"task": "rail-3v3", "seed": 1})
+    run_id = started["run_id"]
+    status, payload = _get(httpd, f"/api/run/{run_id}")
+    assert status == 200 and payload["has_measurement"] is False
+    _post(httpd, "/api/play/drive", {"address": "psu0", "volts": 5.0})
+    _post(httpd, "/api/play/measure", {"address": "dmm0"})
+    status, payload = _get(httpd, f"/api/run/{run_id}")
+    assert payload["has_measurement"] is True
+    status, answered = _post(httpd, "/api/play/answer", {"value": "ok"})
+    assert status == 200, answered
+    # the page reads the result card after Answer unbinds the run
+    status, payload = _get(httpd, f"/api/run/{run_id}")
+    assert status == 200 and payload["closed"] is True and payload["record"] is not None
 
 
 def test_start_drive_measure_answer_match_the_cli_runner(play_server):
