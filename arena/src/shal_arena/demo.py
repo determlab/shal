@@ -96,12 +96,20 @@ registry.register(BenchDmm1, override=True)
 #: circuit (``open``), never ``low_voltage``.
 OPEN_FRACTION = 0.05
 
+#: issue #495: a card that draws at least this much supply current is
+#: powered and working; an ``open`` card draws about 0 A.
+PROBE_MIN_CURRENT_A = 0.01
 
-def _diagnose(rail, reading: float | None, allowed: set[str]) -> str:
+
+def _diagnose(rail, reading: float | None, allowed: set[str],
+              current_a: float | None = None) -> str:
     """A guess from the measurement alone: the rail's own documented nominal
     voltage and tolerance (never the hidden fault, which this process never
     reads). A reading near 0 V is ``open`` (issue #477: an open circuit on
-    the card still answers). No reading at all (``None``: the read itself
+    the card still answers) -- unless the task offers ``probe`` and the
+    DMM's own current input shows the card drawing its normal supply current
+    (issue #495): the card works, the probe is broken, so ``probe``. No
+    reading at all (``None``: the read itself
     failed, a broken link to the bench) is ``error`` -- never ``open``,
     never a card fault. A reading outside tolerance but not clearly low or
     high falls back to ``noise`` when the task even offers it -- this can
@@ -109,6 +117,9 @@ def _diagnose(rail, reading: float | None, allowed: set[str]) -> str:
     not this demo's."""
     if reading is None:
         return "error"
+    if (abs(reading) < OPEN_FRACTION * rail.nominal_v and "probe" in allowed
+            and current_a is not None and abs(current_a) >= PROBE_MIN_CURRENT_A):
+        return "probe"
     if abs(reading) < OPEN_FRACTION * rail.nominal_v and "open" in allowed:
         return "open"
     band = rail.nominal_v * rail.tol_pct / 100
@@ -243,7 +254,8 @@ def _run_psu_30v_blocked(ctx: dict[str, Any]) -> dict[str, Any]:
         hal.close()
 
 
-def _run_arena_task(ctx: dict[str, Any], level: str) -> dict[str, Any]:
+def _run_arena_task(ctx: dict[str, Any], level: str, *,
+                    seed: int | None = None) -> dict[str, Any]:
     from .errors import MeasurementFailed
     from .loader import load_task
     from .runner import answer, drive_input, start_run, take_measurement
@@ -266,15 +278,17 @@ def _run_arena_task(ctx: dict[str, Any], level: str) -> dict[str, Any]:
             run_id, state_dir = pre_started
         else:
             state_dir = ctx["state_dir"] / level
-            run_id = start_run(str(task_path), state_dir=state_dir)["run_id"]
+            run_id = start_run(str(task_path), state_dir=state_dir,
+                               **({} if seed is None else {"seed": seed}))["run_id"]
         # power the card first -- an unpowered rail reads near 0 V, which a
         # tolerance-band diagnosis would (correctly, but uselessly) call
         # "low_voltage" every time
         drive_input(run_id, str(drives.address), vin.nominal_v, state_dir=state_dir)
 
         try:
-            reading = take_measurement(run_id, str(probe.address), str(ctx["dmm_driver"]),
-                                       state_dir=state_dir)["reading"]
+            measured = take_measurement(run_id, str(probe.address), str(ctx["dmm_driver"]),
+                                        state_dir=state_dir)
+            reading = measured["reading"]
         except MeasurementFailed as e:
             # issue #477: no answer from the instrument is a broken link to
             # the bench -- `error`, never a card fault, so nothing is answered
@@ -282,7 +296,8 @@ def _run_arena_task(ctx: dict[str, Any], level: str) -> dict[str, Any]:
             return {"run_id": run_id, "reading": None, "given": None,
                     "verdict": "error", "cause": _failure_cause(e), "message": str(e),
                     "correct": False, "disqualified": False}
-        given = _diagnose(rail, reading, set(task.question.answer.values))
+        given = _diagnose(rail, reading, set(task.question.answer.values),
+                          current_a=measured.get("current_a"))
 
         answer_doc = answer(run_id, given, state_dir=state_dir)
         ctx["arena_runs"][level] = (run_id, state_dir)
