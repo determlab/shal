@@ -7,6 +7,7 @@
     shal-arena run rail-3v3 --json
     shal-arena check-driver <run-id> psu0 ./driver.py --json
     shal-arena measure <run-id> dmm0 ./driver.py --json
+    shal-arena measure <run-id> dmm0 ./driver.py --at tp_5v --json
     shal-arena drive <run-id> psu0 6.5 --json
     shal-arena call <run-id> relay0 ./driver.py set_relay 0 false --json
     shal-arena answer <run-id> low_voltage --json
@@ -147,7 +148,8 @@ def _cmd_run(args: argparse.Namespace) -> int:
         print(f"run {result['run_id']}: {result['task']['title']}")
         print(result['task']['question'])
         for inst in result["instruments"]:
-            wiring = inst.get("drives") or inst.get("switches") or inst.get("probe")
+            wiring = (inst.get("drives") or inst.get("switches")
+                      or ", ".join(inst.get("probes") or []) or inst.get("probe"))
             print(f"  {inst['address']} ({inst['case']}) -> {wiring}")
     return 0
 
@@ -171,13 +173,14 @@ def _cmd_check(args: argparse.Namespace) -> int:
 def _cmd_measure(args: argparse.Namespace) -> int:
     try:
         result = take_measurement(args.run_id, args.instrument, args.manifest,
-                                  state_dir=args.state_dir)
+                                  at=args.at, state_dir=args.state_dir)
     except ArenaError as e:
         return _report_error(e, args.json)
     if args.json:
         _json_out(result)
     else:
-        print(f"{args.instrument}: {result['op']} -> {result['reading']}")
+        at = f" at {result['label']}" if result.get("label") else ""
+        print(f"{args.instrument}{at}: {result['op']} -> {result['reading']}")
     return 0
 
 
@@ -199,7 +202,7 @@ def _cmd_drive(args: argparse.Namespace) -> int:
 def _cmd_call(args: argparse.Namespace) -> int:
     try:
         result = call_op(args.run_id, args.instrument, args.manifest, args.op, args.args,
-                         state_dir=args.state_dir)
+                         at=args.at, state_dir=args.state_dir)
     except ArenaError as e:
         return _report_error(e, args.json)
     if args.json:
@@ -364,12 +367,15 @@ def _build_parser() -> argparse.ArgumentParser:
     add_common(p_check)
     p_check.set_defaults(func=_cmd_check)
 
+    at_help = ("the test point to probe, e.g. tp_5v -- required when the instrument "
+               "lists several probe points (issue #491), refused when it has one")
     p_measure = sub.add_parser(
         "measure",
         help="take your own reading on an instrument (issue #312 Agent path)")
     p_measure.add_argument("run_id")
     p_measure.add_argument("instrument", help="the instrument address from `run`'s output")
     p_measure.add_argument("manifest", help="path to your driver.py")
+    p_measure.add_argument("--at", default=None, metavar="POINT", help=at_help)
     add_common(p_measure)
     p_measure.set_defaults(func=_cmd_measure)
 
@@ -392,6 +398,7 @@ def _build_parser() -> argparse.ArgumentParser:
     p_call.add_argument("manifest", help="path to your driver.py")
     p_call.add_argument("op", help="the op name on your driver, e.g. set_relay")
     p_call.add_argument("args", nargs="*", help="positional arguments for the op, e.g. 0 false")
+    p_call.add_argument("--at", default=None, metavar="POINT", help=at_help)
     add_common(p_call)
     p_call.set_defaults(func=_cmd_call)
 

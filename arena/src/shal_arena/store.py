@@ -113,6 +113,10 @@ class RunState:
     card_power_on: bool = True
     # issue #325: addresses of DMMs whose current-input fuse has burned.
     fuses_blown: list[str] = field(default_factory=list)
+    # issue #491: every successful `measure`, tied to the point it was taken
+    # at ({address, point, value, unit}) -- one DMM moved between test points
+    # gives one entry per point, so a reader uses that point's own limit.
+    readings: list[dict[str, Any]] = field(default_factory=list)
 
 
 @contextlib.contextmanager
@@ -339,6 +343,16 @@ class RunStore:
             if str(address) not in state.fuses_blown:
                 state.fuses_blown.append(str(address))
                 self._write_public(state)
+        return state
+
+    def add_reading(self, run_id: str, address: str, *, point: str, value: float,
+                    unit: str | None) -> RunState:
+        """issue #491: store one successful reading with the point it was taken at."""
+        with _locked_state_file(self._public_path(run_id)):
+            state = self.load_open(run_id)
+            state.readings.append({"address": str(address), "point": point,
+                                   "value": float(value), "unit": unit})
+            self._write_public(state)
         return state
 
     def set_tile(self, run_id: str, address: str, *, case: str, passed: bool) -> RunState:

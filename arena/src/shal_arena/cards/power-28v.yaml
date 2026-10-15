@@ -4,9 +4,9 @@ description: "Fictional card, no real part. A 28 V power module: VIN 28 V comes 
 inputs:
   vin: {nominal_v: 28.0}
 rails:
-  12v: {from: vin, nominal_v: 12.0, tol_pct: 3, test_point: tp_12v, min_input_v: 24.0, tol_source: "power-28v datasheet 3.2 U1 output accuracy (fictional datasheet)"}
-  5v: {from: vin, nominal_v: 5.0, tol_pct: 3, test_point: tp_5v, min_input_v: 24.0, tol_source: "power-28v datasheet 3.3 U2 output accuracy (fictional datasheet)"}
-  3v3: {from: vin, nominal_v: 3.3, tol_pct: 3, test_point: tp_3v3, min_input_v: 24.0, tol_source: "power-28v datasheet 3.4 U3 output accuracy (fictional datasheet)"}
+  12v: {from: vin, nominal_v: 12.0, tol_pct: 3, test_point: tp_12v, label: TP1, min_input_v: 24.0, tol_source: "power-28v datasheet 3.2 U1 output accuracy (fictional datasheet)"}
+  5v: {from: vin, nominal_v: 5.0, tol_pct: 3, test_point: tp_5v, label: TP2, min_input_v: 24.0, tol_source: "power-28v datasheet 3.3 U2 output accuracy (fictional datasheet)"}
+  3v3: {from: vin, nominal_v: 3.3, tol_pct: 3, test_point: tp_3v3, label: TP3, min_input_v: 24.0, tol_source: "power-28v datasheet 3.4 U3 output accuracy (fictional datasheet)"}
 temp_points:
   u2: {nominal_c: 45.0, test_point: tp_u2_temp, high_c: 85.0, tol_source: "power-28v datasheet 5.1 U2 thermal derating (fictional datasheet)"}
 damage:

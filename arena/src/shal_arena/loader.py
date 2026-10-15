@@ -152,11 +152,13 @@ def _cross_check(task: Task, card: Card, task_path: Path) -> None:
                     f"{where}.{key}: {value!r} is not a card input",
                     fix=f"set {key} to one of {sorted('card.' + n for n in input_names)}")
         else:
-            name = instrument.probe.removeprefix("card.")
-            if name not in test_points:
-                raise TaskFormatError(
-                    f"{where}.probe: {instrument.probe!r} is not a card test point",
-                    fix=f"set probe to one of {sorted('card.' + t for t in test_points)}")
+            key = "probes" if len(instrument.probes) > 1 else "probe"
+            for value in instrument.probes:
+                if value.removeprefix("card.") not in test_points:
+                    raise TaskFormatError(
+                        f"{where}.{key}: {value!r} is not a card test point",
+                        fix=f"set {key} to {'' if key == 'probe' else 'a list of '}one of "
+                            f"{sorted('card.' + t for t in test_points)}")
 
     if task.question.answer.kind == "enum":
         fault_ids = {f.id for f in card.faults}
