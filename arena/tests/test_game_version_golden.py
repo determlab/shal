@@ -29,6 +29,7 @@ from .conftest import FIXTURES, PASSING_DMM_DRIVER, PASSING_TEMP_DRIVER
 #: sha256 of `_rules_table()` per game version
 GOLDEN = {
     "0.4.1": "85ae276276b0a8cae924b04b4918756b2f0fb578609e7330b15098495aff1be0",
+    "0.4.2": "1d29f490fd2130529aad59687e2ace2008738df83700fd4db0a779967ee6843e",
 }
 
 _SEEDS = range(30)
@@ -53,7 +54,10 @@ def _play(task_path: Path, seed: int, state_dir: Path) -> dict:
                                    state_dir=state_dir)["reading"]
         readings[str(probe.address)] = round(reading, 6)
     fault_id = fault_mod.realized_fault(card, seed).fault_id
-    out = answer(run_id, fault_id, state_dir=state_dir)
+    # issue #478: the right answer is the fault's own `answer:` key when the
+    # card gives one (`broken_probe` -> `probe`); for every 0.4.1 fault it is
+    # the id itself, so the 0.4.1 table is unchanged by this line.
+    out = answer(run_id, fault_mod.answer_for(card, fault_id), state_dir=state_dir)
     return {"task": task.id, "seed": seed, "fault_id": fault_id, "readings": readings,
             "correct": out["correct"], "disqualified": out["disqualified"],
             "score": {k: out["score"][k] for k in _SCORE_KEYS}}

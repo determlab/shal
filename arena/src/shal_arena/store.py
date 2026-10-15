@@ -113,6 +113,14 @@ class RunState:
     card_power_on: bool = True
     # issue #325: addresses of DMMs whose current-input fuse has burned.
     fuses_blown: list[str] = field(default_factory=list)
+    # issue #478: the fault list this run's fault was drawn from, in draw
+    # order, as positions in its card's `faults:` list (never the ids: no
+    # file names a fault while the run is open -- the same list for every
+    # seed, so it says nothing about which one was drawn), and the game
+    # rules it was started under. A run stored before these existed has
+    # neither (`None`): its fault was drawn from `fault.legacy_fault_ids`.
+    fault_indices: list[int] | None = None
+    game_version: str | None = None
 
 
 @contextlib.contextmanager
@@ -271,12 +279,16 @@ class RunStore:
         path.write_text(json.dumps(score, indent=2), encoding="utf-8")
         return path
 
-    def create(self, *, task_path: str, card_path: str, seed: int) -> RunState:
+    def create(self, *, task_path: str, card_path: str, seed: int,
+               fault_indices: list[int] | None = None,
+               game_version: str | None = None) -> RunState:
         self.dir.mkdir(parents=True, exist_ok=True)
         run_id = new_run_id()
         state = RunState(run_id=run_id, task_path=task_path, card_path=card_path,
                          status="open", seed=seed,
-                         created_at=time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()))
+                         created_at=time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+                         fault_indices=None if fault_indices is None else list(fault_indices),
+                         game_version=game_version)
         self._write_public(state)
         # issue #436 CTO review round 3: create the lock file's one byte
         # HERE, before any other process could possibly be racing on this
@@ -394,10 +406,15 @@ class RunStore:
             self._write_public(state)
         return state
 
-    def answer(self, run_id: str, *, given: str, fault_id: str) -> dict[str, Any]:
+    def answer(self, run_id: str, *, given: str, fault_id: str,
+               expected: str | None = None) -> dict[str, Any]:
         """Close the run and write/return the record. ``fault_id`` is the
         caller's job to recompute (from the public ``state.seed``) — this
-        store never holds it before this call."""
+        store never holds it before this call. ``expected`` (issue #478) is
+        the answer that names it, when that is not the id itself
+        (``broken_probe`` is answered ``probe``)."""
+        if expected is None:
+            expected = fault_id
         with _locked_state_file(self._public_path(run_id)):
             state = self.load(run_id)
             if state.status != "open":
@@ -408,7 +425,7 @@ class RunStore:
                 "card_path": state.card_path,
                 "given": given,
                 "fault_id": fault_id,
-                "correct": given == fault_id,
+                "correct": given == expected,
                 "closed_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
             }
             self._record_path(run_id).write_text(json.dumps(record, indent=2),

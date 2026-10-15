@@ -18,6 +18,6 @@ instruments:
     probe: card.tp_reg_temp
 question:
   text: "This card came back from the line. Power it at 12.0 V through relay0. Is it good? If not, name the fault."
-  answer: {kind: enum, values: [ok, low_voltage, open, overheat]}
+  answer: {kind: enum, values: [ok, low_voltage, open, overheat, probe]}
 seed: 99
 limits: {max_turns: 60, max_minutes: 30}
