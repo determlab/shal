@@ -47,30 +47,35 @@ def test_tap_targets_are_at_least_44px(tmp_path: Path) -> None:
         assert re.search(r"\.step\s*\{[^}]*min-height:\s*44px", page)
 
 
+_PHONE_WIDTH = 390
+
+
 def _svg_render_scale(page: str) -> float:
-    """The SVG bench's own text is sized in viewBox units, not CSS px --
-    issue #406 CTO review round 3: computed from the real layout (.wrap
-    width minus the .bench's own horizontal margin and padding), not
-    assumed, so a later layout change cannot silently invalidate this
-    test's own math."""
-    wrap_width = int(re.search(r"\.wrap \{ max-width: (\d+)px", page).group(1))
-    bench_margin = int(re.search(r"\.bench \{ margin: 0 (\d+)px", page).group(1))
-    bench_padding = int(re.search(r"\.bench \{[^}]*padding: (\d+)px", page).group(1))
-    view_box_width = int(re.search(r'viewBox="0 0 (\d+) ', page).group(1))
-    rendered_width = wrap_width - 2 * bench_margin - 2 * bench_padding
-    return rendered_width / view_box_width
+    """The SVGs' own text is sized in viewBox units, not CSS px -- issue
+    #406 CTO review round 3: computed from the real layout, not assumed.
+    issue #447: both SVGs (the live visual and the card diagram) sit in a
+    `.box` inside the `.page` gutter, and both draw on a 480-unit-wide
+    viewBox at the least (a wider card only scales its text down further
+    on a phone, so the narrowest is the case the floor is checked on)."""
+    gutter = int(re.search(r"\.page \{[^}]*padding: \d+px (\d+)px", page).group(1))
+    box = re.search(r"\.box \{[^}]*padding: (\d+)px", page).group(1)
+    border = re.search(r"\.box \{[^}]*border: (\d+)px", page).group(1)
+    assert 'viewBox="0 0 480 ' in page            # the live visual
+    assert "Math.max(480, " in page               # the card diagram, 480 at the least
+    rendered_width = _PHONE_WIDTH - 2 * gutter - 2 * int(box) - 2 * int(border)
+    return rendered_width / 480
 
 
 def test_every_phone_text_size_is_13px_or_more(tmp_path: Path) -> None:
     # every explicit font-size in the stylesheet, CTO review round 2's own
-    # floor ("All phone text 13 px or more") -- round 3: the SVG bench's
-    # own text must clear 13px AFTER scaling to its rendered width, not by
-    # its raw viewBox-unit CSS number.
+    # floor ("All phone text 13 px or more") -- round 3: SVG text must
+    # clear 13px AFTER scaling to its rendered width, not by its raw
+    # viewBox-unit CSS number.
     for page in _pages(tmp_path):
         scale = _svg_render_scale(page)
         style = page[page.index("<style>"):page.index("</style>")]
         for rule in re.finditer(r"([^{}]+)\{([^}]*)\}", style):
             selector, body = rule.group(1), rule.group(2)
             for size in (int(m) for m in re.findall(r"font-size:\s*(\d+)px", body)):
-                actual = size * scale if ".bench" in selector else size
+                actual = size * scale if ".viz" in selector else size
                 assert actual >= 13, f"{selector.strip()!r}: {actual:.1f}px actual < 13px"
