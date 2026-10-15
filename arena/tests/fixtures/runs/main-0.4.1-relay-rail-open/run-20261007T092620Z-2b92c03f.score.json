@@ -1,0 +1,15 @@
+{
+  "task_id": "relay-rail",
+  "seed": 5,
+  "fault_type": "open",
+  "faults_total": 1,
+  "faults_caught": 1,
+  "false_fails": 0,
+  "error_fail_correct": 0,
+  "duration_s": 0.0,
+  "turns": 3,
+  "gate_stops": 0,
+  "schema_version": 1,
+  "game_version": "0.4.1",
+  "record_sha256": "723f57427e1023a644839558bb40587cff9df09cb10c8042ed1b6092830b93fe"
+}

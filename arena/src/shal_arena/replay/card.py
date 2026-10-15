@@ -64,6 +64,37 @@ class CardData:
     record: dict[str, Any]
     score: dict[str, Any]
     timeline: list[dict[str, Any]]
+    #: issue #495: the result line for a `broken_probe` run (else None)
+    result_line: str | None = None
+
+
+def _broken_probe_line(run_id: str, store: RunStore, record: dict[str, Any],
+                       timeline: list[dict[str, Any]]) -> str | None:
+    """The CMO-approved result line for a `broken_probe` run (issue #478
+    comment, used as is): the card is fine, the probe is broken. Only once the
+    run is closed, like the rest of this module. `None` if the run's
+    probe reading or source value cannot be found (an old or odd capture)."""
+    from ..loader import load_task
+
+    state = store.load(run_id)
+    try:
+        task = load_task(state.task_path).task
+    except ArenaError:  # a capture from another machine: its task path is not here
+        return None
+    probe = next((i for i in task.instruments if i.probe is not None), None)
+    readings = [e["detail"]["value"] for e in timeline
+                if probe is not None and e["kind"] == "reading"
+                and e["address"] == str(probe.address)]
+    if probe is None or not readings or not state.card_applied:
+        return None
+    point = probe.probe.removeprefix("card.")
+    source_v = next(iter(state.card_applied.values()))
+    given = record["given"]
+    line = (f"Measured: {point} reads {readings[-1]:.2f} V; the source reads "
+            f"{source_v:.2f} V. The agent's answer: {given}. ")
+    if given == "probe":
+        return line + "Correct: the card is fine, the probe is broken."
+    return line + "Wrong: the card is fine, the probe is broken. This is a false fail."
 
 
 def _timeline(run_id: str, store: RunStore) -> list[dict[str, Any]]:
@@ -100,7 +131,10 @@ def load_card_data(run_id: str, *, state_dir: str | Path = DEFAULT_STATE_DIR) ->
     record = _load_json(record_path)
     score = _load_json(score_path)
     timeline = _timeline(run_id, store)
-    return CardData(run_id=run_id, record=record, score=score, timeline=timeline)
+    result_line = (_broken_probe_line(run_id, store, record, timeline)
+                   if score.get("fault_type") == "broken_probe" else None)
+    return CardData(run_id=run_id, record=record, score=score, timeline=timeline,
+                    result_line=result_line)
 
 
 def _short_sha(sha256: str) -> str:
@@ -111,6 +145,8 @@ def _headline(score: dict[str, Any]) -> str:
     caught, total = score["faults_caught"], score["faults_total"]
     false_fails = score["false_fails"]
     noun = "false fail" if false_fails == 1 else "false fails"
+    if total == 0:  # issue #495: a good card (`broken_probe`): never "0 of 0"
+        return f"No fault was injected. {false_fails} {noun}."
     return f"{caught} of {total} faults caught. {false_fails} {noun}."
 
 
@@ -132,7 +168,10 @@ _KIND_LABEL = {
 def _timeline_row_html(entry: dict[str, Any]) -> str:
     kind = entry["kind"]
     label = html.escape(_KIND_LABEL.get(kind, kind))
-    address = html.escape(str(entry.get("address") or ""))
+    address = str(entry.get("address") or "")
+    if entry["detail"].get("label"):  # issue #491: the point a multi-probe DMM read
+        address = f"{address} at {entry['detail']['label']}"
+    address = html.escape(address)
     css_class = "row-refused" if kind == "refused" else f"row-{kind}"
     gate_note_html = ""
     if kind == "check":
@@ -180,6 +219,8 @@ def render_card(data: CardData) -> str:
     copy_text = f"{headline} {bottom_line} — github.com/determlab/shal"
     copy_text_json = json.dumps(copy_text)
     timeline_html = _timeline_html(data.timeline)
+    result_line_html = (f'<p class="result-line">{html.escape(data.result_line)}</p>'
+                        if data.result_line else "")
     disqualified_html = (
         '<p class="disqualified">Disqualified: no measurement was logged for this run.</p>'
         if data.record.get("disqualified") else ""
@@ -214,6 +255,7 @@ def render_card(data: CardData) -> str:
 <h1>{html.escape(headline)}</h1>
 <div class="bottom-line">{html.escape(bottom_line)}</div>
 <div class="safety-line">{html.escape(_SAFETY_LINE)}</div>
+{result_line_html}
 <div class="meta-line">fault: {fault_type} · game {game_version} · turns {turns} ·
 record {short_sha}</div>
 {disqualified_html}

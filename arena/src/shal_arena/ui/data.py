@@ -9,11 +9,15 @@ before the run ends.
 """
 from __future__ import annotations
 
+import functools
 import json
 import re
 from pathlib import Path
 from typing import Any
 
+import yaml
+
+from ..cases import CASES
 from ..errors import TaskFormatError
 from ..loader import load_task, resolve_task
 from ..replay.card import _timeline  # issue #406: reuse, not a second copy
@@ -121,6 +125,97 @@ def _measured_clause(name: str, rail: dict[str, Any] | None, temp: dict[str, Any
     return None
 
 
+def _probed(payload: dict[str, Any], rails: list[dict[str, Any]],
+            temp_points: list[dict[str, Any]]) -> list[tuple[str, Any, Any, list[float], Any]]:
+    """Per probing instrument with a rail or temp point: its name, the
+    rail/temp spec, every reading it logged, and the failed-read cause (if
+    any) -- the one walk of the timeline both the answer sentence and the
+    result line (issue #447) are built from."""
+    rails_by_tp = {r["test_point"]: r for r in rails}
+    temps_by_tp = {t["test_point"]: t for t in temp_points}
+    out = []
+    for instrument in payload["instruments"]:
+        # issue #491: a multi-probe instrument gets one entry per point, each
+        # from that point's own readings and judged against that point's limit
+        probes = instrument.get("probes") or ([instrument["probe"]] if instrument["probe"] else [])
+        multi = len(probes) > 1
+        for probe in probes:
+            test_point = probe.removeprefix("card.")
+            rail = rails_by_tp.get(test_point)
+            temp = temps_by_tp.get(test_point)
+            if rail is None and temp is None:
+                continue
+            readings, cause = [], None
+            for e in payload["timeline"]:
+                if e.get("address") != instrument["address"]:
+                    continue
+                if multi and e.get("detail", {}).get("point") != test_point:
+                    continue
+                if e.get("kind") == "reading":
+                    readings.append(e["detail"]["value"])
+                elif e.get("kind") == "failed":
+                    cause = e["detail"].get("cause")
+            out.append((_name_for_address(instrument["address"]), rail, temp, readings, cause))
+    return out
+
+
+def _result_item(name: str, rail: dict[str, Any] | None, temp: dict[str, Any] | None,
+                 readings: list[float], cause: str | None) -> dict[str, Any] | None:
+    """One measurement for the page's result line (issue #447: "Fault
+    found: <part> <what>, <value>, limit <limit>"), from the same public
+    card spec the answer sentence reads. `None`: nothing to say (no
+    reading, or the agent's own driver failed -- not a card measurement).
+    A transport error is no reading at all (`score.py`: the player did not
+    blame the card), so it is `kind: "no_reading"` and never `failing`:
+    only an out-of-limit or unstable measurement makes a fault found."""
+    if not readings:
+        if cause == "transport":
+            part = f"{rail['name']} rail" if rail is not None else temp["name"]
+            return {"what": part, "value": None, "limit": None, "failing": False,
+                    "kind": "no_reading", "instrument": name}
+        return None
+    if rail is not None:
+        part, lo, hi = f"{rail['name']} rail", rail["lo"], rail["hi"]
+        window = f"{lo:.2f}-{hi:.2f} V"
+        if _varies(readings, 2):
+            return {"what": f"{part} unstable",
+                    "value": f"{min(readings):.2f}-{max(readings):.2f} V",
+                    "limit": window, "failing": True}
+        v = readings[-1]
+        if v < lo:
+            return {"what": f"{part} low", "value": f"{v:.2f} V", "limit": f"{lo:.2f} V",
+                    "failing": True}
+        if v > hi:
+            return {"what": f"{part} high", "value": f"{v:.2f} V", "limit": f"{hi:.2f} V",
+                    "failing": True}
+        return {"what": part, "value": f"{v:.2f} V", "limit": window, "failing": False}
+    part, high = temp["name"], temp["high_c"]
+    if _varies(readings, 1):
+        return {"what": f"{part} unstable",
+                "value": f"{min(readings):.1f}-{max(readings):.1f} °C",
+                "limit": f"{high:.0f} °C", "failing": True}
+    v = readings[-1]
+    if v > high:
+        return {"what": f"{part} overheating", "value": f"{v:.1f} °C",
+                "limit": f"{high:.0f} °C", "failing": True}
+    return {"what": part, "value": f"{v:.1f} °C", "limit": f"{high:.0f} °C", "failing": False}
+
+
+def _result(payload: dict[str, Any], rails: list[dict[str, Any]],
+            temp_points: list[dict[str, Any]]) -> dict[str, Any] | None:
+    """The page's top result line (issue #447), as data: the failing
+    measurements when there are any (`found`), else every measurement.
+    Built only once the run is closed -- same rule as the answer
+    sentence -- and rendered with `textContent`, never as markup."""
+    if payload["record"] is None:
+        return None
+    items = [i for i in (_result_item(*m) for m in _probed(payload, rails, temp_points))
+             if i is not None]
+    failing = [i for i in items if i["failing"]]
+    return {"found": bool(failing), "destroyed": payload["card"]["destroyed"],
+            "items": failing or items}
+
+
 def _answer_sentence(payload: dict[str, Any], rails: list[dict[str, Any]],
                      temp_points: list[dict[str, Any]]) -> str | None:
     """issue #427 CTO review: built server-side (not in the page's own JS)
@@ -131,30 +226,9 @@ def _answer_sentence(payload: dict[str, Any], rails: list[dict[str, Any]],
     record = payload["record"]
     if record is None:
         return None
-    rails_by_tp = {r["test_point"]: r for r in rails}
-    temps_by_tp = {t["test_point"]: t for t in temp_points}
-    timeline = payload["timeline"]
-
     clauses = []
-    for instrument in payload["instruments"]:
-        probe = instrument["probe"]
-        if probe is None:
-            continue
-        test_point = probe.removeprefix("card.")
-        rail = rails_by_tp.get(test_point)
-        temp = temps_by_tp.get(test_point)
-        if rail is None and temp is None:
-            continue
-        readings, cause = [], None
-        for e in timeline:
-            if e.get("address") != instrument["address"]:
-                continue
-            if e.get("kind") == "reading":
-                readings.append(e["detail"]["value"])
-            elif e.get("kind") == "failed":
-                cause = e["detail"].get("cause")
-        clause = _measured_clause(
-            _name_for_address(instrument["address"]), rail, temp, readings, cause)
+    for name, rail, temp, readings, cause in _probed(payload, rails, temp_points):
+        clause = _measured_clause(name, rail, temp, readings, cause)
         if clause is not None:
             clauses.append(clause)
 
@@ -195,48 +269,84 @@ def _answer_sentence(payload: dict[str, Any], rails: list[dict[str, Any]],
     return f"{prefix}The agent's answer: {given_label}. {verdict}"
 
 
+#: issue #447: the protocol label an instrument card shows, from the case's
+#: own harness topology (the bus it really talks over), never hand-written.
+_PROTOCOLS = {"shal,sim-scpi": "SCPI", "shal,sim-msg": "Modbus", "shal,sim-i2c": "I2C"}
+
+
+@functools.cache
+def _protocol(case: str) -> str | None:
+    try:
+        topology = yaml.safe_load(CASES[case].harness_topology.read_text(encoding="utf-8"))
+    except (KeyError, OSError, yaml.YAMLError):
+        return None
+    buses = [node.get("driver") for node in (topology.get("root") or {}).values()
+             if isinstance(node, dict)]
+    return next((_PROTOCOLS[b] for b in buses if b in _PROTOCOLS), None)
+
+
 def _role(instrument: Any) -> str:
     """The server role string (issue #457), one per wiring key (#473)."""
     if instrument.drives is not None:
         return f"drives {instrument.drives}"
     if instrument.switches is not None:
         return f"switches {instrument.switches}"
-    return f"probes {instrument.probe}"
+    return f"probes {', '.join(instrument.probes) or instrument.probe}"
 
 
-def _notes(run_id: str, store: RunStore) -> list[dict[str, Any]]:
-    """issue #470: every logged `--note`, in call order -- its own list,
-    never folded into `_timeline`'s measurement rows (Constraints: "never
-    inside the measurement rows"). Each entry names the command it was
-    attached to, so a reader can still tell it apart from, or line it up
-    against, a nearby reading in the Timeline above. `has_reading` is
-    whether THAT SAME call took a reading: a `measure` that exited 0 -- the
-    one subcommand that logs a `reading` (a read op through `call` marks
-    the instrument measured, never a `reading` line). It is based on the
-    call, not its output format (CTO review: a plain-text `measure` logs
-    `json: null`). No conflict detection: the fixed line below never
-    depends on what the note says.
-    `<run>.cli.jsonl` may not exist yet (no command has been logged). A line
-    that does not parse (a crash mid-append) is skipped: this list is a
-    display, not the record, and one bad line must not take the page down."""
+#: issue #489: an answer in the commands window is cut to about this long.
+_CLI_ANSWER_MAX = 120
+
+
+def _cli_answer(entry: dict[str, Any]) -> str:
+    """The short form of one logged call's answer: its JSON on one line, or
+    (`json: null`) its printed text; cut with an ellipsis. Values are shown
+    as the file has them -- already redacted by #460, never redacted again."""
+    if entry.get("json") is not None:
+        shown = json.dumps(entry["json"], ensure_ascii=False)
+    else:
+        shown = " ".join(str(entry.get("text") or "").split())
+    return shown[:_CLI_ANSWER_MAX] + "…" if len(shown) > _CLI_ANSWER_MAX else shown
+
+
+def _cli_log(store: RunStore, run_id: str) -> dict[str, Any]:
+    """issue #489: the rows of `<run>.cli.jsonl` (#460), one per line in file
+    order, for the page's "shal-arena commands" window. A missing file is no
+    rows; a line that is not a JSON object with a list `argv` and an integer
+    `exit_code` is skipped and counted in `skipped`, never raised."""
     path = store.cli_log_path(run_id)
-    if not path.is_file():
-        return []
-    notes = []
-    for line in path.read_text(encoding="utf-8").splitlines():
-        if not line.strip():
-            continue
-        try:
-            entry = json.loads(line)
-        except ValueError:
-            continue
-        if not isinstance(entry, dict) or entry.get("note") is None:
-            continue
-        argv = entry.get("argv") or []
-        command = next((a for a in argv if not a.startswith("-")), "")
-        notes.append({"command": command, "note": entry["note"], "time": entry.get("time"),
-                     "has_reading": command == "measure" and entry.get("exit_code") == 0})
-    return notes
+    rows, skipped = [], 0
+    if path.is_file():
+        for line in path.read_text(encoding="utf-8", errors="replace").split("\n"):
+            if not line.strip():
+                continue
+            try:
+                entry = json.loads(line)
+            except ValueError:
+                skipped += 1
+                continue
+            argv, code = (entry.get("argv"), entry.get("exit_code")) \
+                if isinstance(entry, dict) else (None, None)
+            if not isinstance(argv, list) or isinstance(code, bool) or not isinstance(code, int):
+                skipped += 1
+                continue
+            command = " ".join(str(a) for a in argv)
+            if not command.startswith("shal-arena"):
+                command = f"shal-arena {command}".rstrip()
+            # issue #470: the call's own `--note` (already redacted on
+            # write), shown in this row -- never in a measurement row.
+            # `has_reading` is whether THIS call took a reading: a `measure`
+            # that exited 0, the one subcommand that logs a `reading` -- based
+            # on the call, never on its output format (a plain-text `measure`
+            # logs `json: null`).
+            note = entry.get("note")
+            sub = next((str(a) for a in argv
+                        if not str(a).startswith("-") and str(a) != "shal-arena"), "")
+            rows.append({"command": command, "exit_code": code, "failed": code != 0,
+                         "answer": _cli_answer(entry),
+                         "note": note if isinstance(note, str) else None,
+                         "has_reading": sub == "measure" and code == 0})
+    return {"rows": rows, "skipped": skipped}
 
 
 def run_payload(run_id: str, *, state_dir: str | Path = DEFAULT_STATE_DIR) -> dict[str, Any]:
@@ -250,7 +360,9 @@ def run_payload(run_id: str, *, state_dir: str | Path = DEFAULT_STATE_DIR) -> di
 
     instruments = [
         {"address": str(i.address), "case": i.case, "drives": i.drives, "probe": i.probe,
-         "switches": i.switches,
+         "switches": i.switches, "protocol": _protocol(i.case),
+         # issue #491: every point a multi-probe instrument can read, else []
+         "probes": list(i.probes) if len(i.probes) > 1 else [],
          # issue #457: the instrument's role, straight from the task yaml's
          # own `drives:`/`probe:`/`switches:` field -- never hand-written text.
          "role": _role(i)}
@@ -262,7 +374,7 @@ def run_payload(run_id: str, *, state_dir: str | Path = DEFAULT_STATE_DIR) -> di
     # itself. `test_point` is the key a `task.instruments[].probe` names
     # (e.g. "card.tp_3v3"); `name`/`label` is the human-readable one.
     rails = [
-        {"label": r.test_point, "name": r.name.upper(), "test_point": r.test_point,
+        {"label": r.label or r.test_point, "name": r.name.upper(), "test_point": r.test_point,
          "nominal_v": r.nominal_v, "tol_pct": r.tol_pct,
          "lo": r.nominal_v * (1 - r.tol_pct / 100), "hi": r.nominal_v * (1 + r.tol_pct / 100)}
         for r in loaded.card.rails
@@ -304,10 +416,20 @@ def run_payload(run_id: str, *, state_dir: str | Path = DEFAULT_STATE_DIR) -> di
         "tiles": tiles,
         "card": {"applied": dict(state.card_applied), "destroyed": state.card_destroyed,
                 "power_on": state.card_power_on},
+        # issue #447: the card section is drawn from the run's own card yaml
+        # (its id, inputs and `blocks:` diagram) -- public spec, never the fault.
+        "card_id": loaded.card.id,
+        "inputs": [{"name": i.name, "nominal_v": i.nominal_v} for i in loaded.card.inputs],
+        "card_blocks": [
+            {"id": b.id, "label": b.label, "from": b.from_block, "input": b.input,
+             "switch": b.switch, "test_point": b.test_point}
+            for b in loaded.card.blocks
+        ],
         "timeline": _timeline(run_id, store),
-        "notes": _notes(run_id, store),
+        "cli_log": _cli_log(store, run_id),
         "record": record,
         "score": score,
     }
     payload["answer_sentence"] = _answer_sentence(payload, rails, temp_points)
+    payload["result"] = _result(payload, rails, temp_points)
     return payload

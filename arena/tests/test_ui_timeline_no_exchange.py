@@ -36,45 +36,45 @@ from .conftest import (
 from .test_exchange_log import _play_all_three_protocols
 
 _DOM_STUB = """
-// A real DOM escapes &/</> when it serializes a text node back out through
-// an ancestor's innerHTML (never quotes -- that is an attribute-value
-// rule, not a text-content one). Needed below because renderNotes builds
-// its rows with textContent/createTextNode, not one escaped HTML string
-// the way stepRowHtml already does.
-function escapeForHtml(s) {
-  return String(s).replace(/[&<>]/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;"}[c]));
+// CTO review on #484: elements built with createElement/textContent/
+// appendChild serialize back to markup (text escaped, as a browser does),
+// and every string ever written to innerHTML is kept in `_htmlWrites`, so a
+// test can prove run text never went through innerHTML at all.
+const _htmlWrites = [];
+function _esc(s) {
+  return String(s).replace(/[&<>]/g, c => ({"&": "&amp;", "<": "&lt;", ">": "&gt;"}[c]));
 }
-function makeEl() {
+function _outer(n) {
+  if (!n.tagName) return _esc(n.textContent);
+  const attrs = (n.className ? ` class="${n.className}"` : "")
+    + Object.entries(n._attrs).map(([k, v]) => ` ${k}="${v}"`).join("");
+  return `<${n.tagName}${attrs}>${n.innerHTML}</${n.tagName}>`;
+}
+function makeEl(tag) {
   const el = {
-    _text: "", _html: "",
+    tagName: tag || "", className: "", _text: "", _html: "", _attrs: {},
     classList: { add() {}, remove() {} },
     style: {},
     children: [],
-    // issue #470: a child's own serialized content (its _html, falling
-    // back to its escaped textContent for a plain text node) is appended
-    // to the parent's own _html too -- real innerHTML reflects every
-    // appendChild, and renderNotes builds its rows that way, not by one
-    // innerHTML string assignment the way renderTimeline does.
-    appendChild(c) {
-      el.children.push(c);
-      el._html += (c._html !== undefined) ? c._html : escapeForHtml(c.textContent);
-    },
-    setAttribute() {}, getAttribute() { return null; },
+    appendChild(c) { el.children.push(c); return c; },
+    setAttribute(k, v) { el._attrs[k] = String(v); },
+    getAttribute(k) { return k in el._attrs ? el._attrs[k] : null; },
   };
   Object.defineProperty(el, "textContent", {
-    get() { return el._text; },
-    set(v) { el._text = String(v); el._html = escapeForHtml(v); },
+    get() { return el._text + el.children.map(c => c.textContent).join(""); },
+    set(v) { el.children = []; el._text = String(v); el._html = _esc(v); },
   });
   Object.defineProperty(el, "innerHTML", {
-    get() { return el._html; },
-    set(v) { el._html = String(v); },
+    get() { return el._html + el.children.map(_outer).join(""); },
+    set(v) { _htmlWrites.push(String(v)); el.children = []; el._text = ""; el._html = String(v); },
   });
+  Object.defineProperty(el, "outerHTML", { get() { return _outer(el); } });
   return el;
 }
 const _elements = {};
 global.document = {
-  getElementById(id) { if (!_elements[id]) _elements[id] = makeEl(); return _elements[id]; },
-  createElement() { return makeEl(); },
+  getElementById(id) { if (!_elements[id]) _elements[id] = makeEl("div"); return _elements[id]; },
+  createElement(tag) { return makeEl(tag); },
   createTextNode(text) { return { textContent: String(text) }; },
   querySelector() { return null; },
 };
@@ -100,25 +100,28 @@ def _render_with_node(payload: dict) -> dict:
     with tempfile.TemporaryDirectory() as d:
         path = Path(d) / "render.js"
         path.write_text(script, encoding="utf-8")
-        proc = subprocess.run([node, str(path)], capture_output=True, text=True, timeout=30)
+        proc = subprocess.run([node, str(path)], capture_output=True, text=True,
+                              encoding="utf-8", timeout=30)
     assert proc.returncode == 0, proc.stderr
     return json.loads(proc.stdout)
 
 
 def _render_single_row_html(entry: dict) -> str:
-    """`stepRowHtml` builds a plain HTML string -- no DOM touched -- so this
-    needs no stub at all, just the real `_SCRIPT` and one call, bypassing
+    """`stepRowEl` builds one row's DOM nodes -- serialized by the stub,
+    just the real `_SCRIPT` and one call, bypassing
     `visibleSteps`'s own filtering entirely (used only to prove a raw,
     UNFILTERED exchange row really does contain the raw protocol text the
     main test below checks is absent from the real, filtered render)."""
     node = shutil.which("node")
     if node is None:
         pytest.skip("node not available")
-    script = _SCRIPT + "\nconsole.log(stepRowHtml(" + json.dumps(entry) + ", 0));"
+    script = (_DOM_STUB + _SCRIPT
+              + "\nconsole.log(stepRowEl(" + json.dumps(entry) + ", 0).outerHTML);")
     with tempfile.TemporaryDirectory() as d:
         path = Path(d) / "row.js"
         path.write_text(script, encoding="utf-8")
-        proc = subprocess.run([node, str(path)], capture_output=True, text=True, timeout=30)
+        proc = subprocess.run([node, str(path)], capture_output=True, text=True,
+                              encoding="utf-8", timeout=30)
     assert proc.returncode == 0, proc.stderr
     return proc.stdout
 
@@ -156,7 +159,12 @@ def test_rendered_step_count_is_the_same_with_the_exchange_log_on_or_off(tmp_pat
     elements_off = _render_with_node(payload_off)
 
     assert elements_on["verdict-bar"]["html"] == elements_off["verdict-bar"]["html"]
-    assert elements_on["timeline-list"]["html"] == elements_off["timeline-list"]["html"]
+    # issue #447: the rows are the #457 log table now, so the "on" run's
+    # rows also carry what went over the wire -- but the rows themselves
+    # (count, order, each step's function) are the same either way.
+    what = re.compile(r'<div class="what">([^<]*)</div>')
+    assert (what.findall(elements_on["timeline-list"]["html"])
+            == what.findall(elements_off["timeline-list"]["html"]))
 
 
 def test_no_timeline_row_holds_raw_protocol_text(tmp_path: Path) -> None:
@@ -213,8 +221,9 @@ def test_question_text_appears_under_the_title_live_and_in_export(tmp_path: Path
     elements_export = _render_with_node(export_payload)
     assert elements_export["question"]["text"] == export_payload["question"]
 
+    # issue #447 page text: the title IS the task's own question (the h1)
     shell_html = _shell(run_id)
-    assert shell_html.index('id="title"') < shell_html.index('id="question"')
+    assert '<h1 id="question">' in shell_html
 
 
 def test_drive_row_still_reads_exactly_through_the_shal_gate(tmp_path: Path) -> None:

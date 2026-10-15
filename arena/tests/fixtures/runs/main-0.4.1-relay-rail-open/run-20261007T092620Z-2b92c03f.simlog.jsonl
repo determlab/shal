@@ -1,0 +1,7 @@
+{"ts": "2026-10-07T09:26:20Z", "address": "psu0", "kind": "write", "input": "vin", "volts": 12.0}
+{"ts": "2026-10-07T09:26:20Z", "address": "dmm0", "kind": "measure"}
+{"ts": "2026-10-07T09:26:20Z", "address": "dmm0", "kind": "query", "cmd": "MEAS:VOLT:DC?", "reply": "0.013224"}
+{"ts": "2026-10-07T09:26:20Z", "address": "dmm0", "kind": "reading", "value": 0.013224, "unit": "volt"}
+{"ts": "2026-10-07T09:26:20Z", "address": "temp0", "kind": "measure"}
+{"ts": "2026-10-07T09:26:20Z", "address": "temp0", "kind": "exchange", "bus_family": "sim_i2c", "request": "2c06", "response": "83a8ca8000a2"}
+{"ts": "2026-10-07T09:26:20Z", "address": "temp0", "kind": "reading", "value": 45.00076295109484, "unit": "celsius"}

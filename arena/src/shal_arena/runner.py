@@ -23,6 +23,7 @@ built by hand (`_sim_bus_for_topology`) rather than through `shal.hal.load`
 """
 from __future__ import annotations
 
+import dataclasses
 import importlib.util
 import inspect
 import math
@@ -45,7 +46,7 @@ from .cases import CaseSpec, resolve_case
 from .errors import ArenaError, CheckCouldNotRun, MeasurementFailed
 from .loader import LoadedTask, load_task
 from .schema import Card, Instrument, Task
-from .score import build_score
+from .score import GAME_VERSION, build_score
 from .simlog import SimLog
 from .store import DEFAULT_STATE_DIR, RunState, RunStore
 
@@ -66,7 +67,18 @@ def _read_datasheet(case: CaseSpec) -> str:
     return "\n\n".join(f.read_text(encoding="utf-8") for f in files)
 
 
-def pick_fault(card: Card, seed: int) -> str:
+def run_fault_ids(card: Card, state: RunState) -> list[str]:
+    """issue #478: the fault ids ``state``'s fault was drawn from -- the
+    list the run stored when it started (`RunState.fault_indices`), or, for
+    a run stored before runs kept one, the card's faults as they stood then
+    (`fault.legacy_fault_ids`). Replaying an older run draws from the same
+    list it was made with, so a fault added later never changes it."""
+    if state.fault_indices is None:
+        return _fault.legacy_fault_ids(card)
+    return _fault.fault_ids_at(card, state.fault_indices)
+
+
+def pick_fault(card: Card, seed: int, fault_ids: list[str] | None = None) -> str:
     """The fault a seed picks, deterministically — the one piece of the
     challenge that must never sit on disk while a run is open. `start_run`
     picks it to know nothing persistent about it; `answer` picks it again,
@@ -76,12 +88,15 @@ def pick_fault(card: Card, seed: int) -> str:
 
     Delegates to `fault.realized_fault` (issue #312), which draws from the
     exact same `random.Random(seed).choice(card.faults)` call this used to
-    make directly — same seed, same id, for every existing caller."""
-    return _fault.realized_fault(card, seed).fault_id
+    make directly — same seed, same id, for every existing caller.
+    ``fault_ids`` (issue #478): the run's own stored list (`run_fault_ids`);
+    ``None`` draws from the card's current faults."""
+    return _fault.realized_fault(card, seed, fault_ids).fault_id
 
 
 def _topology_for_instrument(task: Task, card: Card, instrument: Instrument,
-                             seed: int, case: CaseSpec, *, nonce: int = 0) -> str | dict:
+                             seed: int, case: CaseSpec, *, nonce: int = 0,
+                             fault_ids: list[str] | None = None) -> str | dict:
     """issue #312: the harness this instrument's `check` runs against for
     THIS run. An instrument with no `probe:` (it `drives:` a card input
     instead) never carries a fault — always the case's static harness.  A
@@ -93,15 +108,57 @@ def _topology_for_instrument(task: Task, card: Card, instrument: Instrument,
 
     ``nonce`` (issue #431): forwarded to `fault.harness_for_run` unchanged —
     see its own docstring for why a fresh value per call matters for the
-    `noise` fault."""
+    `noise` fault. ``fault_ids`` (issue #478): the run's own stored list,
+    see `run_fault_ids`."""
     static = str(case.harness_topology)
     if instrument.probe is None:
         return static
-    realized = _fault.realized_fault(card, seed)
+    realized = _fault.realized_fault(card, seed, fault_ids)
     rail = _fault.rail_for_fault(card, realized)
     if rail is None or instrument.probe != f"card.{rail.test_point}":
-        return static
+        # issue #491: a multi-probe instrument (pinned to one point by
+        # `_pin_probe`) reads that rail's own nominal, not the case's fixed
+        # static value -- one DMM moved between 12 V, 5 V and 3.3 V points.
+        own = (next((r for r in card.rails if instrument.probe == f"card.{r.test_point}"), None)
+               if len(instrument.probes) > 1 else None)
+        if own is None:
+            return static
+        return _fault.harness_for_run(case, rail=own, seed=seed, nonce=nonce,
+                                      realized=_fault.RealizedFault("ok"))
     return _fault.harness_for_run(case, rail=rail, realized=realized, seed=seed, nonce=nonce)
+
+
+def _pin_probe(card: Card, instrument: Instrument,
+               at: str | None) -> tuple[Instrument, str | None, str | None]:
+    """issue #491 (probe select): the instrument as it reads for THIS call --
+    ``probe`` pinned to the point ``at`` names -- plus that point and its
+    board label (``TP2``) to log, both `None` for a one-point instrument.
+
+    ``at`` is required when the instrument lists several ``probes:``,
+    refused when it has one point (or none), and an unknown point is an
+    error that lists the valid ones."""
+    points = instrument.probe_points
+    if len(points) <= 1:
+        if at is not None:
+            what = f"probes only {points[0]}" if points else "probes no test point"
+            raise CheckCouldNotRun(
+                f"{instrument.address}: --at is only for an instrument with several probe "
+                f"points; this one {what}",
+                fix=f"drop --at {at} for {instrument.address}")
+        return instrument, None, None
+    if at is None:
+        raise CheckCouldNotRun(
+            f"{instrument.address}: this instrument probes several points "
+            f"({', '.join(points)}); --at is required",
+            fix=f"pass --at <point>, one of: {', '.join(points)}")
+    point = str(at).removeprefix("card.")
+    if point not in points:
+        raise CheckCouldNotRun(
+            f"{instrument.address}: no probe point {at!r}; valid points: {', '.join(points)}",
+            fix=f"pass --at with one of: {', '.join(points)}")
+    rail = next((r for r in card.rails if r.test_point == point), None)
+    label = (rail.label if rail is not None else None) or point
+    return dataclasses.replace(instrument, probe=f"card.{point}"), point, label
 
 
 def _fault_is_unplugged(topology: dict) -> bool:
@@ -124,6 +181,8 @@ def _instrument_view(instrument: Instrument) -> dict[str, Any]:
         view["switches"] = instrument.switches
     else:
         view["probe"] = instrument.probe
+        if len(instrument.probes) > 1:  # issue #491: pick one with --at
+            view["probes"] = list(instrument.probes)
     return view
 
 
@@ -141,6 +200,10 @@ def _load_card_sim(loaded: LoadedTask, state: RunState, store: RunStore, run_id:
         card_sim.applied = dict(state.card_applied)
     card_sim.destroyed = state.card_destroyed
     card_sim.power_on = state.card_power_on
+    # issue #478: an `open` card is an open circuit -- it draws about 0 A,
+    # where a `broken_probe` (a good card) draws its normal current.
+    realized = _fault.realized_fault(loaded.card, state.seed, run_fault_ids(loaded.card, state))
+    card_sim.open_circuit = realized.fault_id == "open"
     return card_sim
 
 
@@ -313,6 +376,14 @@ def _shal_damage_gate(card_sim: CardSim, input_name: str,
             f"{input_name}: this card declares no documented damage limit for this "
             "input, so there is nothing for shal's own gate to enforce",
             fix="label this agent:needs-human; do not add a second, arena-local gate")
+    # issue #491: limits may only tighten -- a card whose abs-max sits above
+    # the gate PSU's own declared range (power-28v: 32.0 V vs 30.0 V) keeps
+    # that driver cap as the gate, instead of failing to load.
+    from shal import registry
+
+    declared = ((getattr(registry.resolve("shal,sim-psu").set_voltage, "__shal_op__", {})
+                 or {}).get("params") or {}).get("volts", {}).get("maximum")
+    maximum = limit.above_v if declared is None else min(limit.above_v, declared)
     topology = {
         "shal_version": 1,
         "root": {
@@ -325,7 +396,7 @@ def _shal_damage_gate(card_sim: CardSim, input_name: str,
                         "driver": "shal,sim-psu",
                         "address": f"gate-{address}",
                         "config": {"limits": {
-                            "set_voltage": {"volts": {"maximum": limit.above_v}}}},
+                            "set_voltage": {"volts": {"maximum": maximum}}}},
                     },
                 },
             },
@@ -460,7 +531,7 @@ def _sim_bus_for_topology(topology: str | dict) -> tuple[SimScpiBus, Any]:
     return SimScpiBus(bench), child.address
 
 
-def raw_scpi(run_id: str, address: str, cmd: str, *,
+def raw_scpi(run_id: str, address: str, cmd: str, *, at: str | None = None,
             state_dir: str | Path = DEFAULT_STATE_DIR) -> dict[str, Any]:
     """The "without SHAL" Agent path (issue #314 Scope: "the agent gets raw
     SCPI access (socket-like) to the same sim. No drivers, no gate, no
@@ -487,6 +558,7 @@ def raw_scpi(run_id: str, address: str, cmd: str, *,
         raise CheckCouldNotRun(f"no instrument at address {address!r} on run {run_id!r}",
                                fix=f"use one of this run's addresses: {known}")
     case = resolve_case(instrument.case)
+    instrument, point, label = _pin_probe(loaded.card, instrument, at)
 
     # issue #473: a `switches` instrument keeps the raw path it had as a
     # `drives` one -- only the key changed, not the behaviour.
@@ -506,7 +578,8 @@ def raw_scpi(run_id: str, address: str, cmd: str, *,
         return {"run_id": run_id, "address": instrument.address, "cmd": cmd, **result.as_dict()}
 
     topology = _topology_for_instrument(loaded.task, loaded.card, instrument, state.seed, case,
-                                        nonce=state.turns)
+                                        nonce=state.turns,
+                                        fault_ids=run_fault_ids(loaded.card, state))
     card_sim = _load_card_sim(loaded, state, store, run_id)
     topology = _dead_rail_override(topology, loaded, instrument, case, card_sim, state.seed)
     sim_log = SimLog(store.sim_log_path(run_id))
@@ -519,12 +592,13 @@ def raw_scpi(run_id: str, address: str, cmd: str, *,
             # measure marker at any probe address") must read identically on
             # both sides, or a without-SHAL run is disqualified even when
             # every command it sent was correct.
-            sim_log.mark_measured(str(address))
+            sim_log.mark_measured(str(address), point=point, label=label)
             bus, child_addr = _sim_bus_for_topology(topology)
             reply = bus.exchange(child_addr, {"scpi": cmd, "query": is_query})
             if is_query:
                 try:
-                    sim_log.mark_reading(str(address), float(reply["reply"]), None)
+                    sim_log.mark_reading(str(address), float(reply["reply"]), None,
+                                         point=point, label=label)
                 except (TypeError, ValueError):
                     pass  # not a bare number -- nothing to show as a reading
     except Exception as e:  # noqa: BLE001 - a live answer to THIS call, never persisted
@@ -553,8 +627,11 @@ def start_run(task_path: str, *, seed: int | None = None,
     seed_used = task.seed if seed is None else seed
 
     store = RunStore(state_dir)
+    # issue #478: the run stores the fault list it is drawn from and the
+    # game rules it starts under, so a later card change never re-draws it.
     state = store.create(task_path=str(loaded.task_path), card_path=str(loaded.card_path),
-                         seed=seed_used)
+                         seed=seed_used, fault_indices=list(range(len(card.faults))),
+                         game_version=GAME_VERSION)
     return {
         "ok": True,
         "side_effect": "write",
@@ -658,7 +735,8 @@ def check_instrument_driver(run_id: str, address: str, driver_path: str | Path, 
     case = resolve_case(instrument.case)
     _import_driver_file(driver_path)
     topology = _topology_for_instrument(loaded.task, loaded.card, instrument, state.seed, case,
-                                        nonce=state.turns)
+                                        nonce=state.turns,
+                                        fault_ids=run_fault_ids(loaded.card, state))
     try:
         report = _conformance_check_driver(case.compatible, topology=topology)
     except Exception as e:  # noqa: BLE001 - the check itself could not run
@@ -705,6 +783,7 @@ def _zero_arg_read_op(cls: type) -> str | None:
 
 
 def take_measurement(run_id: str, address: str, driver_path: str | Path, *,
+                     at: str | None = None,
                      state_dir: str | Path = DEFAULT_STATE_DIR) -> dict[str, Any]:
     """The player's own deliberate measurement (issue #312; CTO review on
     #322: "the log must record the player's own reads, through their bound
@@ -743,6 +822,7 @@ def take_measurement(run_id: str, address: str, driver_path: str | Path, *,
         raise CheckCouldNotRun(f"no instrument at address {address!r} on run {run_id!r}",
                                fix=f"use one of this run's addresses: {known}")
     case = resolve_case(instrument.case)
+    instrument, point, label = _pin_probe(loaded.card, instrument, at)
     _import_driver_file(driver_path)
     try:
         cls = registry.resolve(case.compatible)
@@ -759,7 +839,8 @@ def take_measurement(run_id: str, address: str, driver_path: str | Path, *,
                 "params — measuring it needs a different driver shape")
 
     topology = _topology_for_instrument(loaded.task, loaded.card, instrument, state.seed, case,
-                                        nonce=state.turns)
+                                        nonce=state.turns,
+                                        fault_ids=run_fault_ids(loaded.card, state))
     card_sim = _load_card_sim(loaded, state, store, run_id)
     topology = _dead_rail_override(topology, loaded, instrument, case, card_sim, state.seed)
     sim_log = SimLog(store.sim_log_path(run_id))
@@ -773,15 +854,16 @@ def take_measurement(run_id: str, address: str, driver_path: str | Path, *,
                     fix="this is a packaged case's harness, not your driver.py — "
                         "if you see this, file a shal-arena issue")
             if instrument.probe is not None:
-                point = instrument.probe.removeprefix("card.")
-                realized = _fault.realized_fault(loaded.card, state.seed)
+                bound = instrument.probe.removeprefix("card.")
+                realized = _fault.realized_fault(loaded.card, state.seed,
+                                                 run_fault_ids(loaded.card, state))
                 card_state = _make_card_state(loaded.card, card_sim, realized)
-                _bind_card_state(node, point, card_state)
-            sim_log.mark_measured(str(address))
+                _bind_card_state(node, bound, card_state)
+            sim_log.mark_measured(str(address), point=point, label=label)
             reading = getattr(node.driver, read_op)()
             op_fn = cls.capability_ops()[read_op]
             unit = (getattr(op_fn, "__shal_op__", {}) or {}).get("unit")
-            sim_log.mark_reading(str(address), reading, unit)
+            sim_log.mark_reading(str(address), reading, unit, point=point, label=label)
     except CheckCouldNotRun:
         raise
     except Exception as e:  # noqa: BLE001 - a live answer to THIS call, never persisted
@@ -794,7 +876,8 @@ def take_measurement(run_id: str, address: str, driver_path: str | Path, *,
         # without ever reaching the bus.
         cause = "transport" if isinstance(e, (shal.errors.HopError, shal.errors.HopTimeout)) \
             else "driver"
-        sim_log.append(str(address), "failed", cause=cause)
+        sim_log.append(str(address), "failed", cause=cause,
+                       **({"point": point, "label": label} if point is not None else {}))
         raise MeasurementFailed(
             f"{read_op} raised {type(e).__name__}: {e}",
             fix="the instrument did not answer this call — if that's unexpected, "
@@ -811,6 +894,14 @@ def take_measurement(run_id: str, address: str, driver_path: str | Path, *,
         "reading": reading,
         "card": card,
     }
+    if instrument.probe is not None:
+        # issue #491: the reading is tied to the point it was taken at, in
+        # the run state, so a reader uses that point's own limit.
+        probed = instrument.probe.removeprefix("card.")
+        store.add_reading(run_id, str(address), point=probed, value=reading, unit=unit)
+        result["point"] = probed
+        if label is not None:
+            result["label"] = label
     spec = catalogue().get(instrument.case)
     if spec is not None and spec.fuse_a is not None:
         # a DMM's current input sits in the card's supply path: a burned fuse
@@ -871,8 +962,9 @@ def answer(run_id: str, value: str, *, state_dir: str | Path = DEFAULT_STATE_DIR
             f"{loaded.task.question.answer.kind!r} is not scored yet",
             fix="number-kind answers need card simulation, which ships in a later "
                 "arena ticket; this ticket scores enum-kind tasks only")
-    fault_id = pick_fault(loaded.card, state.seed)
-    record = store.answer(run_id, given=value, fault_id=fault_id)
+    fault_id = pick_fault(loaded.card, state.seed, run_fault_ids(loaded.card, state))
+    record = store.answer(run_id, given=value, fault_id=fault_id,
+                          expected=_fault.answer_for(loaded.card, fault_id))
 
     sim_log = SimLog(store.sim_log_path(run_id))
     disqualified = not has_any_measurement(run_id, state_dir)
@@ -886,7 +978,7 @@ def answer(run_id: str, value: str, *, state_dir: str | Path = DEFAULT_STATE_DIR
 
 
 def call_op(run_id: str, address: str, driver_path: str | Path, op_name: str,
-           args: list[str] | None = None, *,
+           args: list[str] | None = None, *, at: str | None = None,
            state_dir: str | Path = DEFAULT_STATE_DIR) -> dict[str, Any]:
     """``shal-arena call`` (issue relay-rail): run ANY op of the player's own
     driver through SHAL's normal dispatch — `hal.call_tool`'s gate, limits
@@ -917,6 +1009,7 @@ def call_op(run_id: str, address: str, driver_path: str | Path, op_name: str,
         raise CheckCouldNotRun(f"no instrument at address {address!r} on run {run_id!r}",
                                fix=f"use one of this run's addresses: {known}")
     case = resolve_case(instrument.case)
+    instrument, point, label = _pin_probe(loaded.card, instrument, at)
     _import_driver_file(driver_path)
     try:
         cls = registry.resolve(case.compatible)
@@ -947,7 +1040,8 @@ def call_op(run_id: str, address: str, driver_path: str | Path, op_name: str,
             fix=f"use `shal-arena drive <run> {address} <volts>` instead of call")
 
     topology = _topology_for_instrument(loaded.task, loaded.card, instrument, state.seed, case,
-                                        nonce=state.turns)
+                                        nonce=state.turns,
+                                        fault_ids=run_fault_ids(loaded.card, state))
     card_sim = _load_card_sim(loaded, state, store, run_id)
     topology = _dead_rail_override(topology, loaded, instrument, case, card_sim, state.seed)
     sim_log = SimLog(store.sim_log_path(run_id))
@@ -961,11 +1055,12 @@ def call_op(run_id: str, address: str, driver_path: str | Path, op_name: str,
                     fix="this is a packaged case's harness, not your driver.py — "
                         "if you see this, file a shal-arena issue")
             if instrument.probe is not None:
-                point = instrument.probe.removeprefix("card.")
-                realized = _fault.realized_fault(loaded.card, state.seed)
+                probed = instrument.probe.removeprefix("card.")
+                realized = _fault.realized_fault(loaded.card, state.seed,
+                                                 run_fault_ids(loaded.card, state))
                 card_state = _make_card_state(loaded.card, card_sim, realized)
-                _bind_card_state(node, point, card_state)
-                sim_log.mark_measured(str(address))
+                _bind_card_state(node, probed, card_state)
+                sim_log.mark_measured(str(address), point=point, label=label)
             if case.power_switch:
                 # a fresh `shal.load` means a fresh relay model every call
                 # (same reason `_load_card_sim` restores `CardSim.applied`

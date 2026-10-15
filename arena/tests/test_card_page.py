@@ -7,6 +7,7 @@ never a hand-written fixture — so these tests exercise the same artifacts
 `shal-arena replay` would write for an actual run."""
 from __future__ import annotations
 
+import html
 import json
 import re
 import shutil
@@ -129,6 +130,27 @@ def test_headline_false_fails_is_singular_only_at_one() -> None:
     assert _headline({**base, "false_fails": 0}) == "1 of 3 faults caught. 0 false fails."
     assert _headline({**base, "false_fails": 1}) == "1 of 3 faults caught. 1 false fail."
     assert _headline({**base, "false_fails": 2}) == "1 of 3 faults caught. 2 false fails."
+
+
+def test_headline_with_no_fault_never_says_0_of_0() -> None:
+    """issue #495: a good card (`broken_probe`) has no card fault to catch."""
+    base = {"faults_caught": 0, "faults_total": 0}
+    assert _headline({**base, "false_fails": 0}) == "No fault was injected. 0 false fails."
+    assert _headline({**base, "false_fails": 1}) == "No fault was injected. 1 false fail."
+
+
+def test_card_for_a_seed_with_no_faults_says_so(tmp_path: Path) -> None:
+    from .conftest import RELAY_RAIL_TASK
+    state_dir = tmp_path / "state"
+    run_id = start_run(str(RELAY_RAIL_TASK), seed=5, state_dir=state_dir)["run_id"]
+    drive_input(run_id, "psu0", 12.0, state_dir=state_dir)
+    take_measurement(run_id, "dmm0", PASSING_DMM_DRIVER, state_dir=state_dir)
+    answer(run_id, "open", state_dir=state_dir)   # blames the card: a false fail
+    card_html = build_result_card(run_id, state_dir=state_dir)
+    assert "0 of 0" not in card_html
+    assert "No fault was injected." in card_html
+    assert html.escape("The agent's answer: open. Wrong: the card is fine, the probe is "
+                       "broken. This is a false fail.") in card_html
 
 
 # --------------------------------------------------------------------------- #

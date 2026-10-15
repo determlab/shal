@@ -90,8 +90,13 @@ def _measure_failure_cause(measure_doc: dict[str, Any]) -> str:
     return "transport" if ("HopError" in message or "HopTimeout" in message) else "driver"
 
 
+#: issue #495: a card drawing at least this much supply current works (same
+#: threshold as `shal_arena.demo.PROBE_MIN_CURRENT_A`); an `open` one draws ~0 A.
+PROBE_MIN_CURRENT_A = 0.01
+
+
 def _diagnose(nominal_v: float, tol_pct: float, readings: list[float],
-             allowed: set[str]) -> str:
+             allowed: set[str], current_a: float | None = None) -> str:
     """A guess from the measurements alone (same logic as `shal_arena.demo`'s
     own `_diagnose`, parametrized on the rail's numbers instead of a `Rail`
     object this script has no import for, and on several readings instead of
@@ -106,6 +111,9 @@ def _diagnose(nominal_v: float, tol_pct: float, readings: list[float],
     falls back to `noise` when the task even offers it."""
     if not readings:
         return "error"
+    if (abs(readings[-1]) < OPEN_FRACTION * nominal_v and "probe" in allowed
+            and current_a is not None and abs(current_a) >= PROBE_MIN_CURRENT_A):
+        return "probe"      # issue #495: ~0 V but the card draws its normal current
     if abs(readings[-1]) < OPEN_FRACTION * nominal_v and "open" in allowed:
         return "open"
     band = nominal_v * tol_pct / 100
@@ -183,7 +191,8 @@ def check_arena_score_file(level: str, score_exists: bool, answer_doc: dict[str,
     realized fault was not `ok` (`score["fault_type"]`, same test
     `build_score`'s own `caught` uses) -- at least one fault caught."""
     score = answer_doc.get("score") or {}
-    has_fault = score.get("fault_type") not in (None, "ok")
+    # `broken_probe` is a good card (issue #478): no card fault to catch
+    has_fault = score.get("fault_type") not in (None, "ok", "broken_probe")
     ok = (score_exists and bool(score)
          and answer_doc.get("correct") is True
          and answer_doc.get("disqualified") is False
@@ -202,6 +211,19 @@ def check_arena_bench_destroyed(doc: dict[str, Any], rerun: str) -> dict[str, An
     return _result("arena_bench_destroyed", ok, json.dumps(
         {"with_shal_destroyed": with_destroyed, "without_shal_destroyed": without_destroyed}),
         rerun)
+
+
+def check_arena_fault_determinism(doc: dict[str, Any], rerun: str) -> dict[str, Any]:
+    """arena#390: ``shal-arena verify``'s replay trusts `fault.realized_fault`
+    (a pure ``random.Random(seed)`` computation) to give the SAME fault on
+    Windows, Linux and macOS for the SAME seed -- this is what "proves
+    identical replay numbers for the same seed on the 3-OS CI matrix" means
+    here (arena#390's own Done-when), reusing this already-3-OS harness
+    rather than a new workflow. Expected value independently confirmed by
+    hand once (same seed, same task, same card) when arena/challenges/
+    2026-41.yaml and arena/tests/fixtures/verify/ were built."""
+    ok = doc.get("fault_id") == "open" and doc.get("extra", {}).get("rail") == "3v3"
+    return _result("arena_fault_determinism", ok, json.dumps(doc), rerun)
 
 
 def check_wheel_installed(package: str, version: str | None, ok: bool, output: str,
@@ -325,14 +347,16 @@ def run_arena_task_score_file(venv_python: str, level: str, state_dir: Path, *,
         measure_argv = ["-m", "shal_arena.cli", "measure", run_id, str(probe_inst["address"]),
                        str(driver_path), "--state-dir", str(state_dir), "--json"]
         readings: list[float] = []
+        current_a: float | None = None
         for _ in range(_N_READS):
             measure_doc, measure_ec = _run_json(venv_python, measure_argv)
             if measure_ec != EXIT_PASS:
                 readings = []   # a broken link to the bench, not a card fault (#477)
                 break
             readings.append(measure_doc["reading"])
+            current_a = measure_doc.get("current_a")
 
-    given = _diagnose(rail["nominal_v"], rail["tol_pct"], readings, allowed)
+    given = _diagnose(rail["nominal_v"], rail["tol_pct"], readings, allowed, current_a)
     if given == "error":
         # issue #477: nothing to answer -- the run is an `error`, never
         # scored as a correct `fail`
@@ -369,6 +393,28 @@ def run_arena_demo(venv_python: str) -> dict[str, Any]:
     card_exists = bool(doc.get("card_path")) and Path(doc["card_path"]).is_file()
     return check_arena_demo(doc, ec, record_exists, card_exists,
                             f"{venv_python} {_argv_str(demo_argv)}")
+
+
+def run_arena_fault_determinism(venv_python: str) -> dict[str, Any]:
+    code = (
+        "import json, sys\n"
+        "from shal_arena.loader import load_task\n"
+        "from shal_arena.fault import realized_fault\n"
+        "loaded = load_task(sys.argv[1])\n"
+        "rf = realized_fault(loaded.card, 20261006)\n"
+        "print(json.dumps({'fault_id': rf.fault_id, 'extra': rf.extra}))\n"
+    )
+    task_path = ARENA_TASKS_DIR / "easy.yaml"
+    argv = [venv_python, "-c", code, str(task_path)]
+    proc = subprocess.run(argv, capture_output=True, text=True, timeout=60)
+    try:
+        doc = json.loads(proc.stdout)
+    except json.JSONDecodeError:
+        doc = {"ok": False, "error": f"not JSON: stdout={proc.stdout!r} stderr={proc.stderr!r}"}
+    rerun = (f"{venv_python} -c \"from shal_arena.loader import load_task; "
+            f"from shal_arena.fault import realized_fault; "
+            f"print(realized_fault(load_task('{task_path}').card, 20261006))\"")
+    return check_arena_fault_determinism(doc, rerun)
 
 
 def run_bricks_wheel_check(venv_python: str) -> dict[str, Any]:
@@ -442,6 +488,9 @@ def main(argv: list[str] | None = None) -> int:
              run_arena_bench_destroyed, venv_py, state_dir / "bench-story")
     run_step("arena_demo", f"{venv_py} -m shal_arena.cli demo --pause 0 --json",
              run_arena_demo, venv_py)
+    run_step("arena_fault_determinism",
+             f"{venv_py} -c \"from shal_arena.fault import realized_fault\"",
+             run_arena_fault_determinism, venv_py)
     run_step("wheel_installed_bricks-engine",
              f'{venv_py} -c "import bricks; print(bricks.__version__)"',
              run_bricks_wheel_check, venv_py)

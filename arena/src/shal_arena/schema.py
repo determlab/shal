@@ -80,6 +80,15 @@ class Instrument:
     drives: str | None     # "card.<input>"
     probe: str | None      # "card.<test_point>"
     switches: str | None = None  # "card.<input>" -- a relay on that input (issue #473)
+    # issue #491: every point this instrument can probe, in file order. A
+    # `probe:` entry has one; a `probes:` entry several, and `probe` above is
+    # then its first point (so every "is this a probe instrument" check holds).
+    probes: tuple[str, ...] = ()
+
+    @property
+    def probe_points(self) -> tuple[str, ...]:
+        """The test point names (no ``card.`` prefix) this instrument probes."""
+        return tuple(p.removeprefix("card.") for p in self.probes)
 
 
 @dataclass(frozen=True)
@@ -142,7 +151,7 @@ def validate_task(doc: Any) -> Task:
                 question=question, seed=seed, limits=limits)
 
 
-_WIRING_KEYS = ("drives", "probe", "switches")
+_WIRING_KEYS = ("drives", "probe", "switches", "probes")
 
 
 def _validate_instruments(value: Any) -> tuple[Instrument, ...]:
@@ -168,10 +177,28 @@ def _validate_instruments(value: Any) -> tuple[Instrument, ...]:
         # told apart from `drives` (the source that sets that input's voltage)
         present = [k for k in _WIRING_KEYS if k in entry]
         if len(present) != 1:
-            _fail(f"{where}: must have exactly one of 'drives', 'probe' or 'switches'"
+            _fail(f"{where}: must have exactly one of 'drives', 'probe', 'probes' or 'switches'"
                   + (f", got {present}" if present else ""),
-                  f"keep exactly one of 'drives'/'probe'/'switches' in {where}")
+                  f"keep exactly one of 'drives'/'probe'/'probes'/'switches' in {where}")
         wiring_key = present[0]
+        if wiring_key == "probes":
+            # issue #491: one instrument moved between several test points
+            points = entry["probes"]
+            if (not isinstance(points, list) or len(points) < 2
+                    or not all(isinstance(p, str) and p for p in points)):
+                _fail(f"{where}.probes: must be a list of at least two card.<test point> "
+                      f"names, got {points!r}",
+                      f"list two or more points in {where}.probes, or use 'probe:' for one")
+            for p in points:
+                if not p.startswith("card."):
+                    _fail(f"{where}.probes: must name card.<name> points, got {p!r}",
+                          f"set each entry of {where}.probes to 'card.<test point>'")
+            if len(set(points)) != len(points):
+                _fail(f"{where}.probes: duplicate point in {points!r}",
+                      f"remove the duplicate from {where}.probes")
+            out.append(Instrument(case=case, address=address, drives=None,
+                                  probe=points[0], probes=tuple(points)))
+            continue
         wiring = _require_str(entry, wiring_key, where)
         if not wiring.startswith("card."):
             _fail(f"{where}.{wiring_key}: must name a card.<name>, got {wiring!r}",
@@ -179,7 +206,8 @@ def _validate_instruments(value: Any) -> tuple[Instrument, ...]:
         out.append(Instrument(case=case, address=address,
                                drives=wiring if wiring_key == "drives" else None,
                                probe=wiring if wiring_key == "probe" else None,
-                               switches=wiring if wiring_key == "switches" else None))
+                               switches=wiring if wiring_key == "switches" else None,
+                               probes=(wiring,) if wiring_key == "probe" else ()))
     return tuple(out)
 
 
@@ -241,6 +269,7 @@ class Rail:
     test_point: str
     min_input_v: float
     tol_source: str | None = None
+    label: str | None = None   # issue #491: the board's own name for test_point, e.g. "TP2"
 
 
 @dataclass(frozen=True)
@@ -268,6 +297,21 @@ class Fault:
 
 
 @dataclass(frozen=True)
+class Block:
+    """One block of the card's block diagram (issue #447): the page draws
+    the diagram from these, never by hand per card. `from_block` is the
+    link (the block this one is fed by); `input`/`switch` name the card
+    input a `drives:`/`switches:` instrument attaches to; `test_point` is
+    the measure point a `probe:` instrument attaches to."""
+    id: str
+    label: str
+    from_block: str | None = None
+    input: str | None = None
+    switch: str | None = None
+    test_point: str | None = None
+
+
+@dataclass(frozen=True)
 class Card:
     id: str
     description: str
@@ -276,12 +320,14 @@ class Card:
     damage: tuple[Damage, ...]
     faults: tuple[Fault, ...]
     temp_points: tuple[TempPoint, ...] = ()
+    blocks: tuple[Block, ...] = ()
 
 
 def validate_card(doc: Any) -> Card:
     _require_dict(doc, "card")
     _require_keys(doc, required={"arena_card", "id", "description", "inputs", "rails",
-                                  "damage", "faults"}, optional={"temp_points"}, where="card")
+                                  "damage", "faults"}, optional={"temp_points", "blocks"},
+                  where="card")
     version = doc.get("arena_card")
     if version != CARD_VERSION:
         _fail(f"card.arena_card: this shal-arena supports version {CARD_VERSION}, "
@@ -297,8 +343,10 @@ def validate_card(doc: Any) -> Card:
     temp_points = _validate_temp_points(doc.get("temp_points"), rail_test_points)
     damage = _validate_damage(doc.get("damage"), input_names)
     faults = _validate_faults(doc.get("faults"))
+    test_points = set(rail_test_points) | {t.test_point for t in temp_points}
+    blocks = _validate_blocks(doc.get("blocks"), input_names, test_points)
     return Card(id=card_id, description=description, inputs=inputs, rails=rails,
-                damage=damage, faults=faults, temp_points=temp_points)
+                damage=damage, faults=faults, temp_points=temp_points, blocks=blocks)
 
 
 def _validate_inputs(value: Any) -> tuple[Input, ...]:
@@ -324,7 +372,8 @@ def _validate_rails(value: Any, input_names: set[str]) -> tuple[Rail, ...]:
         where = f"card.rails.{name}"
         _require_dict(entry, where)
         _require_keys(entry, required={"from", "nominal_v", "tol_pct", "test_point",
-                                        "min_input_v"}, optional={"tol_source"}, where=where)
+                                        "min_input_v"},
+                      optional={"tol_source", "label"}, where=where)
         from_input = _require_str(entry, "from", where)
         if from_input not in input_names:
             _fail(f"{where}.from: {from_input!r} is not a card.inputs name",
@@ -341,7 +390,8 @@ def _validate_rails(value: Any, input_names: set[str]) -> tuple[Rail, ...]:
                         tol_pct=_require_number(entry, "tol_pct", where, minimum=0),
                         test_point=test_point,
                         min_input_v=_require_number(entry, "min_input_v", where),
-                        tol_source=tol_source))
+                        tol_source=tol_source,
+                        label=_require_str(entry, "label", where) if "label" in entry else None))
     return tuple(out)
 
 
@@ -368,6 +418,41 @@ def _validate_temp_points(value: Any, reserved_test_points: dict[str, str]
         tol_source = _require_str(entry, "tol_source", where) if "tol_source" in entry else None
         out.append(TempPoint(name=name, nominal_c=_require_number(entry, "nominal_c", where),
                              test_point=test_point, high_c=high_c, tol_source=tol_source))
+    return tuple(out)
+
+
+def _validate_blocks(value: Any, input_names: set[str], test_points: set[str]
+                     ) -> tuple[Block, ...]:
+    """``card.blocks`` (optional, issue #447): the card's block diagram, in
+    order. Each block may name the block that feeds it (``from``, an
+    earlier block), and what attaches to it: a card ``input``, the input a
+    relay ``switch``es, or a ``test_point`` (a rail's or temp point's)."""
+    d = _require_dict(value if value is not None else {}, "card.blocks")
+    out: list[Block] = []
+    for name, entry in d.items():
+        where = f"card.blocks.{name}"
+        _require_dict(entry, where)
+        _require_keys(entry, required=set(),
+                      optional={"label", "from", "input", "switch", "test_point"}, where=where)
+        label = _require_str(entry, "label", where) if "label" in entry else str(name).upper()
+        from_block = _require_str(entry, "from", where) if "from" in entry else None
+        if from_block is not None and from_block not in {b.id for b in out}:
+            _fail(f"{where}.from: {from_block!r} is not an earlier card.blocks name",
+                  f"set {where}.from to one of {[b.id for b in out]}")
+        refs = {}
+        for key, allowed in (("input", input_names), ("switch", input_names),
+                             ("test_point", test_points)):
+            ref = _require_str(entry, key, where) if key in entry else None
+            if ref is not None and ref not in allowed:
+                _fail(f"{where}.{key}: {ref!r} is not one of {sorted(allowed)}",
+                      f"set {where}.{key} to one of {sorted(allowed)}")
+            refs[key] = ref
+        tp = refs["test_point"]
+        dup = next((b.id for b in out if tp is not None and b.test_point == tp), None)
+        if dup is not None:
+            _fail(f"{where}.test_point: {tp!r} is already on card.blocks.{dup}",
+                  f"put test_point {tp!r} on one block only")
+        out.append(Block(id=str(name), label=label, from_block=from_block, **refs))
     return tuple(out)
 
 

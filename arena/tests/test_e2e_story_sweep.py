@@ -42,3 +42,33 @@ def test_every_seed_0_to_29_is_correctly_diagnosed(level, tmp_path):
         if result["result"] != "pass":
             failures.append((seed, result["log"]))
     assert not failures, failures
+
+
+def test_story_diagnose_says_probe_only_with_the_card_current():
+    readings, allowed = [0.012] * story._N_READS, {"ok", "open", "probe"}
+    assert story._diagnose(3.3, 2.0, readings, allowed, 0.05) == "probe"
+    assert story._diagnose(3.3, 2.0, readings, allowed, 0.0) == "open"
+    assert story._diagnose(3.3, 2.0, readings, allowed) == "open"
+    assert story._diagnose(3.3, 2.0, readings, {"ok", "open"}, 0.05) == "open"
+
+
+def test_a_broken_probe_score_needs_no_caught_fault():
+    doc = {"correct": True, "disqualified": False,
+           "score": {"fault_type": "broken_probe", "turns": 3, "faults_caught": 0}}
+    assert story.check_arena_score_file("relay-rail", True, doc, "rerun")["result"] == "pass"
+
+
+#: relay-rail seeds that realize `broken_probe` (see test_broken_probe_fault)
+@pytest.mark.parametrize("seed", [5, 6, 10, 17, 29])
+def test_a_broken_probe_seed_is_answered_probe_and_ends_correct(seed, tmp_path):
+    result = story.run_arena_task_score_file(
+        sys.executable, "relay-rail", tmp_path / str(seed), seed=seed)
+    assert result["result"] == "pass", result["log"]
+
+
+@pytest.mark.parametrize(("seed", "fault"), [(7, "open"), (2, "ok")])
+def test_other_relay_rail_seeds_keep_their_answers(seed, fault, tmp_path):
+    result = story.run_arena_task_score_file(
+        sys.executable, "relay-rail", tmp_path / str(seed), seed=seed)
+    assert result["result"] == "pass", result["log"]
+    assert f'"fault_type": "{fault}"' in result["log"]

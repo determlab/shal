@@ -7,6 +7,7 @@
     shal-arena run rail-3v3 --json
     shal-arena check-driver <run-id> psu0 ./driver.py --json
     shal-arena measure <run-id> dmm0 ./driver.py --json
+    shal-arena measure <run-id> dmm0 ./driver.py --at tp_5v --json
     shal-arena drive <run-id> psu0 6.5 --json
     shal-arena call <run-id> relay0 ./driver.py set_relay 0 false --json
     shal-arena answer <run-id> low_voltage --json
@@ -46,6 +47,7 @@ from .replay.rack import build_setup_yaml, render_rack_page
 from .runner import answer as _answer
 from .runner import call_op, check_instrument_driver, drive_input, start_run, take_measurement
 from .store import DEFAULT_STATE_DIR, RunStore
+from .verify import verify as _verify
 
 
 def _cmd_demo(args: argparse.Namespace) -> int:
@@ -147,7 +149,8 @@ def _cmd_run(args: argparse.Namespace) -> int:
         print(f"run {result['run_id']}: {result['task']['title']}")
         print(result['task']['question'])
         for inst in result["instruments"]:
-            wiring = inst.get("drives") or inst.get("switches") or inst.get("probe")
+            wiring = (inst.get("drives") or inst.get("switches")
+                      or ", ".join(inst.get("probes") or []) or inst.get("probe"))
             print(f"  {inst['address']} ({inst['case']}) -> {wiring}")
     return 0
 
@@ -171,13 +174,14 @@ def _cmd_check(args: argparse.Namespace) -> int:
 def _cmd_measure(args: argparse.Namespace) -> int:
     try:
         result = take_measurement(args.run_id, args.instrument, args.manifest,
-                                  state_dir=args.state_dir)
+                                  at=args.at, state_dir=args.state_dir)
     except ArenaError as e:
         return _report_error(e, args.json)
     if args.json:
         _json_out(result)
     else:
-        print(f"{args.instrument}: {result['op']} -> {result['reading']}")
+        at = f" at {result['label']}" if result.get("label") else ""
+        print(f"{args.instrument}{at}: {result['op']} -> {result['reading']}")
     return 0
 
 
@@ -199,7 +203,7 @@ def _cmd_drive(args: argparse.Namespace) -> int:
 def _cmd_call(args: argparse.Namespace) -> int:
     try:
         result = call_op(args.run_id, args.instrument, args.manifest, args.op, args.args,
-                         state_dir=args.state_dir)
+                         at=args.at, state_dir=args.state_dir)
     except ArenaError as e:
         return _report_error(e, args.json)
     if args.json:
@@ -225,6 +229,20 @@ def _cmd_answer(args: argparse.Namespace) -> int:
             print("disqualified: no measurement logged for this run")
         print(f"sim log: {result['sim_log']}")
     return 0
+
+
+_VERIFY_EXIT = {"verified": 0, "disqualified": 1, "refused": 2}
+
+
+def _cmd_verify(args: argparse.Namespace) -> int:
+    result = _verify(args.score_file, week=args.week)
+    if args.json:
+        _json_out(result)
+    else:
+        print(f"{result['result']}: {result['reason']}")
+        if result["week"]:
+            print(f"week: {result['week']}")
+    return _VERIFY_EXIT[result["result"]]
 
 
 def _cmd_bench(args: argparse.Namespace) -> int:
@@ -378,12 +396,15 @@ def _build_parser() -> argparse.ArgumentParser:
     add_note(p_check)
     p_check.set_defaults(func=_cmd_check)
 
+    at_help = ("the test point to probe, e.g. tp_5v -- required when the instrument "
+               "lists several probe points (issue #491), refused when it has one")
     p_measure = sub.add_parser(
         "measure",
         help="take your own reading on an instrument (issue #312 Agent path)")
     p_measure.add_argument("run_id")
     p_measure.add_argument("instrument", help="the instrument address from `run`'s output")
     p_measure.add_argument("manifest", help="path to your driver.py")
+    p_measure.add_argument("--at", default=None, metavar="POINT", help=at_help)
     add_common(p_measure)
     add_note(p_measure)
     p_measure.set_defaults(func=_cmd_measure)
@@ -408,6 +429,7 @@ def _build_parser() -> argparse.ArgumentParser:
     p_call.add_argument("manifest", help="path to your driver.py")
     p_call.add_argument("op", help="the op name on your driver, e.g. set_relay")
     p_call.add_argument("args", nargs="*", help="positional arguments for the op, e.g. 0 false")
+    p_call.add_argument("--at", default=None, metavar="POINT", help=at_help)
     add_common(p_call)
     add_note(p_call)
     p_call.set_defaults(func=_cmd_call)
@@ -466,6 +488,20 @@ def _build_parser() -> argparse.ArgumentParser:
                          help="also write the result to this path")
     add_common(p_setup)
     p_setup.set_defaults(func=_cmd_setup_yaml)
+
+    p_verify = sub.add_parser(
+        "verify",
+        help="leaderboard part 1 (issue #390): replay a closed run from the weekly "
+             "seed and say whether its score file holds up")
+    p_verify.add_argument("score_file", help="path to the run's <stem>.score.json; "
+                                             "<stem>.record.json and <stem>.simlog.jsonl "
+                                             "must sit beside it")
+    p_verify.add_argument("--week", default=None, metavar="YYYY-WW",
+                          help="which arena/challenges/<week>.yaml to check against; "
+                               "default: the nearest yyyy-ww directory name in "
+                               "score_file's own path")
+    p_verify.add_argument("--json", action="store_true", help="print one JSON document")
+    p_verify.set_defaults(func=_cmd_verify)
 
     return parser
 

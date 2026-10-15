@@ -1,7 +1,8 @@
 """issue #470: an optional ``--note`` on every ``shal-arena`` command that
-names a run -- saved next to that call in ``<run>.cli.jsonl``, shown apart
-from readings in the `ui` page. ``--note`` never changes what the command
-itself does or returns; it only adds to the log line."""
+names a run -- saved next to that call in ``<run>.cli.jsonl``, shown in that
+call's row of the `ui` page's commands window (#489), apart from readings.
+``--note`` never changes what the command itself does or returns; it only adds
+to the log line."""
 from __future__ import annotations
 
 import html
@@ -269,10 +270,17 @@ def test_a_note_at_exactly_the_limit_is_accepted(tmp_path: Path) -> None:
 
 
 # --------------------------------------------------------------------------- #
-# the view: notes apart from readings, never inside a measurement row.
+# the view: each note inside its own call's row of #489's commands window,
+# never inside a measurement row.
 # --------------------------------------------------------------------------- #
 
-def test_payload_lists_notes_separately_from_the_timeline(tmp_path: Path) -> None:
+def _noted(payload: dict) -> list[dict]:
+    """The commands-window rows (#489) that carry a note."""
+    return [r for r in payload["cli_log"]["rows"] if r["note"] is not None]
+
+
+def test_the_note_is_in_its_calls_commands_window_row_never_the_timeline(
+        tmp_path: Path) -> None:
     state_dir = tmp_path / "state"
     run_id = _start_run(state_dir)
     proc = _run_cli("measure", run_id, "dmm0", str(PASSING_DMM_DRIVER),
@@ -280,11 +288,16 @@ def test_payload_lists_notes_separately_from_the_timeline(tmp_path: Path) -> Non
     assert proc.returncode == 0, proc.stderr
 
     payload = run_payload(run_id, state_dir=state_dir)
-    assert payload["notes"] == [
-        {"command": "measure", "note": "looks nominal", "has_reading": True,
-         "time": payload["notes"][0]["time"]}]
-    for row in payload["timeline"]:
-        assert "note" not in row  # a note is never folded into a measurement row
+    assert "notes" not in payload  # one reader of cli.jsonl: the commands window
+    [row] = _noted(payload)
+    assert row["command"].startswith("shal-arena measure ")
+    assert (row["note"], row["has_reading"], row["exit_code"]) == ("looks nominal", True, 0)
+    assert [r["note"] for r in payload["cli_log"]["rows"]] == [None, "looks nominal"]
+    for step in payload["timeline"]:
+        assert "note" not in step  # a note is never folded into a measurement row
+    elements = _render_with_node(payload)
+    assert "looks nominal" in elements["cli-window"]["html"]
+    assert "looks nominal" not in elements["timeline-list"]["html"]
 
 
 @pytest.mark.parametrize("fmt", [["--json"], []])
@@ -298,8 +311,8 @@ def test_has_reading_is_the_same_with_and_without_json(tmp_path: Path,
                     "--state-dir", str(state_dir), *fmt, "--note", "rail looks low")
     assert proc.returncode == 0, proc.stderr
     payload = run_payload(run_id, state_dir=state_dir)
-    assert payload["notes"][0]["has_reading"] is True
-    assert _RECORD_LINE in _render_with_node(payload)["notes-section"]["html"]
+    assert _noted(payload)[0]["has_reading"] is True
+    assert _RECORD_LINE in _render_with_node(payload)["cli-window"]["html"]
 
 
 def test_a_truncated_cli_log_line_does_not_take_the_page_down(tmp_path: Path) -> None:
@@ -311,7 +324,9 @@ def test_a_truncated_cli_log_line_does_not_take_the_page_down(tmp_path: Path) ->
     path = RunStore(state_dir).cli_log_path(run_id)
     with path.open("a", encoding="utf-8") as f:
         f.write('{"time": "2026-10-07T00:00:00Z", "argv": ["measure"], "no')
-    assert [n["note"] for n in run_payload(run_id, state_dir=state_dir)["notes"]] == ["kept"]
+    payload = run_payload(run_id, state_dir=state_dir)
+    assert [r["note"] for r in _noted(payload)] == ["kept"]
+    assert payload["cli_log"]["skipped"] == 1  # #489's rule: skipped and counted
 
 
 # --------------------------------------------------------------------------- #
@@ -335,10 +350,10 @@ def test_the_heading_and_record_line_appear_verbatim_when_a_reading_exists(
 
     payload = run_payload(run_id, state_dir=state_dir)
     elements = _render_with_node(payload)
-    notes_html = elements["notes-section"]["html"]
-    assert _HEADING in notes_html
-    assert "rail looks low, checking again" in notes_html
-    assert _RECORD_LINE in notes_html
+    window_html = elements["cli-window"]["html"]
+    assert _HEADING in window_html
+    assert "rail looks low, checking again" in window_html
+    assert _RECORD_LINE in window_html
 
 
 def test_the_record_line_appears_even_when_the_note_agrees_with_the_reading(
@@ -355,7 +370,7 @@ def test_the_record_line_appears_even_when_the_note_agrees_with_the_reading(
 
     payload = run_payload(run_id, state_dir=state_dir)
     elements = _render_with_node(payload)
-    assert _RECORD_LINE in elements["notes-section"]["html"]
+    assert _RECORD_LINE in elements["cli-window"]["html"]
 
 
 def test_the_record_line_never_appears_under_a_note_with_no_reading(
@@ -369,12 +384,12 @@ def test_the_record_line_never_appears_under_a_note_with_no_reading(
     assert proc.returncode == 0, proc.stderr
 
     payload = run_payload(run_id, state_dir=state_dir)
-    assert payload["notes"][0]["has_reading"] is False
+    assert _noted(payload)[0]["has_reading"] is False
     elements = _render_with_node(payload)
-    notes_html = elements["notes-section"]["html"]
-    assert _HEADING in notes_html
-    assert "driver looks right to me" in notes_html
-    assert _RECORD_LINE not in notes_html
+    window_html = elements["cli-window"]["html"]
+    assert _HEADING in window_html
+    assert "driver looks right to me" in window_html
+    assert _RECORD_LINE not in window_html
 
 
 def test_a_note_with_script_tags_stays_inert_live_and_in_the_export(tmp_path: Path) -> None:
@@ -386,15 +401,20 @@ def test_a_note_with_script_tags_stays_inert_live_and_in_the_export(tmp_path: Pa
     assert proc.returncode == 0, proc.stderr
 
     payload = run_payload(run_id, state_dir=state_dir)
-    assert payload["notes"][0]["note"] == payload_note  # kept whole for the live `textContent`
+    assert _noted(payload)[0]["note"] == payload_note  # kept whole for the live `textContent`
                                                           # renderer -- never escaped on the wire
 
-    # live: set through textContent (renderNotes), never innerHTML, on the
+    # live: set through textContent (renderCliWindow), never innerHTML, on the
     # note's own path -- the rendered HTML holds the ESCAPED form, never a
     # live, interpretable "</script><img ...>".
     elements = _render_with_node(payload)
-    assert "</script><img" not in elements["notes-section"]["html"]
-    assert html.unescape(elements["notes-section"]["html"]).count(payload_note) == 1
+    assert "</script><img" not in elements["cli-window"]["html"]
+    # once in the note block; the row's command line (#489, argv as run)
+    # carries it too, escaped the same way.
+    window_html = elements["cli-window"]["html"]
+    assert (f'<div class="note-text">{html.escape(payload_note, quote=False)}</div>'
+            in window_html)
+    assert html.unescape(window_html).count(payload_note) == 2
 
     # export: embedded through safe_json, with no raw "</script>" anywhere.
     html_doc = render_watch_page(run_id, payload)
