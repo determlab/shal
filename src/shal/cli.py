@@ -568,7 +568,7 @@ def _cmd_call(args) -> int:
     either way."""
     from . import log as _log
     from .approval import DenyAll, approver
-    from .driver import inferred_side_effect
+    from .driver import call_identity, inferred_side_effect
     from .errors import HOW_TO_APPROVE_LINE, LimitError
     from .hal import _node_gated
     from .limits import Guard, effective_schema
@@ -641,6 +641,7 @@ def _cmd_call(args) -> int:
                         emit({"ok": False, "rejected": "limits", "tool": name,
                               "device": device, "op": args.op, "side_effect": side_effect,
                               "sent": False, "violations": e.violations,
+                              **call_identity(node, via=pin.get("via")),
                               "error": _error_obj(
                                   "LimitsRejected", msg,
                                   "pass a value inside the op's declared limits "
@@ -659,6 +660,7 @@ def _cmd_call(args) -> int:
             print(f"shal call: {msg}", file=sys.stderr)
             emit({"ok": False, "rejected": "approval", "tool": name, "device": device,
                   "op": args.op, "side_effect": side_effect, "sent": False,
+                  **call_identity(node, via=pin.get("via")),
                   "approve_with": [f"shal mcp {args.topology}",
                                    "with shal.approver(...): in Python"],
                   "how_to_approve": HOW_TO_APPROVE_LINE,

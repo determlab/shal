@@ -32,8 +32,11 @@ _EXPORT_SCRIPT = r"""
 function startExport(fullPayload) {
   // issue #406 CTO review: mode is always "replay" here, never "live" --
   // withholding closed/record/score mid-animation must not also flip the
-  // badge, which is never LIVE for an export.
-  const steps = fullPayload.timeline;
+  // badge, which is never LIVE for an export. issue #481: one tick per
+  // row the timeline really shows (`shownSteps`, in the page script) -- an exchange
+  // row or a measure its reading later completes never costs a tick, and
+  // never shows on its own.
+  const steps = shownSteps(fullPayload.timeline);
   let i = 0;
   function tick() {
     if (i < steps.length) {

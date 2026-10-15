@@ -213,9 +213,11 @@ function stepTitle(e) {
   if (e.kind === "write") {
     // issue #427 CTO review round 3: a clean, in-range drive is now its
     // own step. issue #457: `drive` goes through SHAL's own gate, not the
-    // agent's driver op -- the row says so, never `set_voltage`.
+    // agent's driver op -- the row says so, never `set_voltage`. issue
+    // #481: the row says what happened to the card, in plain words.
     const v = e.detail && e.detail.volts;
-    return v === undefined ? `Wrote ${addr}` : `drive ${fmtNum(v)}, through the SHAL gate`;
+    const powered = `Powered the card at ${fmtNum(v)}, through the SHAL gate`;
+    return v === undefined ? `Wrote ${addr}` : powered;
   }
   if (e.kind === "call") {
     const op = e.detail && e.detail.op, args = (e.detail && e.detail.args) || [];
@@ -290,6 +292,17 @@ function hasPairedReading(entries, i) {
   return entries.some(o => o.kind === "reading" && o.address === e.address);
 }
 
+// issue #481: the rows the timeline really shows -- `visibleSteps` plus the
+// `hasPairedReading` fold -- in one place. `renderTimeline`, the "N
+// step(s) so far" count and the export's `startExport` all read this, so
+// the count always matches the rows and a hidden row never costs a replay
+// tick. Applying it twice gives the same rows (an unpaired measure has no
+// reading to fold into, in any subset either).
+function shownSteps(entries) {
+  const visible = visibleSteps(entries);
+  return visible.filter((e, i) => !hasPairedReading(visible, i));
+}
+
 function latestReading(entries, address) {
   for (let i = entries.length - 1; i >= 0; i--) {
     if (entries[i].kind === "reading" && entries[i].address === address) return entries[i];
@@ -317,7 +330,7 @@ function renderVerdict(payload) {
   if (!payload.closed) {
     el.className = "verdict-bar running";
     el.innerHTML = '<div class="icon">⋯</div><div class="text">Running…'
-      + `<span class="reason">${visibleSteps(payload.timeline).length} step(s) so far`
+      + `<span class="reason">${shownSteps(payload.timeline).length} step(s) so far`
       + "</span></div>";
     return;
   }
@@ -326,17 +339,19 @@ function renderVerdict(payload) {
   const disqualified = !!rec.disqualified;
   const correct = !!rec.correct && !destroyed && !disqualified;
   // issue #427 CTO review round 2: this bar and the Result box at the
-  // bottom were saying the same thing twice -- keep this one small (the
-  // verdict word and, only when there is no answer sentence to say why,
-  // one short reason); the full detail lives in Result alone.
+  // bottom were saying the same thing twice. issue #481: the answer
+  // sentence (built server side) now lives here, at the top, and only
+  // here -- the Result box no longer repeats it. With no sentence, the
+  // bar keeps its one short reason.
   let icon = "✓", word = "Correct", cls = "", reason = "";
   if (destroyed) { icon = "✕"; word = "Wrong"; cls = "bad"; reason = "card destroyed"; }
   else if (disqualified) { icon = "✕"; word = "Disqualified"; cls = "bad";
     reason = "no measurement was logged"; }
   else if (!correct) { icon = "✕"; word = "Wrong"; cls = "bad"; }
+  if (payload.answer_sentence) reason = payload.answer_sentence;
   el.className = "verdict-bar" + (cls ? " " + cls : "");
   el.innerHTML = `<div class="icon">${icon}</div><div class="text">${word}`
-    + (reason ? `<span class="reason">${reason}</span>` : "") + "</div>";
+    + (reason ? `<span class="reason">${escapeHtml(reason)}</span>` : "") + "</div>";
 }
 
 // issue #406 body: "<level> level, N instruments, datasheet written by us"
@@ -491,15 +506,14 @@ function renderRoles(payload) {
 
 function renderTimeline(payload) {
   const list = document.getElementById("timeline-list");
-  const entries = visibleSteps(payload.timeline);
-  const agentSteps = entries.filter((e, i) => !hasPairedReading(entries, i));
+  const agentSteps = shownSteps(payload.timeline);
   list.innerHTML = agentSteps.map((e, i) => stepRowHtml(e, i)).join("");
 
-  if (entries.length > lastRenderedCount) {
-    const newest = entries[entries.length - 1];
+  if (agentSteps.length > lastRenderedCount) {
+    const newest = agentSteps[agentSteps.length - 1];
     if (newest.kind === "refused") flash(document.getElementById("wire-psu-card"));
   }
-  lastRenderedCount = entries.length;
+  lastRenderedCount = agentSteps.length;
 }
 
 // issue #444: the scripted checks did not happen in THIS replayed run
@@ -519,11 +533,10 @@ function renderScriptedSection(payload) {
     + "</div>";
 }
 
-// issue #427 CTO review: the sentence itself is built server side (the
-// data module's own `_answer_sentence`), from this run's own reading and
-// the rail/temp spec plus `record.correct` -- never re-derived here. Set with
-// `textContent`, never `innerHTML`, so a reading value can never be
-// interpreted as markup, no matter what a driver's own code returns.
+// issue #481: the answer sentence (built server side, `_answer_sentence`
+// in the data module) is shown once, in the verdict bar at the top
+// (`renderVerdict`, through `escapeHtml`) -- this box keeps its other rows
+// and no longer repeats it.
 function renderResult(payload) {
   const section = document.getElementById("result-section");
   if (!payload.closed || !payload.record) { section.innerHTML = ""; return; }
@@ -539,10 +552,7 @@ function renderResult(payload) {
     + `<div class="result${bad ? " bad" : ""}"><div class="verdict">${word}</div>`
     + `<div class="row">answered <b>${escapeHtml(rec.given || "")}</b> `
     + `&middot; ${score.turns !== undefined ? score.turns : payload.turns} turns `
-    + `&middot; ${rec.disqualified ? "disqualified" : "not disqualified"}</div>`
-    + '<div class="row" id="answer-sentence"></div></div>';
-  const sentenceEl = document.getElementById("answer-sentence");
-  if (sentenceEl) sentenceEl.textContent = payload.answer_sentence || "";
+    + `&middot; ${rec.disqualified ? "disqualified" : "not disqualified"}</div></div>`;
 }
 
 // issue #406 follow-up: "Drivers written by the agent" -- folded, one line
