@@ -77,7 +77,8 @@ SCORE_SCHEMA = {
 _VALIDATOR = jsonschema.Draft202012Validator(SCORE_SCHEMA)
 
 #: realized faults that break the link to the instrument rather than change
-#: what the card reads (issue #477: none today -- `open` reads about 0 V).
+#: what the card reads (issue #478: `broken_probe` -- the probe is broken and
+#: the card is good; `open` is a card fault and reads about 0 V, issue #477).
 ERROR_CLASS_FAULTS: frozenset[str] = frozenset({"broken_probe"})
 
 #: issue #478: realized faults that are not a fault of the card (the probe is
