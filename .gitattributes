@@ -3,3 +3,7 @@
 # Linux re-emit. emit_manifest.py writes LF; this keeps git from storing CRLF.
 examples/driver-creator/**/device.yaml   text eol=lf
 examples/driver-creator/**/metadata.yaml text eol=lf
+
+# Recorded run fixtures are hashed byte-for-byte (record_sha256): never
+# convert their line endings on checkout.
+arena/tests/fixtures/runs/** -text

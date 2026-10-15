@@ -1,0 +1,9 @@
+{
+  "run_id": "run-20261007T092620Z-2b92c03f",
+  "task_path": "arena/src/shal_arena/tasks/relay-rail.yaml",
+  "card_path": "arena/src/shal_arena/cards/buck-12v-relay.yaml",
+  "given": "open",
+  "fault_id": "open",
+  "correct": true,
+  "closed_at": "2026-10-07T09:26:20Z"
+}
