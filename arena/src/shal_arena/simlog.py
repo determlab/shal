@@ -55,6 +55,15 @@ from shal.log import exchange_sink as _exchange_sink
 _SCPI_FAMILIES = frozenset({"sim_scpi", "scpi_raw"})
 
 
+def _point_fields(point: str | None, label: str | None) -> dict[str, str]:
+    """issue #491: the test point a multi-probe instrument read (``point``,
+    e.g. ``tp_5v``) and its board label (``label``, e.g. ``TP2``). Left off
+    entirely for a one-point instrument, so its lines keep their old shape."""
+    if point is None:
+        return {}
+    return {"point": point, "label": label or point}
+
+
 class SimLog:
     """One run's sim-traffic record at ``path`` (JSON lines, append-only, one
     file for the whole run — every instrument's checks land in it)."""
@@ -95,7 +104,8 @@ class SimLog:
         with _exchange_sink(_sink):
             yield
 
-    def mark_measured(self, address: str) -> None:
+    def mark_measured(self, address: str, *, point: str | None = None,
+                      label: str | None = None) -> None:
         """A neutral marker that a measurement was attempted at ``address``
         — written BEFORE the read, regardless of what the read then does.
         No result, no error, nothing fault-specific: just that the attempt
@@ -106,11 +116,12 @@ class SimLog:
         fault that makes every read fail by design (`open`)."""
         self.path.parent.mkdir(parents=True, exist_ok=True)
         entry = {"ts": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
-                 "address": address, "kind": "measure"}
+                 "address": address, "kind": "measure", **_point_fields(point, label)}
         with self.path.open("a", encoding="utf-8") as f:
             f.write(json.dumps(entry) + "\n")
 
-    def mark_reading(self, address: str, value: float, unit: str | None) -> None:
+    def mark_reading(self, address: str, value: float, unit: str | None, *,
+                     point: str | None = None, label: str | None = None) -> None:
         """issue #406 follow-up (the demo page): the actual number a
         successful read returned, logged AFTER `mark_measured`'s neutral
         marker and only on success -- never written for a failed read
@@ -132,7 +143,8 @@ class SimLog:
             raise ValueError(f"reading {v!r} for {address!r} is not finite")
         self.path.parent.mkdir(parents=True, exist_ok=True)
         entry = {"ts": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
-                 "address": address, "kind": "reading", "value": v, "unit": unit}
+                 "address": address, "kind": "reading", "value": v, "unit": unit,
+                 **_point_fields(point, label)}
         with self.path.open("a", encoding="utf-8") as f:
             f.write(json.dumps(entry) + "\n")
 

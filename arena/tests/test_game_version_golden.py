@@ -34,7 +34,11 @@ GOLDEN = {
 
 _SEEDS = range(30)
 _DRIVERS = {"dmm": PASSING_DMM_DRIVER, "sht31": PASSING_TEMP_DRIVER}
-_TASKS = sorted(Path(str(importlib_resources.files("shal_arena") / "tasks")).glob("*.yaml"))
+# issue #491: a task with a multi-probe instrument (power-28v) needs `--at` per
+# point, which this fixed play does not take; its rules are pinned in
+# test_power_28v.py, and leaving it out keeps the existing tasks' hash as is.
+_TASKS = sorted(p for p in Path(str(importlib_resources.files("shal_arena") / "tasks"))
+                .glob("*.yaml") if p.stem != "power-28v")
 _MAIN_040_OPEN_RUN = FIXTURES / "runs" / "main-0.4.0-open"
 # the score fields that carry rules, not wall-clock time or file hashes
 _SCORE_KEYS = ("fault_type", "faults_total", "faults_caught", "false_fails",

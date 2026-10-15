@@ -156,6 +156,13 @@ def realized_fault(card: Card, seed: int,
     return RealizedFault(fault_id=fault.id, extra=extra)
 
 
+def fault_kind(realized: RealizedFault) -> str:
+    """The existing fault kind ``realized`` plays (issue #491): the card's
+    optional ``kind:`` on that fault (``open_12v`` plays ``open``), else the
+    fault id itself, as on every card before this one."""
+    return str(realized.extra.get("kind") or realized.fault_id)
+
+
 def rail_for_fault(card: Card, realized: RealizedFault) -> Rail | None:
     """The card rail ``realized`` targets, or `None` for a fault with no
     ``rail`` (``ok``, or a future fault kind that isn't tied to one rail)."""
@@ -212,7 +219,7 @@ def harness_for_run(case: Any, *, rail: Rail, realized: RealizedFault, seed: int
     bench = next(iter(doc["root"].values()))
     _child_key, child = next(iter(bench["children"].items()))
 
-    if realized.fault_id == "open":
+    if fault_kind(realized) == "open":
         child["config"] = {"nominal_v": rail.nominal_v,
                            "open_v": open_residual_v(rail, seed)}
         return doc

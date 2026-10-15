@@ -168,7 +168,10 @@ _KIND_LABEL = {
 def _timeline_row_html(entry: dict[str, Any]) -> str:
     kind = entry["kind"]
     label = html.escape(_KIND_LABEL.get(kind, kind))
-    address = html.escape(str(entry.get("address") or ""))
+    address = str(entry.get("address") or "")
+    if entry["detail"].get("label"):  # issue #491: the point a multi-probe DMM read
+        address = f"{address} at {entry['detail']['label']}"
+    address = html.escape(address)
     css_class = "row-refused" if kind == "refused" else f"row-{kind}"
     gate_note_html = ""
     if kind == "check":

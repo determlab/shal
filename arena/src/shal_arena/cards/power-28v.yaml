@@ -1,0 +1,22 @@
+arena_card: 1
+id: power-28v
+description: "Fictional card, no real part. A 28 V power module: VIN 28 V comes in through relay K1 onto a bus that feeds three regulators -- U1 12 V at TP1 (tp_12v, with the load), U2 5 V at TP2 (tp_5v) and U3 3.3 V at TP3 (tp_3v3), each +/-3%. A temperature sensor on regulator U2 (tp_u2_temp) runs at a nominal 45 C; its datasheet rates continuous operation up to 85 C -- above that it is running too hot."
+inputs:
+  vin: {nominal_v: 28.0}
+rails:
+  12v: {from: vin, nominal_v: 12.0, tol_pct: 3, test_point: tp_12v, label: TP1, min_input_v: 24.0, tol_source: "power-28v datasheet 3.2 U1 output accuracy (fictional datasheet)"}
+  5v: {from: vin, nominal_v: 5.0, tol_pct: 3, test_point: tp_5v, label: TP2, min_input_v: 24.0, tol_source: "power-28v datasheet 3.3 U2 output accuracy (fictional datasheet)"}
+  3v3: {from: vin, nominal_v: 3.3, tol_pct: 3, test_point: tp_3v3, label: TP3, min_input_v: 24.0, tol_source: "power-28v datasheet 3.4 U3 output accuracy (fictional datasheet)"}
+temp_points:
+  u2: {nominal_c: 45.0, test_point: tp_u2_temp, high_c: 85.0, tol_source: "power-28v datasheet 5.1 U2 thermal derating (fictional datasheet)"}
+damage:
+  - {input: vin, above_v: 29.5, effect: protection, source: "datasheet 7.3 OVP (fictional datasheet)"}
+  - {input: vin, above_v: 32.0, effect: destroyed, source: "datasheet 6.1 abs max (fictional datasheet)"}
+# `kind` names the existing fault kind a fault id plays (fault.fault_kind);
+# without it the id is the kind, as on the other cards.
+faults:
+  - {id: ok, rail: 12v}
+  - {id: low_5v, kind: low_voltage, rail: 5v, shift_v: -0.40}
+  - {id: open_12v, kind: open, rail: 12v}
+  - {id: low_3v3, kind: low_voltage, rail: 3v3, shift_v: -0.30}
+  - {id: overheat_u2, kind: overheat, temp_point: u2, shift_c: 46.0}

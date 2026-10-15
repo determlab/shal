@@ -239,7 +239,11 @@ function fmtNum(value, unit) {
 function stepTitle(e) {
   const addr = e.address || "";
   if (e.kind === "check") return `Checked driver on ${addr}`;
-  if (e.kind === "reading" || e.kind === "measure") return `Measured ${addr}`;
+  if (e.kind === "reading" || e.kind === "measure") {
+    // issue #491: one DMM moved between test points -- name the point
+    const at = e.detail && e.detail.label;
+    return at ? `Measured ${addr} at ${at}` : `Measured ${addr}`;
+  }
   if (e.kind === "query") return `Read ${addr}`;
   if (e.kind === "write") {
     // issue #427 CTO review round 3: a clean, in-range drive is now its
@@ -320,7 +324,9 @@ function hasPairedReading(entries, i) {
   // actual value -- one row, not three.
   const e = entries[i];
   if (e.kind !== "measure" && e.kind !== "query") return false;
-  return entries.some(o => o.kind === "reading" && o.address === e.address);
+  const point = e.detail && e.detail.point;
+  return entries.some(o => o.kind === "reading" && o.address === e.address
+    && (o.detail && o.detail.point) === point);
 }
 
 // issue #481: the rows the timeline really shows -- `visibleSteps` plus the
@@ -352,13 +358,17 @@ function instName(addr) {
   return a.replace(/\d+$/, "").toUpperCase() || a.toUpperCase();
 }
 
-function testPointOf(inst) {
+// issue #491: a multi-probe DMM's entry names the point it was taken at;
+// that point, when given, wins over the instrument's own `probe`.
+function testPointOf(inst, e) {
+  const point = e && e.detail && e.detail.point;
+  if (point) return point;
   return inst && inst.probe ? inst.probe.replace(/^card\./, "") : null;
 }
 
 // the rail or temp point a probe reads (public card spec), or null.
-function specOf(payload, inst) {
-  const tp = testPointOf(inst);
+function specOf(payload, inst, e) {
+  const tp = testPointOf(inst, e);
   if (!tp) return null;
   const rail = (payload.rails || []).find(r => r.test_point === tp);
   if (rail) return {rail};
@@ -368,8 +378,8 @@ function specOf(payload, inst) {
 
 // a reading outside its card's own documented limit -- the public spec,
 // never the hidden fault.
-function outOfLimit(payload, inst, value) {
-  const spec = specOf(payload, inst);
+function outOfLimit(payload, inst, value, e) {
+  const spec = specOf(payload, inst, e);
   if (!spec || !Number.isFinite(Number(value))) return false;
   if (spec.rail) return value < spec.rail.lo || value > spec.rail.hi;
   return spec.temp.high_c !== null && spec.temp.high_c !== undefined && value > spec.temp.high_c;
@@ -379,7 +389,7 @@ function failingAddresses(payload) {
   const out = new Set();
   for (const inst of payload.instruments) {
     const r = latestReading(payload.timeline, inst.address);
-    if (r && outOfLimit(payload, inst, r.detail.value)) out.add(inst.address);
+    if (r && outOfLimit(payload, inst, r.detail.value, r)) out.add(inst.address);
   }
   return out;
 }
@@ -483,8 +493,9 @@ function renderVerdict(payload) {
 function measuredParts(payload) {
   const out = [];
   for (const inst of payload.instruments) {
-    const spec = specOf(payload, inst);
-    if (!spec || !latestReading(payload.timeline, inst.address)) continue;
+    const r = latestReading(payload.timeline, inst.address);
+    const spec = specOf(payload, inst, r);
+    if (!spec || !r) continue;
     out.push(spec.rail ? `${spec.rail.name} rail` : `${spec.temp.name} temp`);
   }
   return out;
@@ -646,7 +657,9 @@ function renderDiagram(payload) {
   }
   const tpHot = new Set();
   for (const inst of payload.instruments) {
-    if (failing.has(inst.address)) tpHot.add(testPointOf(inst));
+    if (failing.has(inst.address)) {
+      tpHot.add(testPointOf(inst, latestReading(payload.timeline, inst.address)));
+    }
   }
   blocks.forEach((b, k) => {
     const applied = b.input && payload.card.applied && payload.card.applied[b.input];
@@ -663,7 +676,7 @@ function renderDiagram(payload) {
 // issue #447: one card per instrument -- each function the agent used on
 // it, and the value each one returned, grouped from the run timeline.
 function fnRow(payload, inst, e) {
-  const d = e.detail || {}, tp = testPointOf(inst);
+  const d = e.detail || {}, tp = testPointOf(inst, e);
   const at = tp ? ` @${tp}` : "";
   if (e.kind === "check") return {fn: "check driver", v: d.passed ? "passed" : "failed",
     cls: d.passed ? "ok" : "bad"};
@@ -677,7 +690,7 @@ function fnRow(payload, inst, e) {
   if (e.kind === "call") return {fn: `${d.op}(${(d.args || []).join(", ")})`,
     v: d.ok ? "ok" : "failed", cls: d.ok ? "" : "bad"};
   if (e.kind === "reading") return {fn: `measure${at}`, v: fmtNum(d.value, d.unit),
-    cls: outOfLimit(payload, inst, d.value) ? "bad" : "ok"};
+    cls: outOfLimit(payload, inst, d.value, e) ? "bad" : "ok"};
   if (e.kind === "measure") return {fn: `measure${at}`, v: "attempted"};
   if (e.kind === "failed") return {fn: `measure${at}`, v: `failed (${d.cause || "error"})`,
     cls: "bad"};
@@ -866,6 +879,14 @@ function instrumentRoleText(payload, inst) {
   if (inst.switches) {   // issue #473: a relay only turns the input on/off
     const name = inst.switches.split(".")[1] || inst.switches;
     return `switches ${name.toUpperCase()} on/off`;
+  }
+  if (inst.probes && inst.probes.length > 1) {   // issue #491: one DMM, several points
+    const labels = inst.probes.map(p => {
+      const tp = p.split(".")[1] || p;
+      const rail = (payload.rails || []).find(r => r.test_point === tp);
+      return rail ? rail.label : tp;
+    });
+    return `measures ${labels.join(", ")}`;
   }
   if (inst.probe) {
     const tp = inst.probe.split(".")[1] || inst.probe;

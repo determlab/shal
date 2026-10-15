@@ -257,6 +257,7 @@ _FAULTS_PREFIX = {
     "buck-5v-3v3": ["ok", "low_voltage", "noise", "open"],
     "buck-9v-3v3-tight": ["ok", "low_voltage", "high_voltage", "noise", "open"],
     "ldo-5v-3v3": ["ok", "low_voltage", "noise", "open"],
+    "power-28v": ["ok", "low_5v", "open_12v", "low_3v3", "overheat_u2"],
 }
 
 
