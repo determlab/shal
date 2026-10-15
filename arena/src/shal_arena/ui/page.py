@@ -208,7 +208,11 @@ function fmtNum(value, unit) {
 function stepTitle(e) {
   const addr = e.address || "";
   if (e.kind === "check") return `Checked driver on ${addr}`;
-  if (e.kind === "reading" || e.kind === "measure") return `Measured ${addr}`;
+  if (e.kind === "reading" || e.kind === "measure") {
+    // issue #491: one DMM moved between test points -- name the point
+    const at = e.detail && e.detail.label;
+    return at ? `Measured ${addr} at ${at}` : `Measured ${addr}`;
+  }
   if (e.kind === "query") return `Read ${addr}`;
   if (e.kind === "write") {
     // issue #427 CTO review round 3: a clean, in-range drive is now its
@@ -289,7 +293,9 @@ function hasPairedReading(entries, i) {
   // actual value -- one row, not three.
   const e = entries[i];
   if (e.kind !== "measure" && e.kind !== "query") return false;
-  return entries.some(o => o.kind === "reading" && o.address === e.address);
+  const point = e.detail && e.detail.point;
+  return entries.some(o => o.kind === "reading" && o.address === e.address
+    && (o.detail && o.detail.point) === point);
 }
 
 // issue #481: the rows the timeline really shows -- `visibleSteps` plus the
@@ -401,7 +407,9 @@ function renderBench(payload) {
   // issue #427 CTO review round 2: the rail's own human label ("3V3
   // rail"), not the bare test-point name ("tp_3v3") a driver addresses it
   // by.
-  const probeTestPoint = probe ? probe.probe.replace("card.", "") : null;
+  // issue #491: a multi-probe DMM shows the rail of the point it last read
+  const probeTestPoint = probe
+    ? ((reading && reading.detail.point) || probe.probe.replace("card.", "")) : null;
   const rail = probeTestPoint
     ? (payload.rails || []).find(r => r.test_point === probeTestPoint) : null;
   document.getElementById("rail-label").textContent = rail ? `${rail.name} rail` : "rail";
@@ -483,6 +491,14 @@ function instrumentRoleText(payload, inst) {
   if (inst.switches) {   // issue #473: a relay only turns the input on/off
     const name = inst.switches.split(".")[1] || inst.switches;
     return `switches ${name.toUpperCase()} on/off`;
+  }
+  if (inst.probes && inst.probes.length > 1) {   // issue #491: one DMM, several points
+    const labels = inst.probes.map(p => {
+      const tp = p.split(".")[1] || p;
+      const rail = (payload.rails || []).find(r => r.test_point === tp);
+      return rail ? rail.label : tp;
+    });
+    return `measures ${labels.join(", ")}`;
   }
   if (inst.probe) {
     const tp = inst.probe.split(".")[1] || inst.probe;

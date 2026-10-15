@@ -17,7 +17,7 @@ instruments:
     address: temp0
     probe: card.tp_u2_temp
 question:
-  text: "This 28 V power module came back from the line. Power it at 28.0 V through relay0, measure TP1, TP2 and TP3 with dmm0 (--at tp_12v / tp_5v / tp_3v3) and U2's temperature with temp0. Is it good? If not, name the fault."
+  text: "This 28 V power module came back from the line. Power it at 28.0 V through relay0. Is it good? If not, name the fault."
   answer: {kind: enum, values: [ok, low_5v, open_12v, low_3v3, overheat_u2]}
 seed: 5
 limits: {max_turns: 60, max_minutes: 30}

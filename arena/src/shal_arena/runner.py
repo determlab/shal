@@ -850,7 +850,8 @@ def take_measurement(run_id: str, address: str, driver_path: str | Path, *,
         # without ever reaching the bus.
         cause = "transport" if isinstance(e, (shal.errors.HopError, shal.errors.HopTimeout)) \
             else "driver"
-        sim_log.append(str(address), "failed", cause=cause)
+        sim_log.append(str(address), "failed", cause=cause,
+                       **({"point": point, "label": label} if point is not None else {}))
         raise MeasurementFailed(
             f"{read_op} raised {type(e).__name__}: {e}",
             fix="the instrument did not answer this call — if that's unexpected, "

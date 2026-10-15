@@ -32,6 +32,12 @@ _ANYWHERE: dict[str, tuple[str, ...]] = {
     "noise": ("ripple",),
     "open": ("unplugged", "name the `open` fault"),
     "overheat": ("runs hot", "reads nominal", "all four instruments"),
+    # issue #491 (power-28v): ids that play an existing kind above, whose
+    # phrases already apply to any text
+    "low_5v": (),
+    "low_3v3": (),
+    "open_12v": (),
+    "overheat_u2": (),
 }
 _NEAR_ID: dict[str, tuple[str, ...]] = {
     "open": ("looks like", "does not answer"),

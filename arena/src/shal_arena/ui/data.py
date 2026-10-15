@@ -137,26 +137,30 @@ def _answer_sentence(payload: dict[str, Any], rails: list[dict[str, Any]],
 
     clauses = []
     for instrument in payload["instruments"]:
-        probe = instrument["probe"]
-        if probe is None:
-            continue
-        test_point = probe.removeprefix("card.")
-        rail = rails_by_tp.get(test_point)
-        temp = temps_by_tp.get(test_point)
-        if rail is None and temp is None:
-            continue
-        readings, cause = [], None
-        for e in timeline:
-            if e.get("address") != instrument["address"]:
+        # issue #491: a multi-probe instrument gets one clause per point, each
+        # from that point's own readings and judged against that point's limit
+        probes = instrument.get("probes") or ([instrument["probe"]] if instrument["probe"] else [])
+        multi = len(probes) > 1
+        for probe in probes:
+            test_point = probe.removeprefix("card.")
+            rail = rails_by_tp.get(test_point)
+            temp = temps_by_tp.get(test_point)
+            if rail is None and temp is None:
                 continue
-            if e.get("kind") == "reading":
-                readings.append(e["detail"]["value"])
-            elif e.get("kind") == "failed":
-                cause = e["detail"].get("cause")
-        clause = _measured_clause(
-            _name_for_address(instrument["address"]), rail, temp, readings, cause)
-        if clause is not None:
-            clauses.append(clause)
+            readings, cause = [], None
+            for e in timeline:
+                if e.get("address") != instrument["address"]:
+                    continue
+                if multi and e.get("detail", {}).get("point") != test_point:
+                    continue
+                if e.get("kind") == "reading":
+                    readings.append(e["detail"]["value"])
+                elif e.get("kind") == "failed":
+                    cause = e["detail"].get("cause")
+            clause = _measured_clause(
+                _name_for_address(instrument["address"]), rail, temp, readings, cause)
+            if clause is not None:
+                clauses.append(clause)
 
     # issue #432 CMO wording: lead with the failing measurement only, when
     # there is one -- an in-spec rail reading is not part of the story
@@ -201,7 +205,7 @@ def _role(instrument: Any) -> str:
         return f"drives {instrument.drives}"
     if instrument.switches is not None:
         return f"switches {instrument.switches}"
-    return f"probes {instrument.probe}"
+    return f"probes {', '.join(instrument.probes) or instrument.probe}"
 
 
 def run_payload(run_id: str, *, state_dir: str | Path = DEFAULT_STATE_DIR) -> dict[str, Any]:
@@ -216,6 +220,8 @@ def run_payload(run_id: str, *, state_dir: str | Path = DEFAULT_STATE_DIR) -> di
     instruments = [
         {"address": str(i.address), "case": i.case, "drives": i.drives, "probe": i.probe,
          "switches": i.switches,
+         # issue #491: every point a multi-probe instrument can read, else []
+         "probes": list(i.probes) if len(i.probes) > 1 else [],
          # issue #457: the instrument's role, straight from the task yaml's
          # own `drives:`/`probe:`/`switches:` field -- never hand-written text.
          "role": _role(i)}
@@ -227,7 +233,7 @@ def run_payload(run_id: str, *, state_dir: str | Path = DEFAULT_STATE_DIR) -> di
     # itself. `test_point` is the key a `task.instruments[].probe` names
     # (e.g. "card.tp_3v3"); `name`/`label` is the human-readable one.
     rails = [
-        {"label": r.test_point, "name": r.name.upper(), "test_point": r.test_point,
+        {"label": r.label or r.test_point, "name": r.name.upper(), "test_point": r.test_point,
          "nominal_v": r.nominal_v, "tol_pct": r.tol_pct,
          "lo": r.nominal_v * (1 - r.tol_pct / 100), "hi": r.nominal_v * (1 + r.tol_pct / 100)}
         for r in loaded.card.rails
