@@ -49,6 +49,11 @@ error from any command is `{"ok": false, "error": {"type", "message",
 "fix"}}` on stdout, `fix` never empty, matching `shal`'s own `--json` error
 shape (`AGENTS.md`).
 
+Any command that names a run also takes `--note "..."` (up to 2000
+characters): a short note in your own words, saved next to that call in
+`<run>.cli.jsonl` and shown apart from readings in the `ui` page — it never
+changes what the command does or returns.
+
 **Tasks** — list the packaged tasks (`easy`, `medium`, `hard`, `rail-3v3`);
 each `name` is what `run` takes, with no checkout needed (a path to your own
 task.yaml works too). An unknown name errors with the valid names:

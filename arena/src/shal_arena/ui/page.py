@@ -177,6 +177,11 @@ button:focus-visible { outline: 2px solid var(--text); outline-offset: 2px; }
 .cli-row .code { color: var(--ok); }
 .cli-row .ans { grid-column: 1 / -1; color: var(--dim); overflow-wrap: anywhere; }
 .cli-row[data-state="failed"] .code { color: var(--bad); font-weight: 700; }
+.cli-row .note { grid-column: 1 / -1; margin-top: 4px; padding-left: 8px;
+  border-left: 2px solid var(--line); font-family: inherit; }
+.cli-row .note-head { font-size: 13px; color: var(--dim); }
+.cli-row .note-text { white-space: pre-wrap; overflow-wrap: anywhere; }
+.cli-row .note-record-line { font-size: 13px; color: var(--dim); }
 .cli-note { color: var(--dim); font-size: 13px; margin: 6px 0 0; }
 .pill { font-size: 13px; font-weight: 700; padding: 2px 8px; border-radius: 999px;
   white-space: nowrap; margin-left: 6px; }
@@ -857,6 +862,21 @@ function renderCliWindow(payload) {
     row.appendChild(el("div", "code",
       `exit ${r.exit_code}` + (r.failed ? " · failed" : "")));
     row.appendChild(el("div", "ans", r.answer));
+    // issue #470: the agent's own `--note` for this call, inside its row --
+    // never in a measurement row. Heading and record line are the CMO's
+    // exact text; the record line shows under every note whose own call
+    // took a reading (no conflict detection: it never depends on what the
+    // note says). textContent only, so the note can never be markup.
+    if (typeof r.note === "string") {
+      const note = el("div", "note");
+      note.appendChild(el("div", "note-head", "The agent's own note (its words, not checked)"));
+      note.appendChild(el("div", "note-text", r.note));
+      if (r.has_reading) {
+        note.appendChild(el("div", "note-record-line",
+          "The record shows the reading above. The note is the agent's claim."));
+      }
+      row.appendChild(note);
+    }
     kids.push(row);
   }
   if (log.skipped) {

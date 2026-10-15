@@ -333,8 +333,19 @@ def _cli_log(store: RunStore, run_id: str) -> dict[str, Any]:
             command = " ".join(str(a) for a in argv)
             if not command.startswith("shal-arena"):
                 command = f"shal-arena {command}".rstrip()
+            # issue #470: the call's own `--note` (already redacted on
+            # write), shown in this row -- never in a measurement row.
+            # `has_reading` is whether THIS call took a reading: a `measure`
+            # that exited 0, the one subcommand that logs a `reading` -- based
+            # on the call, never on its output format (a plain-text `measure`
+            # logs `json: null`).
+            note = entry.get("note")
+            sub = next((str(a) for a in argv
+                        if not str(a).startswith("-") and str(a) != "shal-arena"), "")
             rows.append({"command": command, "exit_code": code, "failed": code != 0,
-                         "answer": _cli_answer(entry)})
+                         "answer": _cli_answer(entry),
+                         "note": note if isinstance(note, str) else None,
+                         "has_reading": sub == "measure" and code == 0})
     return {"rows": rows, "skipped": skipped}
 
 
