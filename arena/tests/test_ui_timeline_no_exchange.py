@@ -36,29 +36,45 @@ from .conftest import (
 from .test_exchange_log import _play_all_three_protocols
 
 _DOM_STUB = """
-function makeEl() {
+// CTO review on #484: elements built with createElement/textContent/
+// appendChild serialize back to markup (text escaped, as a browser does),
+// and every string ever written to innerHTML is kept in `_htmlWrites`, so a
+// test can prove run text never went through innerHTML at all.
+const _htmlWrites = [];
+function _esc(s) {
+  return String(s).replace(/[&<>]/g, c => ({"&": "&amp;", "<": "&lt;", ">": "&gt;"}[c]));
+}
+function _outer(n) {
+  if (!n.tagName) return _esc(n.textContent);
+  const attrs = (n.className ? ` class="${n.className}"` : "")
+    + Object.entries(n._attrs).map(([k, v]) => ` ${k}="${v}"`).join("");
+  return `<${n.tagName}${attrs}>${n.innerHTML}</${n.tagName}>`;
+}
+function makeEl(tag) {
   const el = {
-    _text: "", _html: "",
+    tagName: tag || "", className: "", _text: "", _html: "", _attrs: {},
     classList: { add() {}, remove() {} },
     style: {},
     children: [],
-    appendChild(c) { el.children.push(c); },
-    setAttribute() {}, getAttribute() { return null; },
+    appendChild(c) { el.children.push(c); return c; },
+    setAttribute(k, v) { el._attrs[k] = String(v); },
+    getAttribute(k) { return k in el._attrs ? el._attrs[k] : null; },
   };
   Object.defineProperty(el, "textContent", {
-    get() { return el._text; },
-    set(v) { el._text = String(v); el._html = String(v); },
+    get() { return el._text + el.children.map(c => c.textContent).join(""); },
+    set(v) { el.children = []; el._text = String(v); el._html = _esc(v); },
   });
   Object.defineProperty(el, "innerHTML", {
-    get() { return el._html; },
-    set(v) { el._html = String(v); },
+    get() { return el._html + el.children.map(_outer).join(""); },
+    set(v) { _htmlWrites.push(String(v)); el.children = []; el._text = ""; el._html = String(v); },
   });
+  Object.defineProperty(el, "outerHTML", { get() { return _outer(el); } });
   return el;
 }
 const _elements = {};
 global.document = {
-  getElementById(id) { if (!_elements[id]) _elements[id] = makeEl(); return _elements[id]; },
-  createElement() { return makeEl(); },
+  getElementById(id) { if (!_elements[id]) _elements[id] = makeEl("div"); return _elements[id]; },
+  createElement(tag) { return makeEl(tag); },
   createTextNode(text) { return { textContent: String(text) }; },
   querySelector() { return null; },
 };
@@ -91,15 +107,16 @@ def _render_with_node(payload: dict) -> dict:
 
 
 def _render_single_row_html(entry: dict) -> str:
-    """`stepRowHtml` builds a plain HTML string -- no DOM touched -- so this
-    needs no stub at all, just the real `_SCRIPT` and one call, bypassing
+    """`stepRowEl` builds one row's DOM nodes -- serialized by the stub,
+    just the real `_SCRIPT` and one call, bypassing
     `visibleSteps`'s own filtering entirely (used only to prove a raw,
     UNFILTERED exchange row really does contain the raw protocol text the
     main test below checks is absent from the real, filtered render)."""
     node = shutil.which("node")
     if node is None:
         pytest.skip("node not available")
-    script = _SCRIPT + "\nconsole.log(stepRowHtml(" + json.dumps(entry) + ", 0));"
+    script = (_DOM_STUB + _SCRIPT
+              + "\nconsole.log(stepRowEl(" + json.dumps(entry) + ", 0).outerHTML);")
     with tempfile.TemporaryDirectory() as d:
         path = Path(d) / "row.js"
         path.write_text(script, encoding="utf-8")

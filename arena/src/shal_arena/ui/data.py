@@ -9,6 +9,7 @@ before the run ends.
 """
 from __future__ import annotations
 
+import functools
 import json
 import re
 from pathlib import Path
@@ -159,12 +160,15 @@ def _result_item(name: str, rail: dict[str, Any] | None, temp: dict[str, Any] | 
     """One measurement for the page's result line (issue #447: "Fault
     found: <part> <what>, <value>, limit <limit>"), from the same public
     card spec the answer sentence reads. `None`: nothing to say (no
-    reading, or the agent's own driver failed -- not a card measurement)."""
+    reading, or the agent's own driver failed -- not a card measurement).
+    A transport error is no reading at all (`score.py`: the player did not
+    blame the card), so it is `kind: "no_reading"` and never `failing`:
+    only an out-of-limit or unstable measurement makes a fault found."""
     if not readings:
         if cause == "transport":
             part = f"{rail['name']} rail" if rail is not None else temp["name"]
-            return {"what": f"{part}: no answer from the {name}", "value": None,
-                    "limit": None, "failing": True}
+            return {"what": part, "value": None, "limit": None, "failing": False,
+                    "kind": "no_reading", "instrument": name}
         return None
     if rail is not None:
         part, lo, hi = f"{rail['name']} rail", rail["lo"], rail["hi"]
@@ -198,7 +202,7 @@ def _result(payload: dict[str, Any], rails: list[dict[str, Any]],
     """The page's top result line (issue #447), as data: the failing
     measurements when there are any (`found`), else every measurement.
     Built only once the run is closed -- same rule as the answer
-    sentence -- and rendered with `escapeHtml`, never as markup."""
+    sentence -- and rendered with `textContent`, never as markup."""
     if payload["record"] is None:
         return None
     items = [i for i in (_result_item(*m) for m in _probed(payload, rails, temp_points))
@@ -266,6 +270,7 @@ def _answer_sentence(payload: dict[str, Any], rails: list[dict[str, Any]],
 _PROTOCOLS = {"shal,sim-scpi": "SCPI", "shal,sim-msg": "Modbus", "shal,sim-i2c": "I2C"}
 
 
+@functools.cache
 def _protocol(case: str) -> str | None:
     try:
         topology = yaml.safe_load(CASES[case].harness_topology.read_text(encoding="utf-8"))

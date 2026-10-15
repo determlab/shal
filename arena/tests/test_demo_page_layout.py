@@ -9,17 +9,25 @@ answer -- the real runner, never a hand-built timeline) through the page's
 own shipped `_SCRIPT`, in the same Node DOM stub the other UI tests use."""
 from __future__ import annotations
 
+import copy
 import html
+import json
 import re
+import shutil
+import subprocess
+import tempfile
 from pathlib import Path
 
+import pytest
 import yaml
 
+from shal_arena.errors import MeasurementFailed, TaskFormatError
 from shal_arena.loader import load_task
 from shal_arena.runner import answer, call_op, drive_input, pick_fault, start_run, take_measurement
+from shal_arena.schema import validate_card
 from shal_arena.ui.data import run_payload
-from shal_arena.ui.export import build_export
-from shal_arena.ui.page import SAFETY_LINE, _shell, render_watch_page
+from shal_arena.ui.export import _EXPORT_SCRIPT, build_export
+from shal_arena.ui.page import _SCRIPT, SAFETY_LINE, _shell, render_watch_page
 
 from .conftest import (
     PASSING_DMM_DRIVER,
@@ -28,7 +36,7 @@ from .conftest import (
     RELAY_RAIL_TASK,
 )
 from .test_ui_export_ticks import _export_frames
-from .test_ui_timeline_no_exchange import _render_with_node
+from .test_ui_timeline_no_exchange import _DOM_STUB, _render_with_node
 
 _CARD_YAML = Path(RELAY_RAIL_TASK).parent.parent / "cards" / "buck-12v-relay.yaml"
 _MOCKUP_LABEL = "Mockup · sample data · not a real run"
@@ -266,3 +274,117 @@ def test_no_paragraph_text_beyond_the_title_line_result_and_footer(tmp_path: Pat
     lede = _render_with_node(run_payload(run_id, state_dir=state_dir))["lede"]["text"]
     assert lede == ("An AI agent got this card and four instruments it had never seen. "
                     "It wrote a driver for each one, measured, and named the fault.")
+
+
+# --------------------------------------------------------------------------- #
+# CTO review on #484: run text reaches the page through textContent only
+# --------------------------------------------------------------------------- #
+
+_EVIL = "<img src=x onerror=alert(1)>"
+
+
+def _render_live_and_export(payload: dict) -> dict:
+    """Renders ``payload`` live and through the export replay, in the same
+    DOM stub, and returns each page's element text/html plus every string
+    the script ever wrote to `innerHTML`."""
+    node = shutil.which("node")
+    if node is None:
+        pytest.skip("node not available")
+    dump = ("Object.fromEntries(Object.entries(_elements).map(([k, v]) => "
+            "[k, {text: v.textContent, html: v.innerHTML}]))")
+    script = (
+        _DOM_STUB
+        + "\nconst _queue = [];"
+        + "\nglobal.setTimeout = (fn) => { _queue.push(fn); return _queue.length; };"
+        + _SCRIPT + _EXPORT_SCRIPT
+        + "\nconst payload = " + json.dumps(payload) + ";"
+        + '\nrender(Object.assign({}, payload, {mode: "replay"}));'
+        + "\nconst live = " + dump + ";"
+        + "\nfor (const k of Object.keys(_elements)) delete _elements[k];"
+        + "\nstartExport(payload);"
+        + "\nlet _guard = 0;"
+        + "\nwhile (_queue.length && _guard++ < 10000) _queue.shift()();"
+        + "\nconsole.log(JSON.stringify({live, exported: " + dump
+        + ", writes: _htmlWrites}));"
+    )
+    with tempfile.TemporaryDirectory() as d:
+        path = Path(d) / "render.js"
+        path.write_text(script, encoding="utf-8")
+        proc = subprocess.run([node, str(path)], capture_output=True, text=True,
+                              encoding="utf-8", timeout=30)
+    assert proc.returncode == 0, proc.stderr
+    return json.loads(proc.stdout)
+
+
+def test_run_text_never_goes_through_inner_html(tmp_path: Path) -> None:
+    """The agent's answer, its driver code, a call's op and args, and the
+    bus replies are agent-controlled: each one is shown as text, and none of
+    them is ever written to `innerHTML` (escaped or not), live or in the
+    export."""
+    run_id, state_dir = _recorded_run(tmp_path)
+    payload = copy.deepcopy(run_payload(run_id, state_dir=state_dir))
+    payload["record"]["given"] = _EVIL
+    payload["drivers"] = {"dmm0": {"code": _EVIL, "lines": 1}}
+    for e in payload["timeline"]:
+        d = e.get("detail") or {}
+        if e["kind"] == "call":
+            d["op"], d["args"] = _EVIL, [_EVIL]
+        elif e["kind"] == "query":
+            d["reply"] = _EVIL
+        elif e["kind"] == "exchange" and d.get("bus_family") == "sim_i2c":
+            d["response"] = _EVIL
+
+    out = _render_live_and_export(payload)
+    for page in ("live", "exported"):
+        elements = out[page]
+        shown = "\n".join(v["text"] for v in elements.values())
+        assert _EVIL in shown, page
+        for name in ("verdict-bar", "instruments", "timeline-list"):
+            assert _EVIL in elements[name]["text"], (page, name)
+        for name, v in elements.items():
+            assert "<img" not in v["html"], (page, name)
+    for written in out["writes"]:
+        assert "<img" not in written and "&lt;img" not in written, written
+
+
+# --------------------------------------------------------------------------- #
+# CTO review on #484: no answer from an instrument is not a card fault
+# --------------------------------------------------------------------------- #
+
+def test_a_transport_error_is_no_reading_never_fault_found(tmp_path: Path, monkeypatch) -> None:
+    state_dir = tmp_path / "state"
+    run_id = start_run(str(RELAY_RAIL_TASK), seed=_overheat_seed(),
+                       state_dir=state_dir)["run_id"]
+    call_op(run_id, "relay0", PASSING_RELAY_DRIVER, "set_relay", ["0", "true"],
+            state_dir=state_dir)
+    drive_input(run_id, "psu0", 12.0, state_dir=state_dir)
+    monkeypatch.setenv("SHAL_SIM_UNPLUG", "unit")   # the DMM's node: no answer
+    with pytest.raises(MeasurementFailed):
+        take_measurement(run_id, "dmm0", PASSING_DMM_DRIVER, state_dir=state_dir)
+    monkeypatch.delenv("SHAL_SIM_UNPLUG")
+    answer(run_id, "ok", state_dir=state_dir)
+
+    payload = run_payload(run_id, state_dir=state_dir)
+    assert any(e["kind"] == "failed" and e["detail"].get("cause") == "transport"
+               for e in payload["timeline"])
+    assert payload["result"]["found"] is False
+    assert payload["result"]["items"] == [
+        {"what": "3V3 rail", "value": None, "limit": None, "failing": False,
+         "kind": "no_reading", "instrument": "DMM"}]
+
+    elements = _render_with_node(payload)
+    bar = elements["verdict-bar"]["html"]
+    first_line = _text(re.match(r'<div class="big">(.*?)</div>', bar).group(1))
+    assert first_line == "No reading: 3V3 rail, no answer from the DMM"
+    assert "Fault found" not in _page_text(elements)
+    steps = re.findall(r'<div class="k">([^<]*)</div>', elements["flow"]["html"])
+    assert steps[-1] == "Result"
+
+
+def test_a_test_point_on_two_blocks_is_rejected() -> None:
+    """CTO review on #484 (nit): two blocks with one `test_point` would draw
+    two probes on one spot, so the card loader refuses it."""
+    doc = yaml.safe_load(_CARD_YAML.read_text(encoding="utf-8"))
+    doc["blocks"]["relay"]["test_point"] = "tp_3v3"
+    with pytest.raises(TaskFormatError, match="tp_3v3"):
+        validate_card(doc)

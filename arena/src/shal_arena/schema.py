@@ -416,6 +416,11 @@ def _validate_blocks(value: Any, input_names: set[str], test_points: set[str]
                 _fail(f"{where}.{key}: {ref!r} is not one of {sorted(allowed)}",
                       f"set {where}.{key} to one of {sorted(allowed)}")
             refs[key] = ref
+        tp = refs["test_point"]
+        dup = next((b.id for b in out if tp is not None and b.test_point == tp), None)
+        if dup is not None:
+            _fail(f"{where}.test_point: {tp!r} is already on card.blocks.{dup}",
+                  f"put test_point {tp!r} on one block only")
         out.append(Block(id=str(name), label=label, from_block=from_block, **refs))
     return tuple(out)
 

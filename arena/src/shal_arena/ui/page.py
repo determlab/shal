@@ -189,6 +189,25 @@ function escapeHtml(s) {
     '"':"&quot;","'":"&#39;"}[c]));
 }
 
+// CTO review on #484: a value from the run (the agent's answer, its driver
+// code, the bus bytes, the result line) reaches the page only through
+// `textContent`. `innerHTML` holds fixed markup and SVG geometry alone.
+function el(tag, cls, text) {
+  const n = document.createElement(tag);
+  if (cls) n.className = cls;
+  if (text !== undefined && text !== null) n.textContent = String(text);
+  return n;
+}
+
+function txt(s) { return document.createTextNode(String(s)); }
+
+// replaces `parent`'s children with `kids` (DOM nodes, never markup).
+function fill(parent, kids) {
+  parent.innerHTML = "";
+  for (const k of kids) parent.appendChild(k);
+  return parent;
+}
+
 const KIND_LABEL = {
   check: "Checked driver", measure: "Measured", query: "Read", write: "Wrote",
   refused: "Tried to set", protection: "Set", damage: "Set", reading: "Measured",
@@ -381,31 +400,51 @@ function renderLabels(payload) {
   const live = payload.mode === "live";
   const row = document.getElementById("run-labels");
   row.className = "labels" + (live ? " live" : "");
-  row.innerHTML = [live ? "LIVE" : "Replay of a recorded run", `${payload.level} level`,
-    plural(n, "instrument"), "datasheet written by us"]
-    .map(t => `<span>${escapeHtml(t)}</span>`).join(" · ");
+  const kids = [];
+  [live ? "LIVE" : "Replay of a recorded run", `${payload.level} level`,
+    plural(n, "instrument"), "datasheet written by us"].forEach((t, i) => {
+    if (i) kids.push(txt(" · "));
+    kids.push(el("span", "", t));
+  });
+  fill(row, kids);
+}
+
+// one result item as [bold part, the rest]: "<what>", ", <value>, limit
+// <limit>"; a `no_reading` item (the instrument never answered -- not a
+// card fault) reads "No reading: <part>, no answer from the <instrument>".
+function resultItemParts(i) {
+  if (i.kind === "no_reading") return ["No reading: ", i.what,
+    `, no answer from the ${i.instrument}`];
+  return ["", i.what, (i.value ? `, ${i.value}` : "") + (i.limit ? `, limit ${i.limit}` : "")];
 }
 
 // issue #447: "Fault found: <part> <what>, <value>, limit <limit>" -- from
-// `payload.result` (built server side once the run is closed), every
-// value through `escapeHtml`.
-function resultLineHtml(result) {
-  if (!result) return "";
-  const items = result.items.map(i => `<b>${escapeHtml(i.what)}</b>`
-    + (i.value ? `, ${escapeHtml(i.value)}` : "")
-    + (i.limit ? `, limit ${escapeHtml(i.limit)}` : ""));
-  const lead = !items.length ? "Nothing measured"
-    : result.found ? "Fault found: " : "No fault found: ";
-  return (result.destroyed ? "Card destroyed. " : "") + lead + items.join("; ");
+// `payload.result` (built server side once the run is closed), as DOM
+// nodes: the part in <b>, every value as text, never markup.
+function resultLineNodes(result) {
+  if (!result) return [];
+  const items = result.items;
+  const noReading = items.some(i => i.kind === "no_reading");
+  const out = [];
+  if (result.destroyed) out.push(txt("Card destroyed. "));
+  out.push(txt(!items.length ? "Nothing measured"
+    : result.found ? "Fault found: " : noReading ? "" : "No fault found: "));
+  items.forEach((i, k) => {
+    const [pre, what, rest] = resultItemParts(i);
+    if (k) out.push(txt("; "));
+    if (pre) out.push(txt(pre));
+    out.push(el("b", "", what));
+    if (rest) out.push(txt(rest));
+  });
+  return out;
 }
 
 function renderVerdict(payload) {
-  const el = document.getElementById("verdict-bar");
+  const bar = document.getElementById("verdict-bar");
   if (!payload.closed) {
-    el.className = "verdict-bar running";
-    el.innerHTML = '<div class="big">Running…</div>'
-      + `<span class="reason">${shownSteps(payload.timeline).length} step(s) so far`
-      + "</span>";
+    bar.className = "verdict-bar running";
+    fill(bar, [el("div", "big", "Running…"),
+      el("span", "reason", `${shownSteps(payload.timeline).length} step(s) so far`)]);
     return;
   }
   const rec = payload.record || {};
@@ -419,14 +458,15 @@ function renderVerdict(payload) {
   else if (!correct) { word = "Wrong"; cls = "bad"; }
   // issue #447: the top line is the measured result, then the agent's
   // answer as a chip -- never the bare word alone.
-  const line = resultLineHtml(payload.result) || escapeHtml(reason || word);
+  const line = resultLineNodes(payload.result);
+  const big = line.length ? fill(el("div", "big"), line) : el("div", "big", reason || word);
   const drivers = driverCount(payload);
-  el.className = "verdict-bar" + (cls ? " " + cls : "");
-  el.innerHTML = `<div class="big">${line}</div>`
-    + `<span class="chip ${correct ? "ok" : "bad"}">Agent's answer: `
-    + `${escapeHtml(answerLabel(rec.given))} · ${word}</span>`
-    + `<span class="chip dim">${drivers ? plural(drivers, "driver") + " written · " : ""}`
-    + `${plural(gateStops(payload), "gate stop")}</span>`;
+  bar.className = "verdict-bar" + (cls ? " " + cls : "");
+  fill(bar, [big,
+    el("span", `chip ${correct ? "ok" : "bad"}`,
+      `Agent's answer: ${answerLabel(rec.given)} · ${word}`),
+    el("span", "chip dim", (drivers ? plural(drivers, "driver") + " written · " : "")
+      + plural(gateStops(payload), "gate stop"))]);
 }
 
 // the measured parts so far ("3V3 rail", "regulator temp"), in instrument order.
@@ -460,17 +500,19 @@ function renderFlow(payload) {
     {k: "Writes", s: drivers ? plural(drivers, "driver") : "drivers", done: drivers > 0},
     {k: "Measures", s: parts.length ? parts.join(" + ") : "the card", done: parts.length > 0},
     {k: res && res.found ? "Fault" : "Result",
-     s: first ? [first.what, first.value, first.limit ? `limit ${first.limit}` : ""]
-       .filter(Boolean).join(", ") : "…", done: !!res},
+     s: first ? resultItemParts(first).join("") : "…", done: !!res},
   ];
   let litGiven = false;
-  document.getElementById("flow").innerHTML = cells.map((c, i) => {
+  fill(document.getElementById("flow"), cells.map((c, i) => {
     let state = c.done ? (i === 3 && res && res.found ? "fault" : "done") : "";
     if (!c.done && !litGiven && !payload.closed) { state = "lit"; litGiven = true; }
-    return `<div class="st ${state}${payload.closed ? " seq" : ""}" style="--i:${i}">`
-      + `<svg viewBox="0 0 44 44" aria-hidden="true">${FLOW_ICONS[i]}</svg>`
-      + `<div class="k">${escapeHtml(c.k)}</div><div class="s">${escapeHtml(c.s)}</div></div>`;
-  }).join("");
+    const st = el("div", `st ${state}${payload.closed ? " seq" : ""}`);
+    st.setAttribute("style", `--i:${i}`);
+    st.innerHTML = `<svg viewBox="0 0 44 44" aria-hidden="true">${FLOW_ICONS[i]}</svg>`;
+    st.appendChild(el("div", "k", c.k));
+    st.appendChild(el("div", "s", c.s));
+    return st;
+  }));
 }
 
 function arrowMarkers() {
@@ -640,36 +682,44 @@ function driverFor(payload, inst) {
   return null;
 }
 
-function driverHtml(label, d) {
-  return `<details class="driver-code"><summary>${escapeHtml(label)}, ${d.lines} lines</summary>`
-    + `<pre>${escapeHtml(d.code)}</pre></details>`;
+// the agent's own driver code: text in a <pre>, never markup (#406).
+function driverEl(label, d) {
+  const det = el("details", "driver-code");
+  det.appendChild(el("summary", "", `${label}, ${d.lines} lines`));
+  det.appendChild(el("pre", "", d.code));
+  return det;
 }
 
 function renderInstruments(payload) {
   const steps = shownSteps(payload.timeline);
   const newest = !payload.closed && steps.length ? steps[steps.length - 1].address : null;
   const matched = new Set();
-  let out = payload.instruments.map(inst => {
+  const out = payload.instruments.map(inst => {
     const rows = steps.filter(e => e.address === inst.address).map(e => fnRow(payload, inst, e));
-    const fns = rows.length ? rows.map(r => `<span>${escapeHtml(r.fn)}</span>`
-      + `<span class="v${r.cls ? " " + r.cls : ""}">${escapeHtml(r.v)}</span>`).join("")
-      : '<span class="none">not used</span>';
+    const fn = el("div", "fn");
+    for (const r of rows) {
+      fn.appendChild(el("span", "", r.fn));
+      fn.appendChild(el("span", "v" + (r.cls ? " " + r.cls : ""), r.v));
+    }
+    if (!rows.length) fn.appendChild(el("span", "none", "not used"));
     const tile = (payload.tiles || {})[inst.address];
     const drv = driverFor(payload, inst);
     if (drv) matched.add(drv[0]);
     const check = tile ? ` · check ${tile.passed ? "passed" : "failed"}` : "";
-    return `<div class="inst${inst.address === newest ? " active" : ""}">`
-      + `<div class="inst-head"><span class="inst-name">${escapeHtml(inst.address)} · `
-      + `${escapeHtml(instrumentRoleText(payload, inst))}</span>`
-      + `<span class="inst-proto">${escapeHtml(inst.protocol || "")}</span></div>`
-      + `<div class="fn">${fns}</div>`
-      + (drv ? driverHtml(`Driver written by the agent${check}`, drv[1]) : "")
-      + "</div>";
-  }).join("");
+    const head = el("div", "inst-head");
+    head.appendChild(el("span", "inst-name",
+      `${inst.address} · ${instrumentRoleText(payload, inst)}`));
+    head.appendChild(el("span", "inst-proto", inst.protocol || ""));
+    const card = el("div", "inst" + (inst.address === newest ? " active" : ""));
+    card.appendChild(head);
+    card.appendChild(fn);
+    if (drv) card.appendChild(driverEl(`Driver written by the agent${check}`, drv[1]));
+    return card;
+  });
   for (const [name, d] of Object.entries(payload.drivers || {})) {
-    if (!matched.has(name)) out += driverHtml(`The driver the agent wrote for the ${name}`, d);
+    if (!matched.has(name)) out.push(driverEl(`The driver the agent wrote for the ${name}`, d));
   }
-  document.getElementById("instruments").innerHTML = out;
+  fill(document.getElementById("instruments"), out);
 }
 
 // issue #447: the #457 log, placed in the layout -- one row per step the
@@ -734,20 +784,25 @@ function replyText(e) {
   return stepDetail(e);
 }
 
-function stepRowHtml(e, i, wires, t0, cur) {
-  const title = escapeHtml(stepTitle(e));
-  const detail = escapeHtml(replyText(e));
+// one log row, as DOM nodes: the reply and the wire text are bus bytes
+// from the run, so they go in as text, never markup.
+function stepRowEl(e, i, wires, t0, cur) {
   const wire = (wires || []).map(wireText).join("; ");
-  const pill = e.kind === "refused" ? '<span class="pill refused">refused</span>'
-    : (e.kind === "protection" || e.kind === "damage")
-      ? '<span class="pill sent">sent</span>' : "";
   const state = [e.kind === "refused" ? "stop" : "", cur ? "cur" : ""].filter(Boolean).join(" ");
-  return `<div class="step" data-i="${i}"${state ? ` data-state="${state}"` : ""}>`
-    + `<div class="n">${escapeHtml(t0 ? relTime(e.ts, t0) : "")}</div>`
-    + `<div class="who">${escapeHtml(e.address || "")}</div>`
-    + `<div class="what">${title}</div>`
-    + `<div class="wire">${escapeHtml(wire || "—")}</div>`
-    + `<div class="detail">${detail}${pill}</div></div>`;
+  const row = el("div", "step");
+  row.setAttribute("data-i", String(i));
+  if (state) row.setAttribute("data-state", state);
+  row.appendChild(el("div", "n", t0 ? relTime(e.ts, t0) : ""));
+  row.appendChild(el("div", "who", e.address || ""));
+  row.appendChild(el("div", "what", stepTitle(e)));
+  row.appendChild(el("div", "wire", wire || "—"));
+  const detail = el("div", "detail", replyText(e));
+  if (e.kind === "refused") detail.appendChild(el("span", "pill refused", "refused"));
+  else if (e.kind === "protection" || e.kind === "damage") {
+    detail.appendChild(el("span", "pill sent", "sent"));
+  }
+  row.appendChild(detail);
+  return row;
 }
 
 function renderTimeline(payload) {
@@ -756,8 +811,8 @@ function renderTimeline(payload) {
   const wires = wireMap(all);
   const t0 = all.length ? all[0].ts : null;
   const agentSteps = shownSteps(payload.timeline);
-  list.innerHTML = agentSteps.map((e, i) => stepRowHtml(e, i, wires.get(e), t0,
-    !payload.closed && i === agentSteps.length - 1)).join("");
+  fill(list, agentSteps.map((e, i) => stepRowEl(e, i, wires.get(e), t0,
+    !payload.closed && i === agentSteps.length - 1)));
 }
 
 // issue #457 (scope added): the page shows each instrument's role as
