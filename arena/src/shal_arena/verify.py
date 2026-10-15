@@ -60,9 +60,15 @@ Trust model (the sim is open-source, so only the keys below are load-bearing):
   one specific probe address) -- deliberate, because a replay has no live
   instrument list to check addresses against, only the log; flagged here
   for CTO review the same way ``score.py``'s own ambiguous fields are.
-- ``game_version`` must equal this package's ``score.GAME_VERSION``: the
-  replay recomputes under the current game rules, so a score made under
-  other rules is ``refused`` (re-run it under the current version).
+- The score is recomputed under the rules of its own ``game_version``
+  (``score.ERROR_CLASS_FAULTS_BY_VERSION``; fault realization is the same in
+  every listed version, only scoring differs). A version not in that table
+  is ``refused`` / ``unknown_game_version``. ``game_version`` sits in the
+  score file, which ``record_sha256`` does not cover, so the label alone is
+  not trusted: the week's challenge file lists the versions it accepts
+  (``game_versions``), and a score whose version is not on that list is
+  ``refused`` / ``wrong_game_version``. A run relabelled to an older version
+  to gain a point still has to recompute under that version's rules.
 
 Replay never executes anything from the PR: no player code runs, and no
 network call is made. Every file this module opens is read-only.
@@ -72,6 +78,7 @@ from __future__ import annotations
 import datetime
 import hashlib
 import json
+import logging
 import re
 from dataclasses import dataclass
 from pathlib import Path
@@ -82,7 +89,7 @@ import yaml
 
 from .fault import realized_fault
 from .loader import LoadedTask, load_task
-from .score import ERROR_CLASS_FAULTS, GAME_VERSION, validate_score
+from .score import ERROR_CLASS_FAULTS_BY_VERSION, validate_score
 
 # TASKS_DIR travels WITH the installed package (same pattern runner.py's own
 # task resolution already uses) -- a player needs no source checkout to run
@@ -101,6 +108,7 @@ def challenges_dir() -> Path:
     package rather than ``pip install -e``."""
     return Path.cwd() / "arena" / "challenges"
 
+_log = logging.getLogger(__name__)
 _WEEK_RE = re.compile(r"^\d{4}-\d{2}$")
 _SCORE_SUFFIX = "score.json"  # no leading dot: "run-x.score.json" keeps its own dot in the prefix
 
@@ -170,7 +178,8 @@ def _resolve_task(task_id: str) -> LoadedTask | None:
     for path in sorted(TASKS_DIR.glob("*.yaml")):
         try:
             loaded = load_task(path)
-        except Exception:  # noqa: BLE001 - a malformed packaged task is not this submission's fault
+        except Exception as e:  # noqa: BLE001 - a malformed packaged task is not this submission's fault
+            _log.warning("skipping packaged task %s: %s", path.name, e)
             continue
         if loaded.task.id == task_id:
             return loaded
@@ -200,17 +209,27 @@ def verify(score_path: str | Path, *, week: str | None = None) -> dict[str, Any]
         return _refused(f"score file does not match the score schema: {e.message}",
                         week).as_dict()
 
-    if score["game_version"] != GAME_VERSION:
+    game_version = score["game_version"]
+    error_class_faults = ERROR_CLASS_FAULTS_BY_VERSION.get(game_version)
+    if error_class_faults is None:
+        known = ", ".join(sorted(ERROR_CLASS_FAULTS_BY_VERSION))
         return _refused(
-            f"wrong_game_version: the score was made under game {score['game_version']!r}, "
-            f"this verify replays game {GAME_VERSION!r} -- re-run the challenge with "
-            f"shal-arena {GAME_VERSION}", week).as_dict()
+            f"unknown_game_version: the score was made under game {game_version!r}, "
+            f"this verify knows only {known} -- re-run the challenge with a listed "
+            "shal-arena version", week).as_dict()
 
     challenge = _load_challenge(week)
     if challenge is None:
         return _refused(
             f"no challenge file for week {week!r}: {challenges_dir() / f'{week}.yaml'} "
             "does not exist", week).as_dict()
+
+    allowed = challenge.get("game_versions") or []
+    if game_version not in allowed:
+        return _refused(
+            f"wrong_game_version: game {game_version!r} is not on week {week}'s list "
+            f"{allowed!r} in arena/challenges/{week}.yaml -- re-run the challenge with "
+            "one of those versions", week).as_dict()
 
     if score["seed"] != challenge["seed"]:
         return _refused(
@@ -293,7 +312,7 @@ def verify(score_path: str | Path, *, week: str | None = None) -> dict[str, Any]
     disqualified = not measured  # always False here; kept explicit for build_score parity
     caught = (not disqualified) and fault_id != "ok" and correct
     false_fail = fault_id == "ok" and given != "ok"
-    error_correct = (not disqualified) and fault_id in ERROR_CLASS_FAULTS and correct
+    error_correct = (not disqualified) and fault_id in error_class_faults and correct
     expected = {
         "faults_caught": 1 if caught else 0,
         "false_fails": 1 if false_fail else 0,

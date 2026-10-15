@@ -175,15 +175,65 @@ def test_a_non_utf8_simlog_is_refused_not_raised(tmp_path: Path) -> None:
     assert result["reason"].startswith("simlog_invalid_json")
 
 
-def test_a_score_from_another_game_version_is_refused(tmp_path: Path) -> None:
+GOLDEN_040 = Path(__file__).resolve().parent / "fixtures" / "runs" / "main-0.4.0-open"
+GOLDEN_STEM = "run-20261007T080236Z-f98b4df0"
+
+
+def _golden_040_under_challenge(tmp_path: Path, monkeypatch, game_versions) -> Path:
+    """#480's golden 0.4.0 run (easy, seed 0, ``open`` answered right), checked
+    against a seed-0 challenge that allows ``game_versions``."""
+    import shal_arena.verify as verify_mod
+
+    run_dir = tmp_path / "run"
+    run_dir.mkdir()
+    for suffix in ("score.json", "arena-record.json", "simlog.jsonl"):
+        shutil.copy(GOLDEN_040 / f"{GOLDEN_STEM}.{suffix}", run_dir / f"{GOLDEN_STEM}.{suffix}")
+    challenges = tmp_path / "challenges"
+    challenges.mkdir()
+    (challenges / "2026-99.yaml").write_text(
+        f"week: '2026-99'\ntask_id: easy\nseed: 0\ngame_versions: {json.dumps(game_versions)}\n",
+        encoding="utf-8")
+    monkeypatch.setattr(verify_mod, "challenges_dir", lambda: challenges)
+    return run_dir / f"{GOLDEN_STEM}.score.json"
+
+
+def test_a_0_4_0_run_verifies_under_its_own_rules(tmp_path: Path, monkeypatch) -> None:
+    score_path = _golden_040_under_challenge(tmp_path, monkeypatch, ["0.4.0", "0.4.1"])
+    assert json.loads(score_path.read_text())["error_fail_correct"] == 1
+    result = verify(score_path, week="2026-99")
+    assert result["result"] == "verified", result
+
+
+def test_a_0_4_0_run_relabelled_0_4_1_is_disqualified(tmp_path: Path, monkeypatch) -> None:
+    # 0.4.1 does not count `open` in error_fail_correct, so the old score's 1
+    # no longer recomputes.
+    score_path = _golden_040_under_challenge(tmp_path, monkeypatch, ["0.4.0", "0.4.1"])
+    score = json.loads(score_path.read_text())
+    score["game_version"] = "0.4.1"
+    score_path.write_text(json.dumps(score))
+    result = verify(score_path, week="2026-99")
+    assert result["result"] == "disqualified"
+    assert result["reason"].startswith("score_mismatch: error_fail_correct")
+
+
+def test_a_version_missing_from_the_weeks_list_is_refused(tmp_path: Path, monkeypatch) -> None:
+    score_path = _golden_040_under_challenge(tmp_path, monkeypatch, ["0.4.1"])
+    result = verify(score_path, week="2026-99")
+    assert result["result"] == "refused"
+    assert result["reason"].startswith("wrong_game_version")
+    assert "2026-99.yaml" in result["reason"]
+
+
+def test_an_unknown_game_version_is_refused(tmp_path: Path) -> None:
     _copy_fixtures(tmp_path)
     score = json.loads((tmp_path / "score.json").read_text())
-    score["game_version"] = "0.4.0"
+    score["game_version"] = "9.9.9"
     (tmp_path / "score.json").write_text(json.dumps(score))
 
     result = verify(tmp_path / "score.json", week=WEEK)
     assert result["result"] == "refused"
-    assert result["reason"].startswith("wrong_game_version")
+    assert result["reason"].startswith("unknown_game_version")
+    assert "0.4.0" in result["reason"] and "0.4.1" in result["reason"]
 
 
 def test_a_pre_435_record_json_name_still_verifies(tmp_path: Path) -> None:

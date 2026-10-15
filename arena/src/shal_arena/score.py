@@ -74,8 +74,14 @@ SCORE_SCHEMA = {
 _VALIDATOR = jsonschema.Draft202012Validator(SCORE_SCHEMA)
 
 #: realized faults that break the link to the instrument rather than change
-#: what the card reads (issue #477: none today -- `open` reads about 0 V).
-ERROR_CLASS_FAULTS: frozenset[str] = frozenset()
+#: what the card reads, per game version: under 0.4.0 `open` raised; from
+#: 0.4.1 (issue #477) it reads about 0 V, so none count. `verify` scores an
+#: older run under its own version's row; each bump adds one row.
+ERROR_CLASS_FAULTS_BY_VERSION: dict[str, frozenset[str]] = {
+    "0.4.0": frozenset({"open"}),
+    "0.4.1": frozenset(),
+}
+ERROR_CLASS_FAULTS: frozenset[str] = ERROR_CLASS_FAULTS_BY_VERSION[GAME_VERSION]
 
 
 def validate_score(doc: dict[str, Any]) -> None:

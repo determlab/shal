@@ -4,3 +4,7 @@
 week: "2026-41"
 task_id: easy
 seed: 20261006
+# Game versions a score may be made under this week (CTO review on #393):
+# #480 moved the game to 0.4.1 mid-week, so 0.4.0 runs still count. From
+# week 42 the list is ["0.4.1"].
+game_versions: ["0.4.0", "0.4.1"]

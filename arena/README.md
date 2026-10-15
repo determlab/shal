@@ -472,3 +472,5 @@ proves the score, record, sim log and published seed agree with each other
 one `measure` line), but with the seed public and the sim open the answer can
 be computed offline, so it cannot prove anyone ran the sim. `turns`,
 `duration_s` and `gate_stops` are not checked — never rank on them.
+A score is rescored under its own `game_version`'s rules, and only if that
+version is on the week's `game_versions` list in the challenge file.
