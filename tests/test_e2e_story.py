@@ -218,3 +218,14 @@ def test_pull_request_trigger_covers_the_sample_and_cli_py():
     paths = on["pull_request"]["paths"]
     assert "src/shal/samples/virtual-bench/**" in paths
     assert "src/shal/cli.py" in paths
+
+
+def test_arena_fault_determinism_check_catches_a_regression():
+    # arena#390: this check IS the "identical replay numbers for the same
+    # seed on the 3-OS CI matrix" proof (reusing this harness, no new
+    # workflow) -- it must fail if the realized fault ever stops matching
+    # the hand-confirmed value for this seed/task/card.
+    ok_doc = {"fault_id": "open", "extra": {"rail": "3v3"}}
+    assert story.check_arena_fault_determinism(ok_doc, _RERUN)["result"] == "pass"
+    bad_doc = {"fault_id": "low_voltage", "extra": {"rail": "3v3"}}
+    assert story.check_arena_fault_determinism(bad_doc, _RERUN)["result"] == "fail"

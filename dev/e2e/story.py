@@ -204,6 +204,19 @@ def check_arena_bench_destroyed(doc: dict[str, Any], rerun: str) -> dict[str, An
         rerun)
 
 
+def check_arena_fault_determinism(doc: dict[str, Any], rerun: str) -> dict[str, Any]:
+    """arena#390: ``shal-arena verify``'s replay trusts `fault.realized_fault`
+    (a pure ``random.Random(seed)`` computation) to give the SAME fault on
+    Windows, Linux and macOS for the SAME seed -- this is what "proves
+    identical replay numbers for the same seed on the 3-OS CI matrix" means
+    here (arena#390's own Done-when), reusing this already-3-OS harness
+    rather than a new workflow. Expected value independently confirmed by
+    hand once (same seed, same task, same card) when arena/challenges/
+    2026-41.yaml and arena/tests/fixtures/verify/ were built."""
+    ok = doc.get("fault_id") == "open" and doc.get("extra", {}).get("rail") == "3v3"
+    return _result("arena_fault_determinism", ok, json.dumps(doc), rerun)
+
+
 def check_wheel_installed(package: str, version: str | None, ok: bool, output: str,
                           rerun: str) -> dict[str, Any]:
     return _result(f"wheel_installed_{package}", ok, f"version={version} output={output!r}",
@@ -371,6 +384,28 @@ def run_arena_demo(venv_python: str) -> dict[str, Any]:
                             f"{venv_python} {_argv_str(demo_argv)}")
 
 
+def run_arena_fault_determinism(venv_python: str) -> dict[str, Any]:
+    code = (
+        "import json, sys\n"
+        "from shal_arena.loader import load_task\n"
+        "from shal_arena.fault import realized_fault\n"
+        "loaded = load_task(sys.argv[1])\n"
+        "rf = realized_fault(loaded.card, 20261006)\n"
+        "print(json.dumps({'fault_id': rf.fault_id, 'extra': rf.extra}))\n"
+    )
+    task_path = ARENA_TASKS_DIR / "easy.yaml"
+    argv = [venv_python, "-c", code, str(task_path)]
+    proc = subprocess.run(argv, capture_output=True, text=True, timeout=60)
+    try:
+        doc = json.loads(proc.stdout)
+    except json.JSONDecodeError:
+        doc = {"ok": False, "error": f"not JSON: stdout={proc.stdout!r} stderr={proc.stderr!r}"}
+    rerun = (f"{venv_python} -c \"from shal_arena.loader import load_task; "
+            f"from shal_arena.fault import realized_fault; "
+            f"print(realized_fault(load_task('{task_path}').card, 20261006))\"")
+    return check_arena_fault_determinism(doc, rerun)
+
+
 def run_bricks_wheel_check(venv_python: str) -> dict[str, Any]:
     bricks_argv = [venv_python, "-c", "import bricks; print(bricks.__version__)"]
     proc = subprocess.run(bricks_argv, capture_output=True, text=True, timeout=60)
@@ -442,6 +477,9 @@ def main(argv: list[str] | None = None) -> int:
              run_arena_bench_destroyed, venv_py, state_dir / "bench-story")
     run_step("arena_demo", f"{venv_py} -m shal_arena.cli demo --pause 0 --json",
              run_arena_demo, venv_py)
+    run_step("arena_fault_determinism",
+             f"{venv_py} -c \"from shal_arena.fault import realized_fault\"",
+             run_arena_fault_determinism, venv_py)
     run_step("wheel_installed_bricks-engine",
              f'{venv_py} -c "import bricks; print(bricks.__version__)"',
              run_bricks_wheel_check, venv_py)
