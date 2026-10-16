@@ -340,6 +340,7 @@ def _cli_log(store: RunStore, run_id: str) -> dict[str, Any]:
             # on the call, never on its output format (a plain-text `measure`
             # logs `json: null`).
             note = entry.get("note")
+            # issue #500: the subcommand is argv's first element not starting with "-".
             sub = next((str(a) for a in argv
                         if not str(a).startswith("-") and str(a) != "shal-arena"), "")
             rows.append({"command": command, "exit_code": code, "failed": code != 0,

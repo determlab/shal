@@ -315,7 +315,7 @@ def _cmd_setup_yaml(args: argparse.Namespace) -> int:
 
 
 def _build_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(prog="shal-arena",
+    parser = argparse.ArgumentParser(prog="shal-arena", allow_abbrev=False,
                                      description="SHAL Arena: run a task, check a driver, "
                                                   "answer the question.")
     sub = parser.add_subparsers(dest="command", required=True)
@@ -338,7 +338,7 @@ def _build_parser() -> argparse.ArgumentParser:
                             "changes what this command does or returns")
 
     p_demo = sub.add_parser(
-        "demo",
+        "demo", allow_abbrev=False,
         help="run the whole demo story from the installed package, no clone needed "
              "(issue #343/#410 Agent path)")
     p_demo.add_argument("--pause", type=float, default=None,
@@ -348,8 +348,9 @@ def _build_parser() -> argparse.ArgumentParser:
     p_demo.set_defaults(func=_cmd_demo)
 
     p_ui = sub.add_parser(
-        "ui", help="WATCH a run live, PLAY one with buttons, or export a finished one "
-                   "(issues #406, #407)")
+        "ui", allow_abbrev=False,
+        help="WATCH a run live, PLAY one with buttons, or export a finished one "
+             "(issues #406, #407)")
     p_ui.add_argument("--run", default=None, metavar="RUN_ID",
                       help="the run_id to watch (from `run`'s own output) -- required for "
                            "--export; without it (and without --export), the page starts "
@@ -372,11 +373,13 @@ def _build_parser() -> argparse.ArgumentParser:
     p_ui.set_defaults(func=_cmd_ui)
 
     p_tasks = sub.add_parser(
-        "tasks", help="list the packaged tasks (name, path, level) that `run` takes by name")
+        "tasks", allow_abbrev=False,
+        help="list the packaged tasks (name, path, level) that `run` takes by name")
     p_tasks.add_argument("--json", action="store_true", help="print one JSON document")
     p_tasks.set_defaults(func=_cmd_tasks)
 
-    p_run = sub.add_parser("run", help="start a run from a packaged task name or a task.yaml")
+    p_run = sub.add_parser("run", allow_abbrev=False,
+                           help="start a run from a packaged task name or a task.yaml")
     p_run.add_argument("task", help="a packaged task name (see `shal-arena tasks --json`: "
                                     "easy, medium, hard, rail-3v3, relay-rail) or a path to "
                                     "a task.yaml")
@@ -387,7 +390,7 @@ def _build_parser() -> argparse.ArgumentParser:
     p_run.set_defaults(func=_cmd_run)
 
     p_check = sub.add_parser(
-        "check-driver", aliases=["check"],
+        "check-driver", allow_abbrev=False, aliases=["check"],
         help="ADK-style driver check: lights a tile on pass (issue #311 Agent path)")
     p_check.add_argument("run_id")
     p_check.add_argument("instrument", help="the instrument address from `run`'s output")
@@ -399,7 +402,7 @@ def _build_parser() -> argparse.ArgumentParser:
     at_help = ("the test point to probe, e.g. tp_5v -- required when the instrument "
                "lists several probe points (issue #491), refused when it has one")
     p_measure = sub.add_parser(
-        "measure",
+        "measure", allow_abbrev=False,
         help="take your own reading on an instrument (issue #312 Agent path)")
     p_measure.add_argument("run_id")
     p_measure.add_argument("instrument", help="the instrument address from `run`'s output")
@@ -410,7 +413,7 @@ def _build_parser() -> argparse.ArgumentParser:
     p_measure.set_defaults(func=_cmd_measure)
 
     p_drive = sub.add_parser(
-        "drive",
+        "drive", allow_abbrev=False,
         help="apply a voltage to the card input this instrument drives (issue #313 Agent "
              "path); the gate refuses a voltage that would damage the card (issue #330)")
     p_drive.add_argument("run_id")
@@ -421,7 +424,7 @@ def _build_parser() -> argparse.ArgumentParser:
     p_drive.set_defaults(func=_cmd_drive)
 
     p_call = sub.add_parser(
-        "call",
+        "call", allow_abbrev=False,
         help="run any op of your own driver through SHAL (gate, limits and approval "
              "as usual; issue relay-rail Agent path) -- e.g. a relay's coil ops")
     p_call.add_argument("run_id")
@@ -434,7 +437,8 @@ def _build_parser() -> argparse.ArgumentParser:
     add_note(p_call)
     p_call.set_defaults(func=_cmd_call)
 
-    p_answer = sub.add_parser("answer", help="answer the question and close the run")
+    p_answer = sub.add_parser("answer", allow_abbrev=False,
+                              help="answer the question and close the run")
     p_answer.add_argument("run_id")
     p_answer.add_argument("value", help="your answer (one of the card's fault ids, or 'ok')")
     add_common(p_answer)
@@ -442,7 +446,7 @@ def _build_parser() -> argparse.ArgumentParser:
     p_answer.set_defaults(func=_cmd_answer)
 
     p_bench = sub.add_parser(
-        "bench",
+        "bench", allow_abbrev=False,
         help="benchmark mode: the same task with SHAL and without it (issue #314 Agent path)")
     p_bench.add_argument("task", nargs="?", default=None,
                          help="a packaged task name or a path to a task.yaml (default: "
@@ -463,7 +467,7 @@ def _build_parser() -> argparse.ArgumentParser:
     p_bench.set_defaults(func=_cmd_bench)
 
     p_replay = sub.add_parser(
-        "replay",
+        "replay", allow_abbrev=False,
         help="write the offline result card for a closed run (issue #315 Agent path)")
     p_replay.add_argument("run_id")
     p_replay.add_argument("--out", default=None, metavar="PATH",
@@ -474,13 +478,14 @@ def _build_parser() -> argparse.ArgumentParser:
     p_replay.set_defaults(func=_cmd_replay)
 
     p_rack = sub.add_parser(
-        "rack", help="write the rack page: drag instrument tiles to build a setup.yaml")
+        "rack", allow_abbrev=False,
+        help="write the rack page: drag instrument tiles to build a setup.yaml")
     p_rack.add_argument("--out", default="rack.html", metavar="PATH")
     add_common(p_rack)
     p_rack.set_defaults(func=_cmd_rack)
 
     p_setup = sub.add_parser(
-        "setup-yaml",
+        "setup-yaml", allow_abbrev=False,
         help="the rack page's own mechanism, without the page: build a setup.yaml "
              "from one or more case names")
     p_setup.add_argument("cases", nargs="+", help="case names, e.g. scpi-psu dmm")
@@ -490,7 +495,7 @@ def _build_parser() -> argparse.ArgumentParser:
     p_setup.set_defaults(func=_cmd_setup_yaml)
 
     p_verify = sub.add_parser(
-        "verify",
+        "verify", allow_abbrev=False,
         help="leaderboard part 1 (issue #390): replay a closed run from the weekly "
              "seed and say whether its score file holds up")
     p_verify.add_argument("score_file", help="path to the run's <stem>.score.json; "
