@@ -163,6 +163,61 @@ def test_play_routes_never_leak_the_fault_before_the_run_ends(tmp_path: Path) ->
     assert fault not in api
 
 
+def test_choices_and_the_last_run_serving_never_leak_an_open_runs_fault(
+        tmp_path: Path) -> None:
+    """issue #498 (3): the two read routes the scans above never reached.
+    `GET /api/play/choices` is the task's own fixed answer list and nothing
+    else, while the run is open. `last_run_id`: once a run closes, this
+    server keeps serving it (its record is fair to show then) -- but with
+    the NEXT run open, neither that next run's own payload nor the choices
+    may name the next run's fault."""
+    card = load_task(str(SAMPLE_TASK)).card
+    first_fault, next_fault = pick_fault(card, 1), pick_fault(card, 5)
+    assert first_fault != next_fault and "ok" not in (first_fault, next_fault)
+    values = list(load_task(str(SAMPLE_TASK)).task.question.answer.values)
+
+    httpd = serve(None, state_dir=tmp_path, port=0, open_browser=False)
+    thread = threading.Thread(target=httpd.serve_forever, daemon=True)
+    thread.start()
+    try:
+        status, started = _post(httpd, "/api/play/start", {"task": "rail-3v3", "seed": 1})
+        assert status == 200
+        first = json.loads(started)["run_id"]
+        choices = json.loads(_get(httpd, "/api/play/choices"))
+        # the full fixed enum (every value, by design -- see `started` in the
+        # test above), and no other field that could say which one is real
+        assert choices == {"ok": True, "run_id": first, "values": values}
+
+        assert _post(httpd, "/api/play/drive", {"address": "psu0", "volts": 5.0})[0] == 200
+        assert _post(httpd, "/api/play/measure", {"address": "dmm0"})[0] == 200
+        assert _post(httpd, "/api/play/answer", {"value": first_fault})[0] == 200
+
+        # the closed run is still served (`last_run_id`), record and all
+        closed = json.loads(_get(httpd, f"/api/run/{first}"))
+        assert closed["closed"] is True
+        assert closed["record"]["fault_id"] == first_fault
+
+        status, started = _post(httpd, "/api/play/start", {"task": "rail-3v3", "seed": 5})
+        assert status == 200
+        nxt = json.loads(started)["run_id"]
+        assert _post(httpd, "/api/play/drive", {"address": "psu0", "volts": 5.0})[0] == 200
+        assert _post(httpd, "/api/play/measure", {"address": "dmm0"})[0] == 200
+        choices = json.loads(_get(httpd, "/api/play/choices"))
+        open_api = _get(httpd, f"/api/run/{nxt}").decode("utf-8")
+        last_api = _get(httpd, f"/api/run/{first}").decode("utf-8")
+        page = _get(httpd, "/").decode("utf-8")
+    finally:
+        httpd.shutdown()
+        httpd.server_close()
+        thread.join(timeout=5)
+
+    assert choices == {"ok": True, "run_id": nxt, "values": values}
+    assert '"record": null' in open_api
+    assert next_fault not in open_api
+    assert next_fault not in last_api
+    assert next_fault not in page
+
+
 def test_pick_fault_itself_names_what_this_test_checks() -> None:
     """A sanity check on the test above: the seed really does pick a
     non-trivial fault, so "not in page" is a real assertion, not vacuous."""

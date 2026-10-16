@@ -279,8 +279,9 @@ def _make_handler(run_id: str | None, state_dir: str | Path,
             if self.path == "/api/play/measure":
                 address = _require_str(body, "address", example='{"address": "dmm0"}')
                 case_name = _case_for(run_id, address, state_dir)
+                at = _optional_str(body, "at", example='{"address": "dmm0", "at": "tp_5v"}')
                 self._send_json(200, _strip_paths(play.measure(
-                    run_id, address, case_name, state_dir=state_dir)))
+                    run_id, address, case_name, at=at, state_dir=state_dir)))
                 return
             if self.path == "/api/play/drive":
                 address = _require_str(body, "address", example='{"address": "psu0"}')
@@ -315,6 +316,15 @@ def _require_str(body: dict[str, Any], key: str, *, example: str) -> str:
         raise ArenaError(f"play: {key!r} must be a non-empty string",
                          fix=f"send a body like {example}")
     return value
+
+
+def _optional_str(body: dict[str, Any], key: str, *, example: str) -> str | None:
+    """issue #498: `at` on measure -- omitted (or null) for a one-point
+    instrument, else a non-empty string the runner checks against the
+    instrument's own points."""
+    if key not in body or body[key] is None:
+        return None
+    return _require_str(body, key, example=example)
 
 
 def _require_bool(body: dict[str, Any], key: str) -> bool:

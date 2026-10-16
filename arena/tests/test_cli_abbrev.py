@@ -64,3 +64,20 @@ def test_cli_log_takes_the_first_non_flag_element_as_the_subcommand(tmp_path: Pa
     assert len(rows) == 1
     # a flag first does not hide the subcommand: `measure` that exited 0
     assert rows[0]["has_reading"] is True
+
+
+@pytest.mark.parametrize("flag", ["--no", "--not", "--no=x"])
+def test_a_prefix_of_note_is_refused_with_a_note_suggestion(flag: str) -> None:
+    """issue #498 (5): the refusal names the flag the player meant."""
+    args = ["answer", "r1", "ok", flag] + ([] if "=" in flag else ["x"])
+    proc = _run_cli(*args)
+    assert proc.returncode == 2
+    assert "did you mean --note?" in proc.stderr
+    assert f"{flag.split('=')[0]} is not accepted as an abbreviation" in proc.stderr
+
+
+def test_an_unrelated_unknown_flag_gets_no_note_suggestion() -> None:
+    proc = _run_cli("answer", "r1", "ok", "--bogus")
+    assert proc.returncode == 2
+    assert "unrecognized arguments: --bogus" in proc.stderr
+    assert "--note" not in proc.stderr
