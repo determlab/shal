@@ -353,6 +353,11 @@ function latestReading(entries, address) {
 }
 
 
+// issue #407: who is playing. WATCH shows an agent's run; the Play page sets
+// this to a person playing with the reference drivers -- same components,
+// only the words for "who" change.
+let PLAYER = {who: "Agent", answer: "Agent's answer", drivers: "written"};
+
 const NUM_WORDS = ["no", "one", "two", "three", "four", "five", "six", "seven", "eight", "nine"];
 
 function plural(n, word) { return `${n} ${word}${n === 1 ? "" : "s"}`; }
@@ -489,8 +494,8 @@ function renderVerdict(payload) {
   bar.className = "verdict-bar" + (cls ? " " + cls : "");
   fill(bar, [big,
     el("span", `chip ${correct ? "ok" : "bad"}`,
-      `Agent's answer: ${answerLabel(rec.given)} · ${word}`),
-    el("span", "chip dim", (drivers ? plural(drivers, "driver") + " written · " : "")
+      `${PLAYER.answer}: ${answerLabel(rec.given)} · ${word}`),
+    el("span", "chip dim", (drivers ? `${plural(drivers, "driver")} ${PLAYER.drivers} · ` : "")
       + plural(gateStops(payload), "gate stop"))]);
 }
 
@@ -583,7 +588,7 @@ function renderHero(payload) {
       + "</text>";
   });
   svg += `<rect class="agent-box" x="8" y="${cy - 30}" width="92" height="60" rx="10"/>`
-    + `<text x="54" y="${cy + 7}" text-anchor="middle">Agent</text>`
+    + `<text x="54" y="${cy + 7}" text-anchor="middle">${escapeHtml(PLAYER.who)}</text>`
     + `<rect class="blk${payload.card.destroyed || failing.size ? " hot" : ""}" x="372" `
     + `y="${cy - 36}" width="100" height="72" rx="10"/>`
     + `<text x="422" y="${cy + 7}" text-anchor="middle">Card</text></svg>`;
@@ -979,28 +984,10 @@ function start(runId, initial) {
 """
 
 
-def _shell(run_id: str, *, banner: str = "") -> str:
-    """The static document both the live page and the export embed their
-    data into -- same markup, same ids, so `render` works unchanged in both.
-    `banner` is the export's own replay label, already HTML-escaped (the
-    live page builds its own in `renderFooter`)."""
-    fixed = ' data-fixed="1"' if banner else ""
-    return f"""<!doctype html>
-<html lang="en">
-<head>
-<meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
-<title>shal-arena &middot; Watch</title>
-<style>{_STYLE}</style>
-</head>
-<body>
-<div class="page">
-  <div class="labels" id="run-labels">Replay of a recorded run</div>
-  <header>
-    <h1 id="question"></h1>
-    <p class="lede" id="lede"></p>
-  </header>
-  <section class="hero" aria-label="What happened">
+#: The run view both pages share (issue #407: the Play page shows the same
+#: result card, visual, card diagram, instruments and log as WATCH -- one
+#: look, not a second one).
+_RUN_SECTIONS = """  <section class="hero" aria-label="What happened">
     <div class="verdict-bar" id="verdict-bar"></div>
     <div class="flow" id="flow"></div>
     <div class="box hero-visual">
@@ -1030,7 +1017,31 @@ def _shell(run_id: str, *, banner: str = "") -> str:
     <div id="timeline-list"></div>
   </section>
   <section class="box" id="cli-window" aria-label="The agent's shal-arena commands"></section>
-  <footer>{SAFETY_LINE} &middot; <span id="run-label"{fixed}>{banner}</span>
+"""
+
+
+def _shell(run_id: str, *, banner: str = "") -> str:
+    """The static document both the live page and the export embed their
+    data into -- same markup, same ids, so `render` works unchanged in both.
+    `banner` is the export's own replay label, already HTML-escaped (the
+    live page builds its own in `renderFooter`)."""
+    fixed = ' data-fixed="1"' if banner else ""
+    return f"""<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>shal-arena &middot; Watch</title>
+<style>{_STYLE}</style>
+</head>
+<body>
+<div class="page">
+  <div class="labels" id="run-labels">Replay of a recorded run</div>
+  <header>
+    <h1 id="question"></h1>
+    <p class="lede" id="lede"></p>
+  </header>
+{_RUN_SECTIONS}  <footer>{SAFETY_LINE} &middot; <span id="run-label"{fixed}>{banner}</span>
     &middot; <a href="{REPO_URL}">github.com/determlab/shal</a>
   </footer>
 </div>
@@ -1055,3 +1066,362 @@ def render_watch_page(run_id: str, payload: dict[str, Any]) -> str:
         f".textContent));</script>\n"
     )
     return shell.replace("</body>", script_tag + "</body>")
+
+
+#: issue #407: the Play page's own additions to `_STYLE` -- the task picker,
+#: one control row per instrument, the answer grid and the flash line. Same
+#: tokens, same boxes; nothing here is a second look.
+_PLAY_STYLE = """
+[hidden] { display: none !important; }
+.stack { display: grid; gap: 16px; }
+.hint { font-size: 13px; color: var(--dim); margin: 4px 0 0; }
+.task-list { display: grid; gap: 10px; grid-template-columns: 1fr; }
+@media (min-width: 560px) { .task-list { grid-template-columns: repeat(2, 1fr); } }
+@media (min-width: 860px) { .task-list { grid-template-columns: repeat(3, 1fr); } }
+button.task-btn, button.ctl-btn, button.choice, button.again {
+  min-height: 44px; background: var(--sunk); color: var(--text);
+  border: 1px solid var(--line); text-align: left; touch-action: manipulation; }
+button.task-btn { min-height: 64px; padding: 12px 14px; display: grid; gap: 2px; }
+button.task-btn .t { font-size: 16px; font-weight: 700; }
+button.task-btn .s { font: 13px var(--mono); color: var(--dim); font-weight: 400; }
+button.ctl-btn.gate { border-color: var(--gate); }
+button:disabled { opacity: .45; cursor: not-allowed; }
+.ctl-list { display: grid; gap: 10px; }
+.ctl { border: 1px solid var(--line); border-radius: 8px; padding: 10px 12px;
+  background: var(--sunk); display: grid; gap: 8px; }
+.ctl-row { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
+.ctl-row label { font-size: 14px; color: var(--dim); }
+.ctl input { font: 600 16px var(--mono); min-height: 44px; width: 7.5em; padding: 8px 10px;
+  border-radius: 8px; border: 1px solid var(--line); background: var(--bg);
+  color: var(--text); }
+.ctl input:focus-visible { outline: 2px solid var(--gate); outline-offset: 1px; }
+.choices { display: grid; gap: 8px; grid-template-columns: repeat(2, minmax(0, 1fr)); }
+@media (min-width: 560px) { .choices { grid-template-columns: repeat(3, minmax(0, 1fr)); } }
+button.choice { text-align: center; }
+.flash { border-radius: 8px; padding: 10px 12px; border: 1px solid var(--line);
+  border-left: 4px solid var(--line); background: var(--sunk); font-size: 14px; }
+.flash b { display: block; font-size: 15px; }
+.flash.ok { border-left-color: var(--ok); }
+.flash.err { border-left-color: var(--gate); }
+.flash.stop { border-color: var(--bad); border-left-color: var(--bad);
+  background: color-mix(in srgb, var(--bad) 12%, var(--panel)); }
+.flash.stop b { color: var(--bad); }
+"""
+
+#: Plain JS, same rules as `_SCRIPT`: no framework, no network beyond this
+#: origin's own Play routes and `/api/run/<id>`, and every value from a
+#: response reaches the page through `textContent` only.
+_PLAY_SCRIPT = r"""
+PLAYER = {who: "You", answer: "Your answer", drivers: "used (reference)"};
+const PLAY = {runId: null, values: [], payload: null, busy: false};
+
+function $(id) { return document.getElementById(id); }
+
+function post(path, body) {
+  return fetch(path, {method: "POST", headers: {"Content-Type": "application/json"},
+    body: JSON.stringify(body)})
+    .then(r => r.json().then(doc => ({status: r.status, doc})));
+}
+
+function getJson(path) {
+  return fetch(path).then(r => r.json().then(doc => ({status: r.status, doc})));
+}
+
+// one action at a time: a phone double-tap never sends twice.
+function setBusy(busy) {
+  PLAY.busy = busy;
+  document.querySelectorAll("button[data-play]").forEach(b => {
+    b.disabled = busy || b.getAttribute("data-off") === "1";
+  });
+}
+
+function flash(kind, title, text) {
+  const f = $("flash");
+  f.hidden = false;
+  f.className = "flash " + kind;
+  fill(f, [el("b", "", title), txt(text || "")]);
+}
+
+function flashError(doc) {
+  const e = (doc && doc.error) || {};
+  flash("err", "Not done", [e.message, e.fix ? `Fix: ${e.fix}` : ""].filter(Boolean).join(" "));
+}
+
+function showPicker() {
+  $("picker").hidden = false;
+  $("play").hidden = true;
+  $("run-view").hidden = true;
+  $("question").textContent = "Pick a task";
+  $("lede").textContent = "You get a card and the bench instruments for it. Power it, "
+    + "measure it, then name the fault. Simulated instruments only.";
+  fill($("run-labels"), [el("span", "", "Play"), txt(" · "),
+    el("span", "", "using the reference drivers")]);
+}
+
+function renderPicker(tasks) {
+  fill($("task-list"), tasks.map(t => {
+    const b = el("button", "task-btn");
+    b.type = "button";
+    b.setAttribute("data-play", "start");
+    b.appendChild(el("span", "t", t.name));
+    b.appendChild(el("span", "s", `${t.level} level · starts a new run (write)`));
+    b.onclick = () => startTask(t.name);
+    return b;
+  }));
+}
+
+function startTask(name) {
+  if (PLAY.busy) return;
+  setBusy(true);
+  post("/api/play/start", {task: name}).then(({status, doc}) => {
+    setBusy(false);
+    if (status !== 200) {
+      $("picker-flash").hidden = false;
+      flashInto("picker-flash", doc);
+      return;
+    }
+    PLAY.runId = doc.run_id;
+    PLAY.values = (doc.task && doc.task.answer && doc.task.answer.values) || [];
+    $("flash").hidden = true;
+    loadRun();
+  }).catch(() => setBusy(false));
+}
+
+function flashInto(id, doc) {
+  const e = (doc && doc.error) || {};
+  const f = $(id);
+  f.className = "flash err";
+  fill(f, [el("b", "", "Not started"), txt([e.message, e.fix ? `Fix: ${e.fix}` : ""]
+    .filter(Boolean).join(" "))]);
+}
+
+function loadRun() {
+  return getJson(`/api/run/${encodeURIComponent(PLAY.runId)}`).then(({status, doc}) => {
+    if (status !== 200) { flashError(doc); return; }
+    PLAY.payload = doc;
+    $("picker").hidden = true;
+    $("play").hidden = false;
+    $("run-view").hidden = false;
+    render(withMode(doc));
+    $("cli-window").hidden = true;   // a person playing runs no shal-arena commands
+    $("instruments").parentElement.querySelector("h2").textContent =
+      "Instruments and what you used";
+    $("lede").textContent = "You are playing this task with the reference drivers. "
+      + "Each button says what it changes. Answer once you have measured.";
+    fill($("run-labels"), [el("span", "", doc.closed ? "Play · finished" : "Play · live"),
+      txt(" · "), el("span", "", `${doc.level} level`), txt(" · "),
+      el("span", "", "using the reference drivers")]);
+    renderControls(doc);
+    renderAnswer(doc);
+  });
+}
+
+function ctlButton(text, cls, onclick) {
+  const b = el("button", "ctl-btn" + (cls ? " " + cls : ""), text);
+  b.type = "button";
+  b.setAttribute("data-play", "control");
+  b.onclick = onclick;
+  return b;
+}
+
+// one row per instrument, from the run's own `controls` (built server side
+// from its `instruments` list -- nothing here names psu0 or dmm0).
+function renderControls(payload) {
+  const closed = !!payload.closed;
+  fill($("controls"), (payload.controls || []).map(c => {
+    const inst = payload.instruments.find(i => String(i.address) === String(c.address)) || {};
+    const box = el("div", "ctl");
+    const head = el("div", "inst-head");
+    const role = instrumentRoleText(payload, inst);
+    head.appendChild(el("span", "inst-name", `${c.address} · ${role}`));
+    head.appendChild(el("span", "inst-proto", inst.protocol || ""));
+    box.appendChild(head);
+    const row = el("div", "ctl-row");
+    let hint = "";
+    if (c.kind === "drive") {
+      const input = el("input");
+      const id = `volts-${c.address}`;
+      input.id = id; input.type = "number"; input.inputMode = "decimal";
+      input.step = "0.1"; input.min = "0";
+      const name = String(inst.drives || "").split(".")[1];
+      const nominal = (payload.inputs || []).find(i => i.name === name);
+      input.value = nominal ? String(nominal.nominal_v) : "";
+      const lab = el("label", "", "Volts");
+      lab.htmlFor = id;
+      row.appendChild(lab);
+      row.appendChild(input);
+      row.appendChild(ctlButton(c.label, "gate", () => drive(c.address, input.value)));
+      hint = "write · sets the simulated supply, through the SHAL gate";
+    } else if (c.kind === "switch") {
+      row.appendChild(ctlButton(`${c.label} on`, "", () => doSwitch(c.address, true)));
+      row.appendChild(ctlButton(`${c.label} off`, "", () => doSwitch(c.address, false)));
+      hint = "write · switches the simulated relay (channel 0, the card's power)";
+    } else {
+      row.appendChild(ctlButton(c.label, "", () => measure(c.address)));
+      hint = "write · reads this instrument and records the reading in this run";
+    }
+    box.appendChild(row);
+    box.appendChild(el("p", "hint", hint));
+    return box;
+  }));
+  document.querySelectorAll("#controls button").forEach(b => {
+    b.setAttribute("data-off", closed ? "1" : "0");
+    b.disabled = closed;
+  });
+}
+
+function renderAnswer(payload) {
+  const closed = !!payload.closed;
+  const can = !closed && !!payload.has_measurement;
+  fill($("choices"), PLAY.values.map(v => {
+    const b = el("button", "choice", answerLabel(v));
+    b.type = "button";
+    b.setAttribute("data-play", "answer");
+    b.setAttribute("data-off", can ? "0" : "1");
+    b.disabled = !can;
+    b.onclick = () => answer(v);
+    return b;
+  }));
+  $("answer-hint").textContent = can ? "write · closes the run and scores it. You answer once."
+    : "Off until you measure: answering closes the run, and a run with no "
+      + "measurement is disqualified (the same rule as the CLI).";
+  // closed: the controls step aside, the result card comes right up
+  $("again-row").hidden = !closed;
+  $("ctl-box").hidden = closed;
+  $("answer-box").hidden = closed;
+}
+
+function act(path, body, onOk) {
+  if (PLAY.busy) return;
+  setBusy(true);
+  post(path, body).then(({status, doc}) => {
+    setBusy(false);
+    if (status !== 200) flashError(doc); else onOk(doc);
+    return loadRun();
+  }).catch(() => setBusy(false));
+}
+
+function drive(address, value) {
+  const volts = Number(value);
+  if (value === "" || !Number.isFinite(volts)) {
+    flash("err", "Not sent", "Type a voltage first, e.g. 5.0.");
+    return;
+  }
+  act("/api/play/drive", {address, volts}, doc => {
+    if (doc.sent) {
+      flash("ok", `${address} set to ${fmtNum(volts)}`, "Sent through the SHAL gate.");
+      return;
+    }
+    const v = (doc.violations || [])[0];
+    const limit = v && v.limit !== undefined ? ` The card's limit is ${fmtNum(v.limit)}.` : "";
+    flash("stop", "Nothing was sent",
+      `The SHAL gate refused ${fmtNum(volts)} on ${String(doc.input || address).toUpperCase()}: `
+      + `it would damage the card.${limit}`);
+  });
+}
+
+function measure(address) {
+  act("/api/play/measure", {address}, doc => {
+    const unit = doc.op === "read_celsius" ? "celsius" : "volt";
+    const at = doc.point ? ` at ${doc.point}` : "";
+    flash("ok", `${address} read ${fmtNum(doc.reading, unit)}${at}`, "Recorded in this run.");
+  });
+}
+
+function doSwitch(address, on) {
+  act("/api/play/switch", {address, on}, () => {
+    flash("ok", `${address} switched ${on ? "on" : "off"}`, "Recorded in this run.");
+  });
+}
+
+function answer(value) {
+  act("/api/play/answer", {value}, doc => {
+    flash(doc.correct ? "ok" : "err", `You answered ${answerLabel(value)}`,
+      "The run is closed and scored. The result is below.");
+    window.scrollTo({top: 0, behavior: "smooth"});
+  });
+}
+
+function playAgain() {
+  PLAY.runId = null; PLAY.payload = null; PLAY.values = [];
+  $("flash").hidden = true;
+  showPicker();
+}
+
+function startPlay(initial) {
+  $("again").onclick = playAgain;
+  renderPicker(initial.tasks);
+  if (!initial.run_id) { showPicker(); return; }
+  // a reload mid-run: the same run, its own answer choices, its own state.
+  PLAY.runId = initial.run_id;
+  getJson("/api/play/choices").then(({status, doc}) => {
+    PLAY.values = status === 200 ? doc.values : [];
+    loadRun();
+  });
+}
+"""
+
+
+def _play_shell() -> str:
+    return f"""<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>shal-arena &middot; Play</title>
+<style>{_STYLE}{_PLAY_STYLE}</style>
+</head>
+<body>
+<div class="page">
+  <div class="labels" id="run-labels">Play</div>
+  <header>
+    <h1 id="question">Pick a task</h1>
+    <p class="lede" id="lede"></p>
+  </header>
+  <section class="box" id="picker" aria-label="Pick a task">
+    <h2>Start a task</h2>
+    <div class="task-list" id="task-list"></div>
+    <p class="hint">Each task starts a new run with its own files. Using the reference drivers.</p>
+    <div class="flash" id="picker-flash" hidden></div>
+  </section>
+  <section class="stack" id="play" aria-label="Play" hidden>
+    <div class="flash" id="flash" role="status" hidden></div>
+    <div class="controls" id="again-row" hidden><button class="again" id="again"
+      type="button">Play another task</button></div>
+    <section class="box" id="ctl-box">
+      <h2>Instruments</h2>
+      <div class="ctl-list" id="controls"></div>
+    </section>
+    <section class="box" id="answer-box">
+      <h2>Your answer</h2>
+      <div class="choices" id="choices"></div>
+      <p class="hint" id="answer-hint"></p>
+    </section>
+  </section>
+  <div class="stack" id="run-view" hidden>
+{_RUN_SECTIONS}  </div>
+  <footer>{SAFETY_LINE} &middot; <span id="run-label">Play</span>
+    &middot; <a href="{REPO_URL}">github.com/determlab/shal</a>
+  </footer>
+</div>
+</body>
+</html>
+"""
+
+
+def render_play_page(tasks: list[dict[str, Any]], run_id: str | None) -> str:
+    """issue #407: the Play page `GET /` serves in PLAY mode -- the task
+    picker when no run is open, the controls, answer grid and the shared run
+    view once one is. It embeds only the packaged task names and levels and
+    the open run's id (never a payload, never the answer choices -- those
+    come from `/api/play/choices`), so the HTML itself can carry no fault."""
+    from .export import _EXPORT_SCRIPT  # export.py imports this module
+
+    initial = {"tasks": [{"name": t["name"], "level": t.get("level", "")} for t in tasks],
+               "run_id": run_id}
+    script_tag = (
+        f'<script id="play-data" type="application/json">{safe_json(initial)}</script>\n'
+        f"<script>{_SCRIPT}\n{_EXPORT_SCRIPT}\n{_PLAY_SCRIPT}\n"
+        f"startPlay(JSON.parse(document.getElementById('play-data').textContent));</script>\n"
+    )
+    return _play_shell().replace("</body>", script_tag + "</body>")

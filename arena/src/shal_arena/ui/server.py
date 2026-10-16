@@ -11,6 +11,11 @@ function the CLI calls (`ui.play`), never a second game logic. The page's
 own visuals (what GET `/` renders when no run is bound, and the Play
 controls' final look) follow #447 once its own mockup is approved; this
 round ships the write routes a page can call once that lands.
+
+issue #407 (page round, after #484 merged): in PLAY mode `GET /` is the Play
+page (`page.render_play_page`), never JSON. The task list it renders is also
+`GET /api/play/tasks`, and the open run's answer choices are
+`GET /api/play/choices` -- the JSON an agent reads instead of the page.
 """
 from __future__ import annotations
 
@@ -25,10 +30,11 @@ from typing import Any
 from .. import runner as _runner
 from ..errors import ArenaError
 from ..loader import load_task, once_per_path
+from ..runner import has_any_measurement
 from ..store import DEFAULT_STATE_DIR, RunStore
 from . import play
 from .data import run_payload
-from .page import render_watch_page
+from .page import render_play_page, render_watch_page
 
 HOST = "127.0.0.1"
 
@@ -82,7 +88,10 @@ def _make_handler(run_id: str | None, state_dir: str | Path,
     # `play_mode` is fixed at serve() time (CTO review on #407 round 2,
     # must-fix 6): WATCH mode's `current["run_id"]` is never None, so
     # `current["run_id"] is None` cannot tell the 2 modes apart on its own.
-    current = {"run_id": run_id}
+    # `last_run_id`: the run this PLAY server closed most recently -- the
+    # page reads its result card from `/api/run/<id>` after Answer unbinds
+    # it. Only ever a run THIS server started; never any other run.
+    current = {"run_id": run_id, "last_run_id": None}
     play_mode = run_id is None
     # CTO review on #407 round 3 nit: `current["run_id"]` was check-then-set
     # with no lock, on a `ThreadingHTTPServer` -- 2 concurrent
@@ -108,11 +117,14 @@ def _make_handler(run_id: str | None, state_dir: str | Path,
             self._send(status, json.dumps(doc).encode("utf-8"),
                       "application/json; charset=utf-8")
 
-        def _payload_or_error(self) -> dict[str, Any] | None:
+        def _payload_or_error(self, run_id: str) -> dict[str, Any] | None:
             try:
-                payload = run_payload(current["run_id"], state_dir=state_dir)
+                payload = run_payload(run_id, state_dir=state_dir)
                 payload["drivers"] = drivers or {}
                 payload["controls"] = play.instrument_controls(payload["instruments"])
+                # issue #407: the Answer grid's on/off state, from the one
+                # rule `runner.answer` itself applies -- never a second one.
+                payload["has_measurement"] = has_any_measurement(run_id, state_dir=state_dir)
                 return payload
             except ArenaError as e:
                 self._send(404, _error_body(e), "application/json; charset=utf-8")
@@ -172,21 +184,36 @@ def _make_handler(run_id: str | None, state_dir: str | Path,
                 self._send_json(403, {"ok": False, "error": e.to_dict()})
                 return
             if self.path == "/" or self.path == "":
-                if current["run_id"] is None:
-                    # issue #407: no run yet -- the task-picker's own data
-                    # (Frame 1 of the approved mock). The page that renders
-                    # this follows #447; this is the route it will call.
-                    tasks = [_strip_paths(t) for t in play.list_play_tasks()]
-                    self._send_json(200, {"ok": True, "tasks": tasks})
+                if play_mode:
+                    # issue #407: the Play page -- the task picker with no
+                    # run open, the controls once one is. Styled HTML, never
+                    # JSON; the same data is at /api/play/tasks.
+                    html = render_play_page(play.list_play_tasks(), current["run_id"])
+                    self._send(200, html.encode("utf-8"), "text/html; charset=utf-8")
                     return
-                payload = self._payload_or_error()
+                payload = self._payload_or_error(current["run_id"])
                 if payload is None:
                     return
                 html = render_watch_page(current["run_id"], payload)
                 self._send(200, html.encode("utf-8"), "text/html; charset=utf-8")
                 return
-            if current["run_id"] is not None and self.path == f"/api/run/{current['run_id']}":
-                payload = self._payload_or_error()
+            if play_mode and self.path == "/api/play/tasks":
+                tasks = [_strip_paths(t) for t in play.list_play_tasks()]
+                self._send_json(200, {"ok": True, "tasks": tasks})
+                return
+            if play_mode and self.path == "/api/play/choices":
+                if current["run_id"] is None:
+                    self._send_json(400, {"ok": False, "error": ArenaError(
+                        "play: no run is open yet",
+                        fix="POST /api/play/start first, with a task name").to_dict()})
+                    return
+                self._send_json(200, {"ok": True, "run_id": current["run_id"],
+                                      "values": _answer_values(current["run_id"], state_dir)})
+                return
+            served = {current["run_id"], current["last_run_id"]} - {None}
+            run_path = self.path.removeprefix("/api/run/")
+            if self.path.startswith("/api/run/") and run_path in served:
+                payload = self._payload_or_error(run_path)
                 if payload is None:
                     return
                 self._send(200, json.dumps(payload).encode("utf-8"),
@@ -275,6 +302,7 @@ def _make_handler(run_id: str | None, state_dir: str | Path,
                 # must-fix 7: unbind once the run closes, so the next
                 # POST /api/play/start is not stuck behind a finished run.
                 current["run_id"] = None
+                current["last_run_id"] = run_id
                 self._send_json(200, _strip_paths(result))
                 return
 
@@ -317,6 +345,14 @@ def _require_optional_int(body: dict[str, Any], key: str) -> int | None:
         raise ArenaError(f"play: {key!r} must be an integer, or omitted",
                          fix=f"send {key!r} as a JSON integer, or leave it out")
     return value
+
+
+def _answer_values(run_id: str, state_dir: str | Path) -> list[str]:
+    """The open run's answer choices -- the task yaml's own
+    `question.answer.values`, the same list `POST /api/play/start` already
+    returned (#461: the visible possible faults, never a fixed list)."""
+    state = RunStore(state_dir).load(run_id)
+    return list(load_task(state.task_path).task.question.answer.values)
 
 
 def _check_answer_value(run_id: str, value: str, state_dir: str | Path) -> None:

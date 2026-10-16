@@ -352,6 +352,16 @@ the server itself loses whatever Play run was still open; Play cannot resume
 a run across a restart, so finish (Answer) before stopping it. Mobile-first —
 a 360 px wide screen, tap targets at least 44 px, no drag.
 
+In PLAY mode `GET /` is the Play page: pick a task, then one control row per
+instrument in the run (Set voltage, Measure, Switch relay on/off, Read
+temperature — built from the run's own `instruments`, using the reference
+drivers), and an answer grid from the task's own choices. Answer stays off
+until you measure. A drive the SHAL gate refuses shows red, "Nothing was
+sent". Once you answer, the same result card as WATCH. An agent reads the
+same data as JSON: `GET /api/play/tasks` (the task list) and `GET
+/api/play/choices` (the open run's answer choices), next to the POST routes
+above and `/api/run/<id>`.
+
 ## Task and card format (v1)
 
 Ruled by the CTO on issue #310: two data-only YAML files, no expressions, no
