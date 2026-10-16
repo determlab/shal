@@ -213,17 +213,38 @@ def check_arena_bench_destroyed(doc: dict[str, Any], rerun: str) -> dict[str, An
         rerun)
 
 
-def check_arena_fault_determinism(doc: dict[str, Any], rerun: str) -> dict[str, Any]:
+def expected_realized_fault(card_faults: list[dict[str, Any]], seed: int) -> dict[str, Any]:
+    """The fault ``seed`` realizes from ``card_faults`` (a card's own
+    ``faults:`` list, as YAML gives it), worked out here with the standard
+    library alone -- the same draw ``shal_arena.fault.realized_fault`` makes
+    for a 0.4.2 run: one ``random.Random(seed).choice`` over the card's
+    faults in order, then the ``noise`` ripple rescale. Pure: no shal_arena
+    import, so ``tests/test_e2e_story.py`` can call it without the package."""
+    import random
+
+    rng = random.Random(seed)
+    fault = rng.choice(card_faults)
+    noise_scale = rng.uniform(0.7, 1.3)
+    extra = {k: v for k, v in fault.items() if k != "id"}
+    if fault["id"] == "noise" and "ripple_vpp" in extra:
+        extra["ripple_vpp"] = extra["ripple_vpp"] * noise_scale
+    return {"fault_id": fault["id"], "extra": extra}
+
+
+def check_arena_fault_determinism(doc: dict[str, Any], card_faults: list[dict[str, Any]],
+                                  seed: int, rerun: str) -> dict[str, Any]:
     """arena#390: ``shal-arena verify``'s replay trusts `fault.realized_fault`
     (a pure ``random.Random(seed)`` computation) to give the SAME fault on
     Windows, Linux and macOS for the SAME seed -- this is what "proves
     identical replay numbers for the same seed on the 3-OS CI matrix" means
     here (arena#390's own Done-when), reusing this already-3-OS harness
-    rather than a new workflow. Expected value independently confirmed by
-    hand once (same seed, same task, same card) when arena/challenges/
-    2026-41.yaml and arena/tests/fixtures/verify/ were built."""
-    ok = doc.get("fault_id") == "open" and doc.get("extra", {}).get("rail") == "3v3"
-    return _result("arena_fault_determinism", ok, json.dumps(doc), rerun)
+    rather than a new workflow. issue #499: the expected fault follows the
+    card's own ``faults:`` list (`expected_realized_fault`), never a
+    hard-coded id, so a card or challenge change cannot leave it stale."""
+    want = expected_realized_fault(card_faults, seed)
+    ok = doc.get("fault_id") == want["fault_id"] and doc.get("extra") == want["extra"]
+    return _result("arena_fault_determinism", ok,
+                   json.dumps({"got": doc, "want": want, "seed": seed}), rerun)
 
 
 def check_wheel_installed(package: str, version: str | None, ok: bool, output: str,
@@ -395,17 +416,28 @@ def run_arena_demo(venv_python: str) -> dict[str, Any]:
                             f"{venv_python} {_argv_str(demo_argv)}")
 
 
+def _current_challenge() -> tuple[Path, int, list[dict[str, Any]]]:
+    """The newest published ``arena/challenges/<week>.yaml``: its task's
+    path, its seed, and that task's card ``faults:`` list."""
+    path = sorted((REPO_ROOT / "arena" / "challenges").glob("*.yaml"))[-1]
+    challenge = yaml.safe_load(path.read_text("utf-8"))
+    task_path = ARENA_TASKS_DIR / f"{challenge['task_id']}.yaml"
+    task = yaml.safe_load(task_path.read_text("utf-8"))
+    card = yaml.safe_load((task_path.parent / task["card"]).read_text("utf-8"))
+    return task_path, int(challenge["seed"]), card["faults"]
+
+
 def run_arena_fault_determinism(venv_python: str) -> dict[str, Any]:
+    task_path, seed, card_faults = _current_challenge()
     code = (
         "import json, sys\n"
         "from shal_arena.loader import load_task\n"
         "from shal_arena.fault import realized_fault\n"
         "loaded = load_task(sys.argv[1])\n"
-        "rf = realized_fault(loaded.card, 20261006)\n"
+        "rf = realized_fault(loaded.card, int(sys.argv[2]))\n"
         "print(json.dumps({'fault_id': rf.fault_id, 'extra': rf.extra}))\n"
     )
-    task_path = ARENA_TASKS_DIR / "easy.yaml"
-    argv = [venv_python, "-c", code, str(task_path)]
+    argv = [venv_python, "-c", code, str(task_path), str(seed)]
     proc = subprocess.run(argv, capture_output=True, text=True, timeout=60)
     try:
         doc = json.loads(proc.stdout)
@@ -413,8 +445,8 @@ def run_arena_fault_determinism(venv_python: str) -> dict[str, Any]:
         doc = {"ok": False, "error": f"not JSON: stdout={proc.stdout!r} stderr={proc.stderr!r}"}
     rerun = (f"{venv_python} -c \"from shal_arena.loader import load_task; "
             f"from shal_arena.fault import realized_fault; "
-            f"print(realized_fault(load_task('{task_path}').card, 20261006))\"")
-    return check_arena_fault_determinism(doc, rerun)
+            f"print(realized_fault(load_task('{task_path}').card, {seed}))\"")
+    return check_arena_fault_determinism(doc, card_faults, seed, rerun)
 
 
 def run_bricks_wheel_check(venv_python: str) -> dict[str, Any]:

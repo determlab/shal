@@ -20,6 +20,7 @@ import shutil
 from pathlib import Path
 
 import pytest
+import yaml
 
 from shal_arena.verify import verify
 
@@ -309,3 +310,87 @@ def test_every_game_version_has_scoring_rules() -> None:
     from shal_arena.score import ERROR_CLASS_FAULTS_BY_VERSION, GAME_VERSION
 
     assert GAME_VERSION in ERROR_CLASS_FAULTS_BY_VERSION
+
+
+# issue #499: the published 2026-42 challenge and a REAL 0.4.2 run against it
+# (``shal-arena run easy --seed 20261013``, ``drive psu0 5.0``, ``measure dmm0``
+# -- ``open``, about 0 V -- then ``answer open``). Same one edit as the 2026-41
+# sample: ``task_path`` / ``card_path`` made repo-relative and
+# ``record_sha256`` recomputed. It sits under a ``2026-42/`` folder, a real
+# submission's own layout, so verify picks the week from the path.
+WEEK_42 = "2026-42"
+FIXTURES_42 = FIXTURES / WEEK_42
+
+
+def test_published_2026_42_challenge_verifies_a_0_4_2_run_without_week(monkeypatch) -> None:
+    import shal_arena.verify as verify_mod
+
+    repo_challenges = Path(__file__).resolve().parent.parent / "challenges"
+    monkeypatch.setattr(verify_mod, "challenges_dir", lambda: repo_challenges)
+    challenge = verify_mod._load_challenge(WEEK_42)
+    assert challenge is not None
+    assert challenge["game_versions"] == ["0.4.2"]
+    assert json.loads((FIXTURES_42 / "score.json").read_text())["game_version"] == "0.4.2"
+
+    result = verify(FIXTURES_42 / "score.json")  # no --week
+    assert result == {"ok": True, "result": "verified", "reason": "ok",
+                      "week": WEEK_42, "side_effect": "none"}
+
+
+def test_published_2026_42_challenge_refuses_a_0_4_1_run(monkeypatch) -> None:
+    import shal_arena.verify as verify_mod
+
+    repo_challenges = Path(__file__).resolve().parent.parent / "challenges"
+    monkeypatch.setattr(verify_mod, "challenges_dir", lambda: repo_challenges)
+    result = verify(FIXTURES / "score.json", week=WEEK_42)
+    assert result["result"] == "refused"
+    assert result["reason"].startswith("wrong_game_version")
+
+
+@pytest.mark.parametrize(("text", "field"), [
+    ("week: '2026-99'\ntask_id: easy\nseed: not-a-number\ngame_versions: ['0.4.2']\n",
+     "seed"),
+    ("week: '2026-99'\ntask_id: easy\nseed: 20261013\ngame_versions: '0.4.2'\n",
+     "game_versions"),
+    ("week: '2026-99'\nseed: 20261013\ngame_versions: ['0.4.2']\n", "task_id"),
+    ("week: '2026-98'\ntask_id: easy\nseed: 20261013\ngame_versions: ['0.4.2']\n",
+     "week"),
+])
+def test_a_malformed_challenge_file_is_refused_naming_the_field(
+        tmp_path: Path, monkeypatch, text: str, field: str) -> None:
+    import shal_arena.verify as verify_mod
+
+    _copy_fixtures(tmp_path)
+    challenges = tmp_path / "challenges"
+    challenges.mkdir()
+    (challenges / "2026-99.yaml").write_text(text, encoding="utf-8")
+    monkeypatch.setattr(verify_mod, "challenges_dir", lambda: challenges)
+
+    result = verify(tmp_path / "score.json", week="2026-99")
+    assert result["ok"] is False
+    assert result["result"] == "refused"
+    assert result["reason"].startswith("bad_challenge_file")
+    assert f"'{field}'" in result["reason"]
+    assert "arena/challenges/2026-99.yaml" in result["reason"]
+
+
+def test_a_challenge_file_that_is_not_yaml_is_refused(tmp_path: Path, monkeypatch) -> None:
+    import shal_arena.verify as verify_mod
+
+    _copy_fixtures(tmp_path)
+    challenges = tmp_path / "challenges"
+    challenges.mkdir()
+    (challenges / "2026-99.yaml").write_text("week: [unclosed\n", encoding="utf-8")
+    monkeypatch.setattr(verify_mod, "challenges_dir", lambda: challenges)
+
+    result = verify(tmp_path / "score.json", week="2026-99")
+    assert result["result"] == "refused"
+    assert result["reason"].startswith("bad_challenge_file")
+
+
+def test_every_published_challenge_file_has_the_weekly_seed_shape() -> None:
+    import shal_arena.verify as verify_mod
+
+    for path in sorted((Path(__file__).resolve().parent.parent / "challenges").glob("*.yaml")):
+        doc = yaml.safe_load(path.read_text(encoding="utf-8"))
+        verify_mod._check_challenge(doc, path.stem)

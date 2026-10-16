@@ -173,11 +173,49 @@ def _default_week(score_path: Path) -> str:
     return _current_week()
 
 
+class BadChallenge(ValueError):
+    """A published challenge file that does not have the weekly-seed shape
+    (issue #499): the message names the file and the bad field."""
+
+
+def _check_challenge(doc: Any, week: str) -> dict[str, Any]:
+    """``doc`` (a parsed ``arena/challenges/<week>.yaml``) if it has the
+    weekly-seed shape -- ``week`` (this file's own week), ``task_id`` (a
+    non-empty string), ``seed`` (an integer) and ``game_versions`` (a
+    non-empty list of strings) -- else `BadChallenge` naming the field."""
+    where = f"arena/challenges/{week}.yaml"
+    if not isinstance(doc, dict):
+        raise BadChallenge(f"{where} is not a mapping of week, task_id, seed and "
+                           "game_versions")
+    missing = [k for k in ("week", "task_id", "seed", "game_versions") if k not in doc]
+    if missing:
+        raise BadChallenge(f"{where} has no {missing[0]!r} field")
+    if doc["week"] != week:
+        raise BadChallenge(f"{where} field 'week' is {doc['week']!r}, not {week!r}")
+    if not isinstance(doc["task_id"], str) or not doc["task_id"]:
+        raise BadChallenge(f"{where} field 'task_id' must be a non-empty string, "
+                           f"got {doc['task_id']!r}")
+    if isinstance(doc["seed"], bool) or not isinstance(doc["seed"], int):
+        raise BadChallenge(f"{where} field 'seed' must be an integer, got {doc['seed']!r}")
+    versions = doc["game_versions"]
+    if (not isinstance(versions, list) or not versions
+            or not all(isinstance(v, str) for v in versions)):
+        raise BadChallenge(f"{where} field 'game_versions' must be a non-empty list of "
+                           f"version strings, got {versions!r}")
+    return doc
+
+
 def _load_challenge(week: str) -> dict[str, Any] | None:
+    """The week's published challenge, shape-checked (`_check_challenge`);
+    ``None`` when the file does not exist."""
     path = challenges_dir() / f"{week}.yaml"
     if not path.is_file():
         return None
-    return yaml.safe_load(path.read_text(encoding="utf-8"))
+    try:
+        doc = yaml.safe_load(path.read_text(encoding="utf-8"))
+    except (yaml.YAMLError, UnicodeDecodeError) as e:
+        raise BadChallenge(f"arena/challenges/{week}.yaml is not valid YAML: {e}") from e
+    return _check_challenge(doc, week)
 
 
 def _resolve_task(task_id: str) -> LoadedTask | None:
@@ -226,13 +264,17 @@ def verify(score_path: str | Path, *, week: str | None = None) -> dict[str, Any]
             f"this verify knows only {known} -- re-run the challenge with a listed "
             "shal-arena version", week).as_dict()
 
-    challenge = _load_challenge(week)
+    try:
+        challenge = _load_challenge(week)
+    except BadChallenge as e:
+        return _refused(f"bad_challenge_file: {e} -- this repo publishes the file; "
+                        "report it, the submission is not at fault", week).as_dict()
     if challenge is None:
         return _refused(
             f"no challenge file for week {week!r}: {challenges_dir() / f'{week}.yaml'} "
             "does not exist", week).as_dict()
 
-    allowed = challenge.get("game_versions") or []
+    allowed = challenge["game_versions"]
     if game_version not in allowed:
         return _refused(
             f"wrong_game_version: game {game_version!r} is not on week {week}'s list "
