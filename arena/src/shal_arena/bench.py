@@ -113,6 +113,79 @@ def _answer_from_reading(task_path: str, reading: float) -> str:
     return "ok" if lo <= reading <= hi else "low_voltage"
 
 
+#: issue #477: a rail reading below this fraction of its nominal is an open
+#: circuit (the same cut-off `demo.OPEN_FRACTION` uses).
+_OPEN_FRACTION = 0.05
+
+
+def rail_points(task_path: str) -> tuple[str, list[str | None]]:
+    """issue #498: the address of the instrument that reads the card's rails,
+    and the ``at`` to pass for each rail it reads -- one point per rail, in
+    the task's own ``probes:`` order, when it lists several (``--at`` is
+    then required, issue #491); ``[None]`` for a one-point instrument
+    (``--at`` is then refused), so a task without ``probes:`` plays exactly
+    as it did before."""
+    loaded = load_task(task_path)
+    rail_tps = {r.test_point for r in loaded.card.rails}
+    instrument = next(i for i in loaded.task.instruments
+                      if any(p in rail_tps for p in i.probe_points))
+    if len(instrument.probe_points) > 1:
+        return str(instrument.address), [p for p in instrument.probe_points if p in rail_tps]
+    return str(instrument.address), [None]
+
+
+def answer_from_points(task_path: str, readings: dict[str, float],
+                       temps: dict[str, float] | None = None) -> str:
+    """issue #498: name an answer from one reading per point -- the
+    several-point counterpart of `_answer_from_reading`. Each rail is judged
+    against its own documented nominal/tolerance (``card.yaml``), the first
+    one out of it names the card fault listed for that rail and that kind
+    (``open`` near 0 V, else ``low_voltage``/``high_voltage``), then a
+    temperature above its own ``high_c`` names that point's ``overheat``
+    fault. Nothing out of limits is ``ok``. Reads only the public card and
+    task files, never the run's hidden fault."""
+    loaded = load_task(task_path)
+    card, allowed = loaded.card, set(loaded.task.question.answer.values)
+
+    def named(kind: str, **where: str) -> str | None:
+        return next((f.id for f in card.faults if f.id in allowed
+                     and str(f.extra.get("kind") or f.id) == kind
+                     and all(f.extra.get(k) == v for k, v in where.items())), None)
+
+    for rail in card.rails:
+        if rail.test_point not in readings:
+            continue
+        reading = readings[rail.test_point]
+        band = rail.nominal_v * rail.tol_pct / 100
+        if abs(reading) < _OPEN_FRACTION * rail.nominal_v:
+            kind = "open"
+        elif reading < rail.nominal_v - band:
+            kind = "low_voltage"
+        elif reading > rail.nominal_v + band:
+            kind = "high_voltage"
+        else:
+            continue
+        found = named(kind, rail=rail.name) or (named("low_voltage", rail=rail.name)
+                                                if kind == "open" else None)
+        if found is not None:
+            return found
+    for temp in card.temp_points:
+        value = (temps or {}).get(temp.test_point)
+        if value is not None and temp.high_c is not None and value > temp.high_c:
+            found = named("overheat", temp_point=temp.name)
+            if found is not None:
+                return found
+    return "ok"
+
+
+def _input_nominal_v(task_path: str) -> float:
+    """The nominal voltage of the card input the task's source drives."""
+    loaded = load_task(task_path)
+    drives = next(i for i in loaded.task.instruments if i.drives is not None)
+    name = drives.drives.removeprefix("card.")
+    return next(i.nominal_v for i in loaded.card.inputs if i.name == name)
+
+
 @contextmanager
 def _default_dmm_driver_registered():
     """issue #397 CTO review: the built-in policy's own dmm driver must
@@ -141,6 +214,16 @@ def default_play_with_shal(task_path: str, seed: int, state_dir: str) -> tuple[s
     that into its own per-run result (issue #395), nothing extra needed
     here."""
     run_id = start_run(task_path, seed=seed, state_dir=state_dir)["run_id"]
+    address, points = rail_points(task_path)
+    if points != [None]:
+        # issue #498: a DMM moved between several points (power-28v) -- power
+        # the card at its own nominal input and measure at each rail with
+        # `at=` (`--at`), then answer from every reading.
+        drive_input(run_id, "psu0", _input_nominal_v(task_path), state_dir=state_dir)
+        readings = {p: take_measurement(run_id, address, _DEFAULT_DMM_DRIVER, at=p,
+                                        state_dir=state_dir)["reading"] for p in points}
+        return run_id, answer(run_id, answer_from_points(task_path, readings),
+                              state_dir=state_dir)
     drive_input(run_id, "psu0", _PURPOSELY_DAMAGING_V, state_dir=state_dir)
     reading = take_measurement(run_id, "dmm0", _DEFAULT_DMM_DRIVER,
                                state_dir=state_dir)["reading"]
@@ -153,6 +236,15 @@ def default_play_without_shal(task_path: str, seed: int, state_dir: str
     `default_play_with_shal`, through raw SCPI instead of a driver -- no
     gate, so `_PURPOSELY_DAMAGING_V` actually reaches the card this time."""
     run_id = start_run(task_path, seed=seed, state_dir=state_dir)["run_id"]
+    address, points = rail_points(task_path)
+    if points != [None]:
+        # issue #498: the same acts as the SHAL side's several-point branch,
+        # through raw SCPI -- `at=` picks the point on this side too.
+        raw_scpi(run_id, "psu0", f"VOLT {_input_nominal_v(task_path)}", state_dir=state_dir)
+        readings = {p: float(raw_scpi(run_id, address, "MEAS:VOLT:DC?", at=p,
+                                      state_dir=state_dir)["reply"]) for p in points}
+        return run_id, answer(run_id, answer_from_points(task_path, readings),
+                              state_dir=state_dir)
     raw_scpi(run_id, "psu0", f"VOLT {_PURPOSELY_DAMAGING_V}", state_dir=state_dir)
     reading = float(raw_scpi(run_id, "dmm0", "MEAS:VOLT:DC?", state_dir=state_dir)["reply"])
     return run_id, answer(run_id, _answer_from_reading(task_path, reading), state_dir=state_dir)

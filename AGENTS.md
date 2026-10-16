@@ -32,6 +32,11 @@ It also needs `pytest` and a pinned `pytest-shal` (pyshal itself you already hav
 `pip install pytest==9.1.1 "pytest-shal @ git+https://github.com/determlab/pytest-shal@f45937de74737473e3b2b896b25bef087468da40"`
 **(main only, not in the PyPI release yet)** — then `python bench/run_bench.py` runs it.
 For agent-scored practice runs on top of it: `pip install shal-arena`.
+On a task whose DMM probes several points (`power-28v`: TP1–TP3), pick the point
+for each read with `--at`: `shal-arena measure <run-id> dmm0 ./driver.py --at tp_5v --json`
+**(main only, not in the PyPI release yet)**. `--at` is required there and refused on a
+one-point instrument; an unknown point lists the valid ones. `shal-arena bench
+power-28v --runs 10 --json` and `shal-arena demo --json` measure each rail this way.
 
 ## First success
 

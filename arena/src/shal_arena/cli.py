@@ -461,8 +461,9 @@ def _build_parser() -> argparse.ArgumentParser:
                               "state_dir) and play_without_shal(...), each returning "
                               "(run_id, the dict `answer` returned) — your own agent or a "
                               "scripted one; shal-arena plays no model of its own. Without "
-                              "this, bench plays its own built-in default policy, which only "
-                              "knows the built-in sample task above")
+                              "this, bench plays its own built-in default policy, which knows "
+                              "the built-in sample task above and power-28v (it measures "
+                              "each rail with --at)")
     add_common(p_bench)
     p_bench.set_defaults(func=_cmd_bench)
 

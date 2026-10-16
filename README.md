@@ -319,6 +319,14 @@ pass, a blocked 30 V request, three scored arena tasks, a result card, and
 the SHAL gate compared on and off — with no clone and no task of your own;
 `--json` prints `record_path`/`card_path`, absolute paths to the files it
 just wrote, ready to open.
+On the `power-28v` task one DMM probes three rails (TP1–TP3), so each read
+names its point with `--at`:
+`shal-arena measure <run-id> dmm0 ./driver.py --at tp_5v --json`
+**(main only, not in the PyPI release yet)**. `--at` is required on an
+instrument with several points and refused on one with a single point; an
+unknown point is an error that lists the valid ones. `shal-arena bench
+power-28v --runs 10 --json` and `shal-arena demo --json` measure each rail
+this way.
 
 `shal docs` prints the authoring guide that ships inside the package — how to
 add your own device, with no network and nothing to clone.
