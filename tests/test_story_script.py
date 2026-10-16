@@ -35,6 +35,7 @@ EXPECTED_STEPS = [
     "arena_easy",
     "arena_medium",
     "arena_hard",
+    "arena_power_28v",
     "arena_result_card",
     "bench_10_runs",
 ]
@@ -91,7 +92,7 @@ def test_the_scripted_steps_say_they_are_not_an_ai_agent():
     # CTO review on #383 (the CMO's addition): a viewer must not mistake a
     # scripted number for an agent's.
     doc, _ec = _run_story()
-    scripted = {"arena_easy", "arena_medium", "arena_hard", "bench_10_runs"}
+    scripted = {"arena_easy", "arena_medium", "arena_hard", "arena_power_28v", "bench_10_runs"}
     for step in doc["steps"]:
         line = step["line"]
         if step["step"] in scripted:

@@ -3,7 +3,8 @@ itself (issue #410) so ``shal-arena demo`` runs it with no clone, no
 config: a virtual bench pass, an unplugged DMM giving an error, a 30 V
 request blocked by the PSU's own declared limit, the three SHAL Arena tasks
 (easy, medium, hard, each measured for real and answered from that
-reading), a result card for the last one, then the rail benchmark run ten
+reading), the power-28v task (one DMM measured at each rail with ``--at``,
+issue #498), a result card for the last one, then the rail benchmark run ten
 times with the gate on and with the gate off.
 
 Everything this reads at run time comes from the installed ``shal_arena``
@@ -90,6 +91,53 @@ class BenchDmm1(Driver):
 
 
 registry.register(BenchDmm1, override=True)
+'''
+
+# issue #498: the relay and temperature drivers the power-28v step uses --
+# the same shape as `shal_arena/reference_drivers/` (what Play uses), with
+# `override=True` like `_DMM_DRIVER_SOURCE` above, since this file is
+# re-imported on every call. `_registry_slots_restored` keeps them out of
+# anything else sharing this process.
+_RELAY_DRIVER_SOURCE = '''\
+from shal import registry
+from shal.driver import Driver, idempotent, op
+from shal.transport import MessageTransport
+
+
+class BenchRelay1(Driver):
+    compatible = "arena,bench-relay1"
+    kind = MessageTransport
+    llm_ready = True
+
+    @idempotent
+    @op("Switch one relay channel on (closed) or off (open).",
+        side_effect="write", params={"channel": {"minimum": 0, "maximum": 7}})
+    def set_relay(self, channel: int, on: bool) -> None:
+        self.bus.exchange(self.addr, {"fc": 5, "address": channel, "value": bool(on)})
+
+
+registry.register(BenchRelay1, override=True)
+'''
+
+_TEMP_DRIVER_SOURCE = '''\
+from shal import registry
+from shal.driver import Driver, idempotent, op
+from shal.transport import ByteTransport, Read, Write
+
+
+class BenchTemp1(Driver):
+    compatible = "arena,bench-temp1"
+    kind = ByteTransport
+    llm_ready = True
+
+    @idempotent
+    @op("Read the measured temperature now.", unit="celsius", side_effect="none")
+    def read_celsius(self) -> float:
+        raw = self.bus.txn(self.addr, [Write(bytes([0x2C, 0x06])), Read(6)])
+        return -45.0 + 175.0 * int.from_bytes(raw[0:2], "big") / 65535.0
+
+
+registry.register(BenchTemp1, override=True)
 '''
 
 #: issue #477: a rail reading below this fraction of its nominal is an open
@@ -305,6 +353,62 @@ def _run_arena_task(ctx: dict[str, Any], level: str, *,
                "correct": answer_doc["correct"], "disqualified": answer_doc["disqualified"]}
 
 
+@contextlib.contextmanager
+def _registry_slots_restored(*compatibles: str):
+    """Save and restore these registry slots around a block -- the same
+    discipline as `bench._default_dmm_driver_registered`, so the demo's own
+    `override=True` drivers never shadow anyone else's after it."""
+    from shal import registry
+
+    saved = {c: list(registry._entries.get(c, [])) for c in compatibles}
+    try:
+        yield
+    finally:
+        for c, entries in saved.items():
+            registry._entries[c] = entries
+
+
+def _run_power_28v(ctx: dict[str, Any]) -> dict[str, Any]:
+    """issue #498: the power-28v task -- close relay0, power the card at its
+    nominal 28.0 V, measure dmm0 at each rail with ``at=`` (the CLI's
+    ``--at``), read U2's temperature, and answer from every reading
+    (`bench.answer_from_points`, the same rule `bench` uses)."""
+    from .bench import answer_from_points, rail_points
+    from .loader import load_task
+    from .runner import answer, call_op, drive_input, start_run, take_measurement
+
+    ref = importlib_resources.files("shal_arena") / "tasks" / "power-28v.yaml"
+    with importlib_resources.as_file(ref) as task_path, \
+            _registry_slots_restored("arena,bench-dmm1", "arena,bench-relay1",
+                                     "arena,bench-temp1"):
+        loaded = load_task(str(task_path))
+        relay_driver = ctx["state_dir"] / "relay_driver.py"
+        relay_driver.write_text(_RELAY_DRIVER_SOURCE, encoding="utf-8")
+        temp_driver = ctx["state_dir"] / "temp_driver.py"
+        temp_driver.write_text(_TEMP_DRIVER_SOURCE, encoding="utf-8")
+        state_dir = ctx["state_dir"] / "power-28v"
+        run_id = start_run(str(task_path), state_dir=state_dir)["run_id"]
+        relay = next(i for i in loaded.task.instruments if i.switches is not None)
+        psu = next(i for i in loaded.task.instruments if i.drives is not None)
+        call_op(run_id, str(relay.address), str(relay_driver), "set_relay", ["0", "true"],
+                state_dir=state_dir)
+        vin = next(i for i in loaded.card.inputs if i.name == psu.drives.removeprefix("card."))
+        drive_input(run_id, str(psu.address), vin.nominal_v, state_dir=state_dir)
+        address, points = rail_points(str(task_path))
+        readings = {p: take_measurement(run_id, address, str(ctx["dmm_driver"]), at=p,
+                                        state_dir=state_dir)["reading"] for p in points}
+        temp_tps = {t.test_point for t in loaded.card.temp_points}
+        temps = {i.probe.removeprefix("card."): take_measurement(
+                     run_id, str(i.address), str(temp_driver), state_dir=state_dir)["reading"]
+                 for i in loaded.task.instruments
+                 if i.probe is not None and i.probe.removeprefix("card.") in temp_tps}
+        given = answer_from_points(str(task_path), readings, temps)
+        answer_doc = answer(run_id, given, state_dir=state_dir)
+    return {"run_id": run_id, "at": points, "readings": readings, "temps": temps,
+            "given": given, "correct": answer_doc["correct"],
+            "disqualified": answer_doc["disqualified"]}
+
+
 def _run_arena_result_card(ctx: dict[str, Any]) -> dict[str, Any]:
     from .replay.card import build_result_card
 
@@ -365,6 +469,10 @@ _STEPS: list[tuple[str, str, Any, Any]] = [
      f"{_SCRIPTED_PLAYER_NOTE} Running the hard arena task: measuring the rail "
      "and answering from it.",
      lambda ctx: _run_arena_task(ctx, "hard"), check_arena_task),
+    ("arena_power_28v",
+     f"{_SCRIPTED_PLAYER_NOTE} Running the 28 V power module task: closing the relay, "
+     "measuring each rail with --at, reading U2's temperature and answering from them.",
+     _run_power_28v, check_arena_task),
     ("arena_result_card", "Writing the result card for the hard run.",
      _run_arena_result_card, check_arena_result_card),
     ("bench_10_runs",
