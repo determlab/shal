@@ -1,0 +1,9 @@
+# The current week's leaderboard challenge (arena#390, issue #499). Published
+# on challenge day -- a player's seed only counts against the week it was run
+# for, not an arbitrary one they picked themselves.
+week: "2026-42"
+task_id: easy
+seed: 20261013
+# Game versions a score may be made under this week (CTO review on #393):
+# from week 42 only the current game counts.
+game_versions: ["0.4.2"]

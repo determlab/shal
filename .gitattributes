@@ -7,3 +7,6 @@ examples/driver-creator/**/metadata.yaml text eol=lf
 # Recorded run fixtures are hashed byte-for-byte (record_sha256): never
 # convert their line endings on checkout.
 arena/tests/fixtures/runs/** -text
+
+# issue #499: the verify samples are hashed the same way (record_sha256).
+arena/tests/fixtures/verify/** -text
