@@ -312,12 +312,13 @@ def test_every_game_version_has_scoring_rules() -> None:
     assert GAME_VERSION in ERROR_CLASS_FAULTS_BY_VERSION
 
 
-# issue #499: the published 2026-42 challenge and a REAL 0.4.2 run against it
-# (``shal-arena run easy --seed 20261013``, ``drive psu0 5.0``, ``measure dmm0``
-# -- ``open``, about 0 V -- then ``answer open``). Same one edit as the 2026-41
-# sample: ``task_path`` / ``card_path`` made repo-relative and
-# ``record_sha256`` recomputed. It sits under a ``2026-42/`` folder, a real
-# submission's own layout, so verify picks the week from the path.
+# issue #499: a real 0.4.2 run of the published 2026-42 challenge. The run was
+# ``shal-arena run easy --seed 20261013``, then ``drive psu0 5.0``, then
+# ``measure dmm0`` (the fault was ``open``, so it read about 0 V), then
+# ``answer open``. The fixture has the same one edit as the 2026-41 sample:
+# ``task_path`` and ``card_path`` are repo-relative and ``record_sha256`` is
+# recomputed. The files sit in a ``2026-42/`` folder, the layout a real
+# submission uses, so verify can find the week without ``--week``.
 WEEK_42 = "2026-42"
 FIXTURES_42 = FIXTURES / WEEK_42
 

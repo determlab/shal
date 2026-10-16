@@ -1094,7 +1094,11 @@ button:disabled { opacity: .45; cursor: not-allowed; }
 .ctl input { font: 600 16px var(--mono); min-height: 44px; width: 7.5em; padding: 8px 10px;
   border-radius: 8px; border: 1px solid var(--line); background: var(--bg);
   color: var(--text); }
-.ctl input:focus-visible { outline: 2px solid var(--gate); outline-offset: 1px; }
+.ctl select { font: 600 16px var(--mono); min-height: 44px; padding: 8px 10px;
+  border-radius: 8px; border: 1px solid var(--line); background: var(--bg);
+  color: var(--text); max-width: 100%; }
+.ctl input:focus-visible, .ctl select:focus-visible { outline: 2px solid var(--gate);
+  outline-offset: 1px; }
 .choices { display: grid; gap: 8px; grid-template-columns: repeat(2, minmax(0, 1fr)); }
 @media (min-width: 560px) { .choices { grid-template-columns: repeat(3, minmax(0, 1fr)); } }
 button.choice { text-align: center; }
@@ -1180,6 +1184,10 @@ function startTask(name) {
       flashInto("picker-flash", doc);
       return;
     }
+    // issue #498 (6): a refusal from an earlier start must not stay up
+    // over the run this start just opened.
+    $("picker-flash").hidden = true;
+    fill($("picker-flash"), []);
     PLAY.runId = doc.run_id;
     PLAY.values = (doc.task && doc.task.answer && doc.task.answer.values) || [];
     $("flash").hidden = true;
@@ -1256,6 +1264,26 @@ function renderControls(payload) {
       row.appendChild(ctlButton(`${c.label} on`, "", () => doSwitch(c.address, true)));
       row.appendChild(ctlButton(`${c.label} off`, "", () => doSwitch(c.address, false)));
       hint = "write · switches the simulated relay (channel 0, the card's power)";
+    } else if (c.points && c.points.length > 1) {
+      // issue #498: one DMM, several points -- pick one; the measure call
+      // sends it as `at` (the CLI's own --at). An unknown point comes back
+      // as the runner's own error, which lists the valid ones.
+      const pick = el("select");
+      const id = `at-${c.address}`;
+      pick.id = id;
+      pick.setAttribute("data-play", "at");
+      c.points.forEach(p => {
+        const rail = (payload.rails || []).find(r => r.test_point === p);
+        const opt = el("option", "", rail ? `${rail.label} · ${rail.name}` : p);
+        opt.value = p;
+        pick.appendChild(opt);
+      });
+      const lab = el("label", "", "At");
+      lab.htmlFor = id;
+      row.appendChild(lab);
+      row.appendChild(pick);
+      row.appendChild(ctlButton(c.label, "", () => measure(c.address, pick.value)));
+      hint = "write · reads this instrument at the chosen point and records it in this run";
     } else {
       row.appendChild(ctlButton(c.label, "", () => measure(c.address)));
       hint = "write · reads this instrument and records the reading in this run";
@@ -1320,8 +1348,8 @@ function drive(address, value) {
   });
 }
 
-function measure(address) {
-  act("/api/play/measure", {address}, doc => {
+function measure(address, at) {
+  act("/api/play/measure", at ? {address, at} : {address}, doc => {
     const unit = doc.op === "read_celsius" ? "celsius" : "volt";
     const at = doc.point ? ` at ${doc.point}` : "";
     flash("ok", `${address} read ${fmtNum(doc.reading, unit)}${at}`, "Recorded in this run.");

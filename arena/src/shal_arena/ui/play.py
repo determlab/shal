@@ -70,7 +70,9 @@ def reference_driver_for(case_name: str) -> Path:
 def instrument_controls(instruments: list[dict[str, Any]]) -> list[dict[str, Any]]:
     """One control descriptor per instrument, built from the run's own
     `instruments` list (condition 1) -- never a fixed psu0/dmm0 pair. Each
-    entry: `address`, `case`, `kind` (`drive`|`measure`|`switch`), `label`."""
+    entry: `address`, `case`, `kind` (`drive`|`measure`|`switch`), `label`,
+    and -- only on a measure control whose instrument probes several points
+    (issue #498) -- `points`, the test point names `at` accepts."""
     controls = []
     for inst in instruments:
         case_name = inst["case"]
@@ -81,8 +83,15 @@ def instrument_controls(instruments: list[dict[str, Any]]) -> list[dict[str, Any
             kind = "drive"
         else:
             kind = "measure"
-        controls.append({"address": inst["address"], "case": case_name, "kind": kind,
-                         "label": _LABELS.get(case_name, case_name)})
+        control = {"address": inst["address"], "case": case_name, "kind": kind,
+                   "label": _LABELS.get(case_name, case_name)}
+        probes = inst.get("probes") or []
+        if kind == "measure" and len(probes) > 1:
+            # issue #498: one DMM, several points -- the page offers these,
+            # and the measure call sends the chosen one as `at` (#491's rule:
+            # required here, refused on a one-point instrument).
+            control["points"] = [str(p).removeprefix("card.") for p in probes]
+        controls.append(control)
     return controls
 
 
@@ -109,12 +118,15 @@ def start(task: str, *, state_dir: str | Path = DEFAULT_STATE_DIR,
     return start_run(str(resolve_task(task)), seed=seed, state_dir=state_dir)
 
 
-def measure(run_id: str, address: str, case_name: str, *,
+def measure(run_id: str, address: str, case_name: str, *, at: str | None = None,
            state_dir: str | Path = DEFAULT_STATE_DIR) -> dict[str, Any]:
     """"Measure" / "Read temperature": the CLI's own `take_measurement`,
-    with the reference driver resolved from the instrument's case."""
+    with the reference driver resolved from the instrument's case. `at` is
+    the CLI's own `--at` (issue #498), passed through unchanged, so the
+    runner's one rule decides: required on a several-point instrument,
+    refused on a one-point one, and an unknown point lists the valid ones."""
     driver = reference_driver_for(case_name)
-    return take_measurement(run_id, address, driver, state_dir=state_dir)
+    return take_measurement(run_id, address, driver, at=at, state_dir=state_dir)
 
 
 def drive(run_id: str, address: str, volts: float, *,

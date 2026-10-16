@@ -314,8 +314,35 @@ def _cmd_setup_yaml(args: argparse.Namespace) -> int:
     return 0
 
 
+def _note_prefixes(message: str) -> list[str]:
+    """issue #498 (5): the flags in an "unrecognized arguments" message that
+    are a prefix of ``--note`` (``--no``, ``--not``, ``--no=x``) -- the
+    abbreviations `allow_abbrev=False` refuses (#500)."""
+    if not message.startswith("unrecognized arguments:"):
+        return []
+    found = []
+    for token in message.removeprefix("unrecognized arguments:").split():
+        flag = token.split("=", 1)[0]
+        if len(flag) > 2 and flag != "--note" and "--note".startswith(flag):
+            found.append(flag)
+    return found
+
+
+class _ArenaParser(argparse.ArgumentParser):
+    """`argparse.ArgumentParser` whose "unrecognized arguments" error names
+    ``--note`` when the unknown flag is a prefix of it (issue #498 (5)).
+    Subparsers are built with the same class (argparse's own default)."""
+
+    def error(self, message: str) -> Any:
+        prefixes = _note_prefixes(message)
+        if prefixes:
+            message += f" (did you mean --note? {prefixes[0]} is not accepted as an " \
+                       "abbreviation; spell the flag out)"
+        super().error(message)
+
+
 def _build_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(prog="shal-arena", allow_abbrev=False,
+    parser = _ArenaParser(prog="shal-arena", allow_abbrev=False,
                                      description="SHAL Arena: run a task, check a driver, "
                                                   "answer the question.")
     sub = parser.add_subparsers(dest="command", required=True)
