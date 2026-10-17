@@ -31,7 +31,7 @@ The fuller bench — a simulated PSU and DMM scored by
 It also needs `pytest` and a pinned `pytest-shal` (pyshal itself you already have) —
 `pip install pytest==9.1.1 "pytest-shal @ git+https://github.com/determlab/pytest-shal@f45937de74737473e3b2b896b25bef087468da40"`
 **(main only, not in the PyPI release yet)** — then `python bench/run_bench.py` runs it.
-For agent-scored practice runs on top of it: `pip install shal-arena`.
+For agent-scored practice runs on top of it: `pip install shal-arena` **(main only, not in the PyPI release yet)** — until it is published, install both from main in one command (shal-arena needs pyshal 0.4.0 or later, which PyPI does not have yet): `pip install git+https://github.com/determlab/shal "git+https://github.com/determlab/shal#subdirectory=arena"`.
 On a task whose DMM probes several points (`power-28v`: TP1–TP3), pick the point
 for each read with `--at`: `shal-arena measure <run-id> dmm0 ./driver.py --at tp_5v --json`
 **(main only, not in the PyPI release yet)**. `--at` is required there and refused on a
