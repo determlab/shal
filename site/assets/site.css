@@ -1,0 +1,8 @@
+body { font-family: system-ui, sans-serif; max-width: 42rem; margin: 3rem auto; padding: 0 1rem; line-height: 1.5; }
+pre { background: #f2f2f2; padding: 0.75rem 1rem; overflow-x: auto; }
+a { color: #0b57d0; }
+@media (prefers-color-scheme: dark) {
+  body { background: #111; color: #eee; }
+  pre { background: #222; }
+  a { color: #8ab4f8; }
+}
