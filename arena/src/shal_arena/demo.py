@@ -410,10 +410,12 @@ def _run_power_28v(ctx: dict[str, Any]) -> dict[str, Any]:
 
 
 def _run_arena_result_card(ctx: dict[str, Any]) -> dict[str, Any]:
-    from .replay.card import build_result_card
+    from .replay.card import build_result_card, load_card_data, share_url
 
     run_id, state_dir = ctx["arena_runs"]["hard"]
     html = build_result_card(run_id, state_dir=state_dir)
+    # issue #413: the card's own Share link, for an agent to read or hand on
+    ctx["share_url"] = share_url(load_card_data(run_id, state_dir=state_dir).score)
     out_dir = ctx["state_dir"] / "cards"
     out_dir.mkdir(parents=True, exist_ok=True)
     out_path = out_dir / f"{run_id}.card.html"
@@ -659,6 +661,7 @@ def run_story(*, pause: float, json_mode: bool, port: int | None = None) -> int:
         print(json.dumps({"ok": overall_ok, "note": FIRST_LINE, "ui_hint": ui_hint,
                          "ui_hint_fix": ui_hint_fix, "state_dir": str(state_dir),
                          "record_path": record_path, "card_path": card_path,
+                         "share_url": ctx.get("share_url"),
                          "steps": steps}, indent=2, default=str))
     elif record_path or card_path:
         print(f"record: {record_path}")

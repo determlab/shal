@@ -36,6 +36,7 @@ import json
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
+from urllib.parse import quote, urlencode
 
 from ..errors import ArenaError
 from ..simlog import SimLog
@@ -154,6 +155,31 @@ def _bottom_line(score: dict[str, Any]) -> str:
     return f"replay · simulated · seed {score['seed']}"
 
 
+SHARE_TEMPLATE = "arena-result.yml"
+SHARE_BUTTON_TEXT = ("Talk to us for 15 minutes about how you test "
+                     "(opens a GitHub issue in your browser)")
+SHARE_NOTE = ("Nothing is sent until you press submit on GitHub. The issue is public "
+              "and under your GitHub name. You can edit or delete it yourself at any time.")
+
+
+def share_url(score: dict[str, Any]) -> str:
+    """The prefilled-issue link (issue #413): the `arena-result.yml` form with
+    each field set by its `id` (GitHub ignores `body=` for forms). Only the
+    task id, seed, score line and record sha256 go in -- no path, no user, no
+    host. The product makes no network call; opening it is the person's own
+    click."""
+    task = str(score["task_id"])
+    fields = {
+        "template": SHARE_TEMPLATE,
+        "title": f"Arena result: {task} (seed {score['seed']})",
+        "task": task,
+        "seed": str(score["seed"]),
+        "score": _headline(score),
+        "sha256": str(score["record_sha256"]),
+    }
+    return f"{REPO_URL}/issues/new?" + urlencode(fields, quote_via=quote)
+
+
 _SAFETY_LINE = "Simulated instruments only. Nothing here touches real hardware."
 _GATE_STOP_SENTENCE = "Stopped by the gate before it ran. Nothing was changed."
 
@@ -219,6 +245,7 @@ def render_card(data: CardData) -> str:
     copy_text = f"{headline} {bottom_line} — github.com/determlab/shal"
     copy_text_json = json.dumps(copy_text)
     timeline_html = _timeline_html(data.timeline)
+    share_href = html.escape(share_url(score))
     result_line_html = (f'<p class="result-line">{html.escape(data.result_line)}</p>'
                         if data.result_line else "")
     disqualified_html = (
@@ -267,6 +294,8 @@ record {short_sha}</div>
   <button id="copy-btn" type="button">Copy result</button>
   <button id="save-image-btn" type="button">Save as image</button>
 </div>
+<p><a id="share-link" href="{share_href}">{html.escape(SHARE_BUTTON_TEXT)}</a></p>
+<p class="share-note">{html.escape(SHARE_NOTE)}</p>
 <p><a id="repo-link" href="{REPO_URL}">github.com/determlab/shal</a></p>
 
 <canvas id="card-canvas" width="{_CARD_WIDTH}" height="{_CARD_HEIGHT}"></canvas>
