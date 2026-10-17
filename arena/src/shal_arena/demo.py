@@ -482,6 +482,41 @@ _STEPS: list[tuple[str, str, Any, Any]] = [
 ]
 
 
+#: issue #509: pacing rules -- slow enough to read, short enough to watch.
+MIN_STEP_S = 1.5
+MAX_RUN_S = 60.0
+DEFAULT_PAUSE_S = 2.0
+
+
+def pacing_problems(steps: list[dict[str, Any]]) -> list[str]:
+    """issue #509: every pacing-rule breach in a run's ``steps`` (the JSON
+    entries, reading ``step``, ``step_ms`` and ``sentence``), each message
+    naming the step and the fix. Empty when the run is paced well."""
+    problems: list[str] = []
+    for s in steps:
+        step_id = s.get("step", "?")
+        ms = s.get("step_ms")
+        if not isinstance(ms, (int, float)) or ms < MIN_STEP_S * 1000:
+            problems.append(
+                f"step {step_id!r} lasted {ms} ms, under the {MIN_STEP_S} s minimum; "
+                f"fix: raise the pause before it (default pause >= {MIN_STEP_S} s)")
+        sentence = s.get("sentence")
+        if not isinstance(sentence, str) or not sentence.strip():
+            problems.append(
+                f"step {step_id!r} has no sentence; "
+                f"fix: give it one plain sentence in _STEPS in demo.py")
+    total = sum(s["step_ms"] for s in steps
+                if isinstance(s.get("step_ms"), (int, float)))
+    if total > MAX_RUN_S * 1000:
+        slowest = max((s for s in steps if isinstance(s.get("step_ms"), (int, float))),
+                      key=lambda s: s["step_ms"])
+        problems.append(
+            f"the run lasted {total / 1000:.1f} s, over the {MAX_RUN_S:.0f} s maximum "
+            f"(slowest step {slowest.get('step', '?')!r}); "
+            f"fix: lower the pause or speed up or drop that step")
+    return problems
+
+
 def _plain_outcome(result: dict[str, Any]) -> str:
     if "crashed" in result:
         return "crashed"
@@ -584,6 +619,7 @@ def run_story(*, pause: float, json_mode: bool, port: int | None = None) -> int:
     steps: list[dict[str, Any]] = []
     overall_ok = True
     for step_id, line, run_fn, check_fn in _STEPS:
+        started = time.monotonic()  # issue #509: the step as a viewer sees it, pause included
         time.sleep(pause)
         if not json_mode:
             print(line)
@@ -605,7 +641,9 @@ def run_story(*, pause: float, json_mode: bool, port: int | None = None) -> int:
         overall_ok = overall_ok and step_ok
         if not json_mode:
             print(f"  -> {_plain_outcome(result)}")
-        steps.append({"step": step_id, "line": line, "result": result})
+        steps.append({"step": step_id, "line": line, "sentence": line,
+                      "step_ms": round((time.monotonic() - started) * 1000, 1),
+                      "result": result})
 
     if not json_mode:
         print(f"Run state (including the result card) is under {state_dir}")
@@ -631,8 +669,9 @@ def run_story(*, pause: float, json_mode: bool, port: int | None = None) -> int:
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__,
                                      formatter_class=argparse.RawDescriptionHelpFormatter)
-    parser.add_argument("--pause", type=float, default=2.0,
-                        help="seconds to pause before each step (default: 2.0; use 0 for CI)")
+    parser.add_argument("--pause", type=float, default=DEFAULT_PAUSE_S,
+                        help=f"seconds to pause before each step (default: {DEFAULT_PAUSE_S}; "
+                             "use 0 for CI)")
     parser.add_argument("--json", action="store_true",
                         help="print one JSON document on stdout instead of narrating")
     parser.add_argument("--port", type=int, default=None, metavar="PORT",

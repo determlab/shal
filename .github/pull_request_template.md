@@ -40,5 +40,12 @@ Closes #<!-- issue number -->
 ```
 ```
 
+## Human demo test
+<!-- Required before merge for any PR touching the demo (arena/src/shal_arena/demo.py): a person
+     watches `shal-arena demo` once; steps readable (>= 1.5 s), whole run <= 60 s. -->
+- **Tester:**
+- **Date:**
+- **Result:** pass | fail (notes)
+
 ## Notes for the human
 <!-- Anything the merger should know. Empty if clean. -->
