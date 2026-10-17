@@ -15,8 +15,20 @@ case below.
 
 ## Install
 
+Needs `pyshal>=0.4.0,<0.5`. The PyPI release (pyshal 0.3.0) is too old, and
+0.4.0 is not on PyPI yet, so install pyshal from source first.
+
+No clone:
+
 ```bash
-pip install -e ".[dev]"   # from arena/, with pyshal already installed
+pip install git+https://github.com/determlab/shal
+pip install "git+https://github.com/determlab/shal#subdirectory=arena"
+```
+
+From a clone, run this in `arena/`, with pyshal 0.4.0 or later already installed:
+
+```bash
+pip install -e ".[dev]"
 ```
 
 ## See it run
