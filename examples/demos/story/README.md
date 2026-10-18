@@ -69,7 +69,8 @@ python run_story.py --pause 0 --json
 prints exactly one JSON document on stdout, nothing else (so `ConvertFrom-Json`
 or any other strict reader can parse it directly):
 `{"ok": <bool>, "note": <the fixed first line>, "state_dir": <path>, "steps":
-[{"step", "line", "result"}, ...]}`, steps in order.
+[{"step", "line", "sentence", "step_ms", "result"}, ...]}`, steps in order
+(`sentence` repeats `line`; `step_ms` is the step's wall-clock time in milliseconds).
 
 ## What's here
 
