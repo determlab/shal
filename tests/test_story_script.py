@@ -65,8 +65,10 @@ def test_the_steps_run_in_order_with_the_required_shape():
     assert doc["ok"] is True
     assert [s["step"] for s in doc["steps"]] == EXPECTED_STEPS
     for step in doc["steps"]:
-        assert set(step) == {"step", "line", "result"}
+        assert set(step) == {"step", "line", "sentence", "step_ms", "result"}
         assert step["line"]  # a plain, non-empty line printed before the step
+        assert step["sentence"] == step["line"]
+        assert isinstance(step["step_ms"], (int, float))
         assert isinstance(step["result"], dict)
 
 
@@ -200,9 +202,13 @@ def test_main_exits_1_when_a_steps_result_disagrees(monkeypatch, capsys):
     assert ec == 1
     doc = json.loads(capsys.readouterr().out)
     assert doc["ok"] is False
-    assert doc["steps"] == [{"step": "fake_step",
-                             "line": "A step engineered to disagree with its own check.",
-                             "result": {"ok": False}}]
+    (step,) = doc["steps"]
+    # step_ms is wall-clock time: check its type, not its value
+    assert isinstance(step.pop("step_ms"), (int, float))
+    assert step == {"step": "fake_step",
+                    "line": "A step engineered to disagree with its own check.",
+                    "sentence": "A step engineered to disagree with its own check.",
+                    "result": {"ok": False}}
 
 
 def test_check_bench_10_runs_catches_a_gate_that_did_not_work():
