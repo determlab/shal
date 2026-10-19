@@ -1,0 +1,5 @@
+# issue #508: the `empty` start stage -- `shal-arena demo --from empty --json`.
+# Nothing chosen yet: pick instruments and write their drivers.
+# The setup YAML the rack page writes (`replay/rack.py` `build_setup_yaml`)
+# plus `stage:`; each stage holds everything in the stage before it.
+stage: empty

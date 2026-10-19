@@ -1,0 +1,14 @@
+# issue #508: the `picked` start stage -- `shal-arena demo --from picked --json`.
+# One instrument chosen (scpi-psu), its driver exists: place the rest on the rack.
+# The setup YAML the rack page writes (`replay/rack.py` `build_setup_yaml`)
+# plus `stage:`; each stage holds everything in the stage before it.
+stage: picked
+shal_version: 1
+root:
+  bench0:
+    driver: shal,sim-scpi
+    address: sim0
+    children:
+      scpi_psu:
+        driver: arena,bench-psu1
+        address: 1

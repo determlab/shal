@@ -1,0 +1,21 @@
+# issue #508: the `racked` start stage -- `shal-arena demo --from racked --json`.
+# The rack is full (scpi-psu, dmm): only wiring is left.
+# The setup YAML the rack page writes (`replay/rack.py` `build_setup_yaml`)
+# plus `stage:`; each stage holds everything in the stage before it.
+stage: racked
+shal_version: 1
+root:
+  bench0:
+    driver: shal,sim-scpi
+    address: sim0
+    children:
+      scpi_psu:
+        driver: arena,bench-psu1
+        address: 1
+  bench1:
+    driver: shal,sim-scpi
+    address: sim1
+    children:
+      dmm:
+        driver: arena,bench-dmm1
+        address: 1
