@@ -11,6 +11,13 @@ reviewed: 2026-06-23
 
 ### A test sequencer an agent can drive — safely.
 
+Install and play — no account, no hardware, no API key:
+
+```text
+pip install git+https://github.com/determlab/shal "git+https://github.com/determlab/shal#subdirectory=arena"
+shal-arena ui
+```
+
 **One file describes everything your test touches** — the board on the bench, the
 database behind it, the service it calls — with the risk of each operation written
 down. Run it from Python or pytest at the bench. Hand it to an AI agent as typed,
