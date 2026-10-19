@@ -39,7 +39,7 @@ def test_wrong_probe_is_a_load_error_naming_key_and_valid_addresses(tmp_path):
         shal.load(topo(tmp_path, "0x99"))
     msg = str(excinfo.value)
     assert "probe" in msg
-    assert "0x99" in msg
+    assert "153" in msg   # YAML reads 0x99 as an int
     assert "psu0" in msg
 
 

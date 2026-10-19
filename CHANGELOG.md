@@ -14,6 +14,9 @@ All notable changes to this project are documented here. The format follows
 ## [Unreleased]
 
 ### Fixed
+- **A wrong `probe:` on a `shal,sim-dmm` is a load error** (#351): an address that
+  names no `shal,sim-psu` on the same bus is rejected by `shal.load`, with an
+  error that names `config.probe` and the valid addresses, not at the first read.
 - **`fault: unplugged` / `SHAL_SIM_UNPLUG` now work on every sim bus** (#349),
   not only `shal,sim-scpi`: the README's own `sim.yaml` first-success example
   uses `shal,sim-i2c`, so the documented unplug previously did nothing there.

@@ -215,12 +215,11 @@ def test_a_missing_probe_fails_the_load(tmp_path):
         shal.load(p)
 
 
-def test_a_probe_address_that_does_not_exist_fails_at_read_time(sim_yaml, tmp_path):
+def test_a_probe_address_that_does_not_exist_fails_at_load(sim_yaml, tmp_path):
     p = tmp_path / "bench.yaml"
     p.write_text(_bench_yaml().replace("probe: psu0", "probe: nope"), encoding="utf-8")
-    with shal.load(p) as hal:
-        with pytest.raises(LookupError, match="nope"):
-            hal.get_device("dmm").measure_voltage()
+    with pytest.raises(shal.LoadError, match="nope"):
+        shal.load(p)   # #351: caught at load, not at the first read
 
 
 # ---- the ops: reads, never gated --------------------------------------------------------
