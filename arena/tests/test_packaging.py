@@ -65,3 +65,7 @@ def test_installed_wheel_has_card_sim_catalogue(tmp_path: Path) -> None:
         assert any(n.endswith(f"shal_arena/reference_drivers/{module_name}.py")
                   for n in names), (
             f"reference_drivers/{module_name}.py did not make it into the wheel: {names}")
+    # issue #508: `shal-arena demo --from STAGE` reads these from the package.
+    for stage in ("empty", "picked", "racked", "wired", "ran"):
+        assert any(n.endswith(f"shal_arena/presets/{stage}.yaml") for n in names), (
+            f"presets/{stage}.yaml did not make it into the wheel: {names}")
