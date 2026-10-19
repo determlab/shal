@@ -978,6 +978,7 @@ function renderShare(payload) {
   const row = document.getElementById("share-row");
   if (!row) return;
   row.hidden = !(SHARE_LIVE && payload.closed);
+  document.getElementById("share-note").textContent = "";
   document.getElementById("share").onclick = () => shareResult(payload.run_id);
 }
 
@@ -1418,6 +1419,7 @@ function answer(value) {
 // page goes back to the task list.
 function startNewRun() {
   if (PLAY.busy) return;
+  if (!confirm("Abandon this run? It cannot be resumed.")) return;
   setBusy(true);
   post("/api/play/new-run", {}).then(({status, doc}) => {
     setBusy(false);

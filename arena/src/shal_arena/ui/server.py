@@ -32,12 +32,13 @@ import math
 import socket
 import threading
 import webbrowser
+from collections.abc import Callable
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from typing import Any
 
 from .. import runner as _runner
-from ..errors import ArenaError
+from ..errors import ArenaError, UnknownRun
 from ..loader import load_task, once_per_path
 from ..runner import has_any_measurement
 from ..store import DEFAULT_STATE_DIR, RunStore
@@ -155,7 +156,7 @@ def _make_handler(run_id: str | None, state_dir: str | Path,
             host = self.headers.get("Host", "")
             if host not in allowed:
                 raise _Forbidden(f"play: unexpected Host header {host!r}",
-                                 fix=f"send requests to {allowed[0]} or {allowed[1]} only")
+                                 fix=f"send requests to {' or '.join(allowed)} only")
             return host
 
         def _same_origin_check(self) -> None:
@@ -233,6 +234,8 @@ def _make_handler(run_id: str | None, state_dir: str | Path,
                 # closed run's own score file; an open run is a 400 with a fix.
                 try:
                     self._send_json(200, share_payload(share_path, state_dir=state_dir))
+                except UnknownRun as e:
+                    self._send_json(404, {"ok": False, "error": e.to_dict()})
                 except ArenaError as e:
                     self._send_json(400, {"ok": False, "error": e.to_dict()})
                 return
@@ -440,8 +443,8 @@ def serve(run_id: str | None = None, *, state_dir: str | Path = DEFAULT_STATE_DI
     if run_id is not None:
         run_payload(run_id, state_dir=state_dir)  # ArenaError, unknown run -- fail before bind
     handler = _make_handler(run_id, state_dir, drivers)
-    httpd = ThreadingHTTPServer((HOST, port), handler)
-    v6 = _ipv6_twin(handler, httpd.server_address[1])
+    httpd = _ArenaServer((HOST, port), handler)
+    httpd.twin = _ipv6_twin(handler, httpd.server_address[1])
 
     # issue #407 round 2, must-fix 1: `runner._import_driver_file` re-execs
     # the file on every call, making a brand-new class object each time --
@@ -459,28 +462,19 @@ def serve(run_id: str | None = None, *, state_dir: str | Path = DEFAULT_STATE_DI
     # 2 servers closing out of order leaving the wrong one installed. PLAY
     # mode itself still serves one run at a time, so this remains scoped
     # to "the one server that could possibly need it."
-    real_server_close = httpd.server_close
-    if v6 is not None:
-        def _close_with_twin() -> None:
-            v6.shutdown()
-            v6.server_close()
-            real_server_close()
-
-        httpd.server_close = _close_with_twin
-        real_server_close = _close_with_twin
     if run_id is None:
         original_import = _runner._import_driver_file
         _runner._import_driver_file = once_per_path(original_import)
 
-        def _server_close() -> None:
+        def _restore_import() -> None:
             _runner._import_driver_file = original_import
-            real_server_close()
 
-        httpd.server_close = _server_close
+        httpd.on_close = _restore_import
 
     url = f"http://{HOST}:{httpd.server_address[1]}/"
     # issue #523: print every URL that answers, so a person can paste either.
-    also = f" (also http://localhost:{httpd.server_address[1]}/)"
+    # only when the `::1` twin really bound -- otherwise `localhost` may not work.
+    also = f" (also http://localhost:{httpd.server_address[1]}/)" if httpd.twin else ""
     if run_id is not None:
         print(f"shal-arena ui: watching {run_id} at {url}{also}")
     else:
@@ -492,6 +486,34 @@ def serve(run_id: str | None = None, *, state_dir: str | Path = DEFAULT_STATE_DI
 
 class _V6Server(ThreadingHTTPServer):
     address_family = socket.AF_INET6
+    # Windows: SO_REUSEADDR would let another process share `[::1]:<port>`.
+    allow_reuse_address = False
+
+
+class _ArenaServer(ThreadingHTTPServer):
+    """The `127.0.0.1` server. Owns the optional `::1` twin and the close
+    callback, so `shutdown()` and `server_close()` each stop everything
+    this server started (#523)."""
+
+    twin: Any = None
+    on_close: Callable[[], None] | None = None
+
+    def shutdown(self) -> None:
+        if self.twin is not None:
+            self.twin.shutdown()
+        super().shutdown()
+
+    def server_close(self) -> None:
+        try:
+            if self.twin is not None:
+                self.twin.shutdown()
+                self.twin.server_close()
+        finally:
+            try:
+                super().server_close()
+            finally:
+                if self.on_close is not None:
+                    self.on_close()
 
 
 def _ipv6_twin(handler: type[BaseHTTPRequestHandler], port: int) -> ThreadingHTTPServer | None:

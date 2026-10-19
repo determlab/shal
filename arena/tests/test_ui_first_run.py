@@ -115,7 +115,8 @@ def test_every_printed_url_answers_200(tmp_path: Path, capsys) -> None:
         printed = capsys.readouterr().out
         urls = re.findall(r"http://[^\s)]+/", printed)
         port = httpd.server_address[1]
-        assert f"http://localhost:{port}/" in urls, printed
+        # printed only when the `::1` twin really bound (else it would be a lie)
+        assert (f"http://localhost:{port}/" in urls) == (httpd.twin is not None), printed
         assert f"http://127.0.0.1:{port}/" in urls, printed
         for url in urls:
             status, raw, ctype = _request(url)
@@ -227,3 +228,92 @@ def test_share_refuses_an_open_or_unknown_run(play_server) -> None:
     assert status == 400 and doc["error"]["fix"]
     status, doc = _get(httpd, "/api/share/not-a-run")
     assert status == 404
+
+
+# --- CTO review on #526 (round 2) -------------------------------------------
+
+
+class _StubTwin:
+    """Stands in for the `::1` server so the twin path runs on any machine."""
+
+    def __init__(self) -> None:
+        self.calls: list[str] = []
+
+    def shutdown(self) -> None:
+        self.calls.append("shutdown")
+
+    def server_close(self) -> None:
+        self.calls.append("server_close")
+
+
+@pytest.mark.parametrize("mode", ["play", "watch"])
+def test_server_close_with_twin_closes_both_without_recursion(
+        tmp_path: Path, monkeypatch, mode: str) -> None:
+    from shal_arena.ui import server as server_mod
+
+    twin = _StubTwin()
+    monkeypatch.setattr(server_mod, "_ipv6_twin", lambda handler, port: twin)
+    run_id = None
+    if mode == "watch":
+        seed = serve(None, state_dir=tmp_path, port=0, open_browser=False)
+        thread = _running(seed)
+        try:
+            run_id = _closed_run(seed)
+        finally:
+            _stop(seed, thread)
+        twin.calls.clear()
+    httpd = serve(run_id, state_dir=tmp_path, port=0, open_browser=False)
+    httpd.server_close()  # RecursionError before the fix
+    assert twin.calls == ["shutdown", "server_close"]
+    assert httpd.socket.fileno() == -1  # the IPv4 socket really closed
+
+
+def test_no_localhost_url_is_printed_when_the_twin_did_not_bind(
+        tmp_path: Path, monkeypatch, capsys) -> None:
+    from shal_arena.ui import server as server_mod
+
+    monkeypatch.setattr(server_mod, "_ipv6_twin", lambda handler, port: None)
+    httpd = serve(None, state_dir=tmp_path, port=0, open_browser=False)
+    try:
+        assert "localhost" not in capsys.readouterr().out
+    finally:
+        httpd.server_close()
+
+
+def test_v6_twin_does_not_share_its_port() -> None:
+    from shal_arena.ui.server import _V6Server
+
+    assert _V6Server.allow_reuse_address is False
+
+
+def test_httpd_shutdown_stops_the_twin_too(tmp_path: Path, monkeypatch) -> None:
+    from shal_arena.ui import server as server_mod
+
+    twin = _StubTwin()
+    monkeypatch.setattr(server_mod, "_ipv6_twin", lambda handler, port: twin)
+    httpd = serve(None, state_dir=tmp_path, port=0, open_browser=False)
+    thread = _running(httpd)
+    httpd.shutdown()
+    thread.join(timeout=5)
+    assert "shutdown" in twin.calls
+    httpd.server_close()
+
+
+def test_403_fix_text_lists_every_local_name(play_server) -> None:
+    httpd, _ = play_server
+    port = httpd.server_address[1]
+    req = urllib.request.Request(f"http://{HOST}:{port}/", headers={"Host": "evil.example"})
+    with pytest.raises(urllib.error.HTTPError) as err:
+        urllib.request.urlopen(req, timeout=5)
+    body = err.value.read().decode("utf-8")
+    assert err.value.code == 403
+    assert f"[::1]:{port}" in body and f"localhost:{port}" in body
+
+
+def test_page_resets_share_note_and_confirms_new_run(play_server) -> None:
+    httpd, _ = play_server
+    _, raw, _ = _request(_base(httpd) + "/")
+    page = raw.decode("utf-8")
+    start = page.index("function renderShare")
+    assert 'getElementById("share-note").textContent = ""' in page[start:start + 400]
+    assert "confirm(" in page[page.index("function startNewRun"):][:300]
