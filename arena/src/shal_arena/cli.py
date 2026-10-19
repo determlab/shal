@@ -3,6 +3,7 @@
 ``drive`` is #313's; ``bench`` is #314's).
 
     shal-arena demo --json
+    shal-arena demo --from racked --json
     shal-arena tasks --json
     shal-arena run rail-3v3 --json
     shal-arena check-driver <run-id> psu0 ./driver.py --json
@@ -54,6 +55,13 @@ def _cmd_demo(args: argparse.Namespace) -> int:
     from .demo import run_story
 
     pause = args.pause if args.pause is not None else (0.0 if args.json else 2.0)
+    if args.from_stage is not None:
+        # issue #508: start from one stage's preset instead of the whole story
+        from .stages import run_from
+        try:
+            return run_from(args.from_stage, pause=pause, json_mode=args.json)
+        except ArenaError as e:
+            return _report_error(e, args.json)
     return run_story(pause=pause, json_mode=args.json)
 
 
@@ -372,6 +380,10 @@ def _build_parser() -> argparse.ArgumentParser:
                         help="seconds between steps (default: 2.0, or 0 under --json)")
     p_demo.add_argument("--json", action="store_true",
                         help="print one JSON document on stdout instead of narrating")
+    p_demo.add_argument("--from", dest="from_stage", default=None, metavar="STAGE",
+                        help="issue #508: start from one stage's preset instead -- one of "
+                             "empty, picked, racked, wired, ran; runs each stage from "
+                             "STAGE to ran, the first step is STAGE; writes nothing")
     p_demo.set_defaults(func=_cmd_demo)
 
     p_ui = sub.add_parser(
