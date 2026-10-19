@@ -7,7 +7,8 @@ name: RC wheels
 # ship still works.
 #
 # The version built here always carries a PEP 440 local segment
-# (+rc.<7-char sha>), so it can never collide with, or be confused for, a
+# (+rc.<YYYYMMDDHHMM>.<7-char sha>; the time is the UTC commit time, so rcs sort
+# by time and not by sha), so it can never collide with, or be confused for, a
 # version actually published to PyPI (CTO review on #339/#104/#33).
 
 on:
@@ -29,8 +30,9 @@ jobs:
       - name: Stamp the RC version (local segment only; never committed)
         run: |
           sha7="${GITHUB_SHA:0:7}"
-          sed -i "0,/^version = \"/s/^version = \"\\([^\"]*\\)\"/version = \"\\1+rc.${sha7}\"/" pyproject.toml
-          sed -i "0,/^version = \"/s/^version = \"\\([^\"]*\\)\"/version = \"\\1+rc.${sha7}\"/" arena/pyproject.toml
+          stamp="$(TZ=UTC git log -1 --format=%cd --date=format-local:%Y%m%d%H%M)"
+          sed -i "0,/^version = \"/s/^version = \"\\([^\"]*\\)\"/version = \"\\1+rc.${stamp}.${sha7}\"/" pyproject.toml
+          sed -i "0,/^version = \"/s/^version = \"\\([^\"]*\\)\"/version = \"\\1+rc.${stamp}.${sha7}\"/" arena/pyproject.toml
       - name: Build pyshal
         run: |
           pip install build
