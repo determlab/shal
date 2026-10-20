@@ -67,7 +67,7 @@ h1 { font-size: 22px; line-height: 1.25; margin: 4px 0 0; text-wrap: balance; }
 .verdict-bar.bad { border-left-color: var(--gate); }
 .verdict-bar.running { border-left-color: var(--line); }
 .verdict-bar .big { flex: 1 1 100%; font-size: 18px; font-weight: 700; }
-.verdict-bar .big b { color: var(--bad); }
+.verdict-bar .big b.hit { color: var(--bad); }
 .verdict-bar .reason { color: var(--dim); font-size: 14px; }
 .chip { font: 700 13px var(--mono); padding: 4px 10px; border-radius: 999px; white-space: nowrap; }
 .chip.ok { background: color-mix(in srgb, var(--ok) 18%, transparent); color: var(--ok); }
@@ -463,7 +463,7 @@ function resultLineNodes(result) {
     const [pre, what, rest] = resultItemParts(i);
     if (k) out.push(txt("; "));
     if (pre) out.push(txt(pre));
-    out.push(el("b", "", what));
+    out.push(el("b", result.found ? "hit" : "", what));  // red only on a found fault (#521)
     if (rest) out.push(txt(rest));
   });
   return out;
@@ -1168,7 +1168,7 @@ function renderPicker(tasks) {
     b.type = "button";
     b.setAttribute("data-play", "start");
     b.appendChild(el("span", "t", t.name));
-    b.appendChild(el("span", "s", `${t.level} level · starts a new run (write)`));
+    b.appendChild(el("span", "s", `${t.level} level · starts a new run · records in this run`));
     b.onclick = () => startTask(t.name);
     return b;
   }));
@@ -1283,10 +1283,10 @@ function renderControls(payload) {
       row.appendChild(lab);
       row.appendChild(pick);
       row.appendChild(ctlButton(c.label, "", () => measure(c.address, pick.value)));
-      hint = "write · reads this instrument at the chosen point and records it in this run";
+      hint = "records in this run · reads this instrument at the chosen point";
     } else {
       row.appendChild(ctlButton(c.label, "", () => measure(c.address)));
-      hint = "write · reads this instrument and records the reading in this run";
+      hint = "records in this run · reads this instrument";
     }
     box.appendChild(row);
     box.appendChild(el("p", "hint", hint));

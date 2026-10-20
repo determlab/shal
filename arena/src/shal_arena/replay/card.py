@@ -145,7 +145,10 @@ def _headline(score: dict[str, Any]) -> str:
     caught, total = score["faults_caught"], score["faults_total"]
     false_fails = score["false_fails"]
     noun = "false fail" if false_fails == 1 else "false fails"
-    if total == 0:  # issue #495: a good card (`broken_probe`): never "0 of 0"
+    # issue #495: a good card (`broken_probe`): never "0 of 0"; issue #521: an
+    # `ok` card has no fault to catch, so never "0 of 1 faults caught" either
+    # (the score file's counts are a pinned game rule and stay as they are).
+    if total == 0 or score.get("fault_type") == "ok":
         return f"No fault was injected. {false_fails} {noun}."
     return f"{caught} of {total} faults caught. {false_fails} {noun}."
 
