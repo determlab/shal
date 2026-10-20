@@ -19,6 +19,8 @@ page (`page.render_play_page`), never JSON. The task list it renders is also
 """
 from __future__ import annotations
 
+import contextlib
+import io
 import json
 import math
 import threading
@@ -28,6 +30,7 @@ from pathlib import Path
 from typing import Any
 
 from .. import runner as _runner
+from .. import stages
 from ..errors import ArenaError
 from ..loader import load_task, once_per_path
 from ..runner import has_any_measurement
@@ -40,7 +43,7 @@ HOST = "127.0.0.1"
 
 #: CTO review on #407 round 2, must-fix 6: every POST route, in WATCH mode.
 _PLAY_ROUTES = ("/api/play/start", "/api/play/measure", "/api/play/drive",
-               "/api/play/switch", "/api/play/answer")
+               "/api/play/switch", "/api/play/answer", "/api/demo/start")
 
 
 class _MethodNotAllowed(ArenaError):
@@ -99,6 +102,11 @@ def _make_handler(run_id: str | None, state_dir: str | Path,
     # open and both start one, orphaning every run but the last to bind.
     # One lock around the whole check-and-bind closes the window.
     start_lock = threading.Lock()
+    # issue #520: the demo's start cards. `rack` is the fullest bench any
+    # card has started; choosing another card never clears or shrinks it.
+    # The lock also guards the stdout capture `_demo_from` does.
+    demo = {"stage": None, "rack": []}
+    demo_lock = threading.Lock()
 
     class Handler(BaseHTTPRequestHandler):
         protocol_version = "HTTP/1.1"
@@ -201,6 +209,10 @@ def _make_handler(run_id: str | None, state_dir: str | Path,
                 tasks = [_strip_paths(t) for t in play.list_play_tasks()]
                 self._send_json(200, {"ok": True, "tasks": tasks})
                 return
+            if play_mode and self.path == "/api/demo/stages":
+                self._send_json(200, {"ok": True, "stages": list(stages.STAGES),
+                                      "default": stages.DEFAULT_STAGE, **demo})
+                return
             if play_mode and self.path == "/api/play/choices":
                 if current["run_id"] is None:
                     self._send_json(400, {"ok": False, "error": ArenaError(
@@ -260,6 +272,16 @@ def _make_handler(run_id: str | None, state_dir: str | Path,
                     "fix": "this is a shal-arena bug, not a request problem -- file an issue"}})
 
         def _dispatch(self, body: dict[str, Any]) -> None:
+            if self.path == "/api/demo/start":
+                stage = _require_str(body, "stage", example='{"stage": "racked"}')
+                with demo_lock:
+                    doc = _demo_from(stage)
+                    instruments = doc["steps"][0]["result"].get("instruments")
+                    demo["stage"] = stage
+                    if len(instruments or []) > len(demo["rack"]):  # never shrinks
+                        demo["rack"] = instruments
+                    self._send_json(200, {**doc, **demo})
+                return
             if self.path == "/api/play/start":
                 with start_lock:
                     if current["run_id"] is not None:
@@ -308,6 +330,17 @@ def _make_handler(run_id: str | None, state_dir: str | Path,
                 return
 
     return Handler
+
+
+def _demo_from(stage: str) -> dict[str, Any]:
+    """`shal-arena demo --from STAGE --json`, run through the same
+    `stages.run_from` the CLI calls; its one JSON document is what the CLI
+    would print. An unknown stage raises `UnknownStage` (a 400 here). The
+    caller holds `demo_lock`: stdout is process-wide."""
+    out = io.StringIO()
+    with contextlib.redirect_stdout(out):
+        stages.run_from(stage, pause=0, json_mode=True)
+    return json.loads(out.getvalue())
 
 
 def _require_str(body: dict[str, Any], key: str, *, example: str) -> str:

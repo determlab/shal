@@ -20,6 +20,8 @@ from __future__ import annotations
 import json
 from typing import Any
 
+from .. import stages
+
 REPO_URL = "https://github.com/determlab/shal"
 
 
@@ -1082,6 +1084,7 @@ button.task-btn, button.ctl-btn, button.choice, button.again {
   min-height: 44px; background: var(--sunk); color: var(--text);
   border: 1px solid var(--line); text-align: left; touch-action: manipulation; }
 button.task-btn { min-height: 64px; padding: 12px 14px; display: grid; gap: 2px; }
+button.task-btn.sel { border-color: var(--ok); }
 button.task-btn .t { font-size: 16px; font-weight: 700; }
 button.task-btn .s { font: 13px var(--mono); color: var(--dim); font-weight: 400; }
 button.ctl-btn.gate { border-color: var(--gate); }
@@ -1172,6 +1175,37 @@ function renderPicker(tasks) {
     b.onclick = () => startTask(t.name);
     return b;
   }));
+}
+
+// issue #520: the 5 start cards. The stage list comes from the server (the
+// CLI's own `--from` stages); a card posts its stage and shows the first step
+// of what `shal-arena demo --from STAGE --json` returned. Choosing another
+// card never touches the rack the server keeps.
+function renderDemoCards(stages, selected) {
+  fill($("demo-cards"), stages.map(s => {
+    const b = el("button", "task-btn" + (s === selected ? " sel" : ""));
+    b.type = "button";
+    b.setAttribute("data-play", "demo");
+    b.setAttribute("data-stage", s);
+    b.setAttribute("aria-pressed", s === selected ? "true" : "false");
+    b.appendChild(el("span", "t", s));
+    b.onclick = () => startDemo(s, stages);
+    return b;
+  }));
+}
+
+function startDemo(stage, stages) {
+  if (PLAY.busy) return;
+  setBusy(true);
+  post("/api/demo/start", {stage}).then(({status, doc}) => {
+    setBusy(false);
+    if (status !== 200) { flashInto("demo-out", doc); return; }
+    renderDemoCards(stages, stage);
+    const first = doc.steps[0];
+    $("demo-out").className = "flash ok";
+    fill($("demo-out"), [el("b", "", `${first.step}: ${first.line}`),
+      txt(`Rack: ${doc.rack.length ? doc.rack.join(", ") : "empty"}`)]);
+  }).catch(() => setBusy(false));
 }
 
 function startTask(name) {
@@ -1379,6 +1413,7 @@ function playAgain() {
 function startPlay(initial) {
   $("again").onclick = playAgain;
   renderPicker(initial.tasks);
+  renderDemoCards(initial.demo_stages, initial.demo_default);
   if (!initial.run_id) { showPicker(); return; }
   // a reload mid-run: the same run, its own answer choices, its own state.
   PLAY.runId = initial.run_id;
@@ -1407,6 +1442,9 @@ def _play_shell() -> str:
     <p class="lede" id="lede"></p>
   </header>
   <section class="box" id="picker" aria-label="Pick a task">
+    <h2>Start the demo at</h2>
+    <div class="task-list" id="demo-cards"></div>
+    <div class="flash" id="demo-out" hidden></div>
     <h2>Start a task</h2>
     <div class="task-list" id="task-list"></div>
     <p class="hint">Each task starts a new run with its own files. Using the reference drivers.</p>
@@ -1446,7 +1484,8 @@ def render_play_page(tasks: list[dict[str, Any]], run_id: str | None) -> str:
     from .export import _EXPORT_SCRIPT  # export.py imports this module
 
     initial = {"tasks": [{"name": t["name"], "level": t.get("level", "")} for t in tasks],
-               "run_id": run_id}
+               "run_id": run_id,
+               "demo_stages": list(stages.STAGES), "demo_default": stages.DEFAULT_STAGE}
     script_tag = (
         f'<script id="play-data" type="application/json">{safe_json(initial)}</script>\n'
         f"<script>{_SCRIPT}\n{_EXPORT_SCRIPT}\n{_PLAY_SCRIPT}\n"
