@@ -36,6 +36,9 @@ from .errors import ArenaError, TaskFormatError
 
 STAGES: tuple[str, ...] = ("empty", "picked", "racked", "wired", "ran")
 
+#: the start card the demo page marks first (issue #520)
+DEFAULT_STAGE = "racked"
+
 #: the keys a preset adds on top of the rack page's setup YAML
 _META_KEYS = ("stage", "run")
 
