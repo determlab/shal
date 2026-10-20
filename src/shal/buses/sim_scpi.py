@@ -78,6 +78,23 @@ class SimScpiBus(SimFaultMixin, Driver, Transport, MessageTransport):
                             f"instrument/channel label, got "
                             f"{redact_url(str(addr))!r}")
 
+    def validate_bound(self) -> None:
+        """At load (#351): each sim-dmm's ``config.probe`` must name a
+        ``shal,sim-psu`` on this bus, not wait for the first read."""
+        nodes = [n for n in self.host.walk() if n is not self.host
+                 and n.address is not None]
+        psus = [n.address for n in nodes if n.spec.get("driver") == "shal,sim-psu"]
+        for n in nodes:
+            if n.spec.get("driver") != "shal,sim-dmm":
+                continue
+            probe = (n.spec.get("config", {}) or {}).get("probe")
+            if probe not in psus:
+                have = ", ".join(repr(redact_url(str(a))) for a in psus) or "none"
+                raise LoadError(
+                    f"{n.path}: config.probe {redact_url(str(probe))!r} names no "
+                    f"shal,sim-psu on this bus; valid addresses: {have}. Fix: set "
+                    f"config.probe to one of them")
+
     def activate(self) -> None:
         self.connect_count += 1
         for node in self.host.walk():
@@ -347,9 +364,12 @@ class SimDmm(Driver):
         config = node.spec.get("config", {}) or {}
         probe = config.get("probe")
         if not isinstance(probe, str) or probe == "":
+            psus = [str(n.address) for n in parent.walk()
+                    if n.spec.get("driver") == "shal,sim-psu"]
             raise LoadError(f"{node.path}: config.probe must name the shal,sim-psu "
                             f"address to read, on this same shal,sim-scpi bus, "
-                            f"got {probe!r}")
+                            f"got {probe!r}; valid addresses: "
+                            f"{', '.join(repr(a) for a in psus) or 'none'}")
         self.probe_addr = probe
 
     @idempotent  # a read: safe to auto-retry across transient drops

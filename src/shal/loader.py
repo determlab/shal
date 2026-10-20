@@ -480,6 +480,7 @@ def _bind_drivers(roots: list[Node]) -> None:
     try:
         _bind_all(roots, opened)
         _check_jumps(roots)  # after every bus is bound: a jump may point forward
+        _check_bound(roots)  # after every node is bound: a bus may check its children
     except BaseException:
         for node, t in reversed(opened):
             try:
@@ -529,6 +530,16 @@ def _bind_all(roots: list[Node], opened: list[tuple[Node, Transport]]) -> None:
                 if child_bus is not None:
                     child.exposed_bus = child_bus
                     opened.append((child, child_bus))
+
+
+def _check_bound(roots: list[Node]) -> None:
+    """A driver may define ``validate_bound()`` to check its subtree once every
+    node is bound (#351: a sim-dmm ``probe:`` names a sibling, bound later)."""
+    for root in roots:
+        for node in root.walk():
+            check = getattr(node.driver, "validate_bound", None)
+            if check is not None:
+                check()
 
 
 def _check_jumps(roots: list[Node]) -> None:
