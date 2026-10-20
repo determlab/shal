@@ -43,7 +43,7 @@ def test_correct_ok_on_a_good_card_is_not_a_missed_fault(tmp_path: Path) -> None
     score = _score(state_dir, run_id)
     assert score["fault_type"] == "ok"
     assert score["false_fails"] == 0 and score["faults_caught"] == 0
-    card =build_result_card(run_id, state_dir=state_dir)
+    card = build_result_card(run_id, state_dir=state_dir)
     assert "0 of 1" not in card
     assert "faults caught" not in card
     assert "0 false fails" in card
