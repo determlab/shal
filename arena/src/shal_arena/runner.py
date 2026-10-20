@@ -971,7 +971,11 @@ def answer(run_id: str, value: str, *, state_dir: str | Path = DEFAULT_STATE_DIR
     score = build_score(task_id=loaded.task.id, seed=state.seed, fault_id=fault_id,
                         given=value, correct=record["correct"], disqualified=disqualified,
                         created_at=state.created_at, closed_at=record["closed_at"],
-                        turns=state.turns, record_path=store.record_path(run_id))
+                        turns=state.turns, record_path=store.record_path(run_id),
+                        # issue #521: the same count the Play page shows --
+                        # drives the gate refused, from this run's sim log
+                        gate_stops=sum(1 for e in sim_log.entries()
+                                       if e["kind"] == "refused"))
     store.write_score(run_id, score)
     return {"ok": True, "side_effect": "write", **record,
             "disqualified": disqualified, "score": score, "sim_log": str(sim_log.path)}

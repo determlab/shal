@@ -24,9 +24,8 @@ rather than guessed silently:
   on a `NOT_CARD_FAULTS` seed both are 0, whatever the answer. Blaming the
   card there (any answer other than the right one or ``ok``) is a false
   fail, the same as failing an ``ok`` card.
-- ``gate_stops``: 0 for every run this ticket can produce. `shal-arena`
-  invokes no gated (``config``/``actuator``) op of its own yet — wired for a
-  later arena ticket that plays a task through SHAL's own approval gate.
+- ``gate_stops``: the drives the gate refused in this run (its sim log's
+  ``refused`` lines) -- the same count the Play page shows (issue #521).
 """
 from __future__ import annotations
 
@@ -137,7 +136,7 @@ def score_counts(*, fault_id: str, given: str, correct: bool, disqualified: bool
 
 def build_score(*, task_id: str, seed: int, fault_id: str, given: str, correct: bool,
                 disqualified: bool, created_at: str, closed_at: str, turns: int,
-                record_path: str | Path) -> dict[str, Any]:
+                record_path: str | Path, gate_stops: int = 0) -> dict[str, Any]:
     """The score for one closed run. ``correct``/``given``/``fault_id`` are
     the caller's job to have already computed the same way `store.answer`
     did — this function only turns them into the 13-field score shape and
@@ -150,7 +149,7 @@ def build_score(*, task_id: str, seed: int, fault_id: str, given: str, correct: 
                        disqualified=disqualified, error_class_faults=ERROR_CLASS_FAULTS),
         "duration_s": max(0.0, _parse_ts(closed_at) - _parse_ts(created_at)),
         "turns": turns,
-        "gate_stops": 0,
+        "gate_stops": gate_stops,
         "schema_version": SCHEMA_VERSION,
         "game_version": GAME_VERSION,
         "record_sha256": hashlib.sha256(record_bytes).hexdigest(),
