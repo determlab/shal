@@ -36,6 +36,8 @@ from typing import Any
 
 import shal
 import yaml
+from shal.buses.sim import SimI2cBus
+from shal.buses.sim_msg import SimMsgBus
 from shal.buses.sim_scpi import SimScpiBus
 from shal.conformance import check_driver as _conformance_check_driver
 from shal.node import Node
@@ -503,7 +505,11 @@ def drive_input(run_id: str, address: str, volts: float, *,
 _RAW_SET_V = re.compile(r"^VOLT\s+([0-9.eE+-]+)$")
 
 
-def _sim_bus_for_topology(topology: str | dict) -> tuple[SimScpiBus, Any]:
+_SIM_BUS_CLASSES: dict[str, type] = {
+    "shal,sim-scpi": SimScpiBus, "shal,sim-msg": SimMsgBus, "shal,sim-i2c": SimI2cBus}
+
+
+def _sim_bus_for_topology(topology: str | dict) -> tuple[Any, Any]:
     """issue #314: the "without SHAL" side's socket onto THIS run's sim —
     same topology (static, or in-memory fault-wired) `_topology_for_instrument`
     hands the SHAL side, built by hand instead of through `shal.hal.load`.
@@ -528,7 +534,10 @@ def _sim_bus_for_topology(topology: str | dict) -> tuple[SimScpiBus, Any]:
                 parent=bench)
     child.spec = child_spec
     bench.children[child_name] = child
-    return SimScpiBus(bench), child.address
+    # issue #486: `shal-arena serve` hands the same un-bound sim bus to a
+    # remote driver for any case (SCPI, Modbus messages, I2C bytes)
+    bus_cls = _SIM_BUS_CLASSES.get(bench_spec.get("driver"), SimScpiBus)
+    return bus_cls(bench), child.address
 
 
 def raw_scpi(run_id: str, address: str, cmd: str, *, at: str | None = None,
