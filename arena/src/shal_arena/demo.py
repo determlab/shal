@@ -37,6 +37,8 @@ from importlib import resources as importlib_resources
 from pathlib import Path
 from typing import Any
 
+from .hood import Hood, annotate_task_yaml, annotate_yaml
+from .simlog import SimLog
 from .store import RunStore
 
 FIRST_LINE = "Simulated instruments only. Nothing here touches real hardware."
@@ -250,16 +252,43 @@ def check_bench_10_runs(result: dict[str, Any]) -> bool:
 # -- the real world: shal's and shal_arena's own Python APIs --------------- #
 
 
+def _traced(ctx: dict[str, Any], node: str, op: str, args: dict[str, Any], fn: Any) -> Any:
+    """Call ``fn``; under ``--trace`` (issue #507) also record it, with the bus
+    commands it made, in this step's `hood.Hood`. Nothing else changes."""
+    hood = ctx.get("hood")
+    return fn() if hood is None else hood.run(node, op, args, fn)
+
+
+def _bench_hood(ctx: dict[str, Any]) -> None:
+    """The bench YAML is the setup this step uses (issue #507)."""
+    hood = ctx.get("hood")
+    if hood is not None:
+        hood.set_yaml(annotate_yaml(_BENCH_TOPOLOGY_YAML, {"psu0", "dmm0"}))
+
+
+def _task_hood(ctx: dict[str, Any], task_path: Any, run_id: str, state_dir: Path) -> None:
+    """An arena step: the task YAML's instruments, and the run's own sim log
+    for the calls (issue #507)."""
+    hood = ctx.get("hood")
+    if hood is not None:
+        hood.set_yaml(annotate_task_yaml(Path(task_path).read_text(encoding="utf-8")))
+        hood.add_simlog(SimLog(RunStore(state_dir).sim_log_path(run_id)).entries())
+
+
 def _run_virtual_bench_pass(ctx: dict[str, Any]) -> dict[str, Any]:
     import shal
 
+    _bench_hood(ctx)
+    if ctx.get("hood") is not None:
+        ctx["hood"].allowed_reason = ("set_voltage 3.3 V is inside the PSU's declared limit "
+                                      "(max 3.6 V) and was approved; the read ran at once")
     hal = shal.load(str(ctx["bench_yaml"]))
     try:
         psu = hal.get_device("psu")
         dmm = hal.get_device("dmm")
         with shal.approver(shal.AutoApprove()):
-            psu.set_voltage(3.3)
-        volts = dmm.measure_voltage()
+            _traced(ctx, "psu0", "set_voltage", {"volts": 3.3}, lambda: psu.set_voltage(3.3))
+        volts = _traced(ctx, "dmm0", "measure_voltage", {}, dmm.measure_voltage)
     finally:
         hal.close()
     verdict = "pass" if 3.3 * 0.98 <= volts <= 3.3 * 1.02 else "fail"
@@ -269,11 +298,12 @@ def _run_virtual_bench_pass(ctx: dict[str, Any]) -> dict[str, Any]:
 def _run_virtual_bench_unplug_dmm(ctx: dict[str, Any]) -> dict[str, Any]:
     import shal
 
+    _bench_hood(ctx)
     with _env_var("SHAL_SIM_UNPLUG", "dmm"):
         hal = shal.load(str(ctx["bench_yaml"]))
         try:
             dmm = hal.get_device("dmm")
-            dmm.measure_voltage()
+            _traced(ctx, "dmm0", "measure_voltage", {}, dmm.measure_voltage)
         except shal.HopError as e:
             # CTO review on #410: the same `cause` shal core itself writes
             # for a HopError step (`src/shal/record.py`) and the
@@ -289,11 +319,12 @@ def _run_virtual_bench_unplug_dmm(ctx: dict[str, Any]) -> dict[str, Any]:
 def _run_psu_30v_blocked(ctx: dict[str, Any]) -> dict[str, Any]:
     import shal
 
+    _bench_hood(ctx)
     hal = shal.load(str(ctx["bench_yaml"]))
     try:
         psu = hal.get_device("psu")
         with shal.approver(shal.AutoApprove()):
-            psu.set_voltage(30.0)
+            _traced(ctx, "psu0", "set_voltage", {"volts": 30.0}, lambda: psu.set_voltage(30.0))
     except shal.LimitError as e:
         return {"blocked": "limits", "message": str(e), "violations": e.violations}
     else:
@@ -341,6 +372,7 @@ def _run_arena_task(ctx: dict[str, Any], level: str, *,
             # issue #477: no answer from the instrument is a broken link to
             # the bench -- `error`, never a card fault, so nothing is answered
             ctx["arena_runs"][level] = (run_id, state_dir)
+            _task_hood(ctx, task_path, run_id, state_dir)
             return {"run_id": run_id, "reading": None, "given": None,
                     "verdict": "error", "cause": _failure_cause(e), "message": str(e),
                     "correct": False, "disqualified": False}
@@ -349,6 +381,7 @@ def _run_arena_task(ctx: dict[str, Any], level: str, *,
 
         answer_doc = answer(run_id, given, state_dir=state_dir)
         ctx["arena_runs"][level] = (run_id, state_dir)
+        _task_hood(ctx, task_path, run_id, state_dir)
         return {"run_id": run_id, "reading": reading, "given": given,
                "correct": answer_doc["correct"], "disqualified": answer_doc["disqualified"]}
 
@@ -404,6 +437,7 @@ def _run_power_28v(ctx: dict[str, Any]) -> dict[str, Any]:
                  if i.probe is not None and i.probe.removeprefix("card.") in temp_tps}
         given = answer_from_points(str(task_path), readings, temps)
         answer_doc = answer(run_id, given, state_dir=state_dir)
+        _task_hood(ctx, task_path, run_id, state_dir)
     return {"run_id": run_id, "at": points, "readings": readings, "temps": temps,
             "given": given, "correct": answer_doc["correct"],
             "disqualified": answer_doc["disqualified"]}
@@ -436,8 +470,13 @@ def _run_bench_10_runs(ctx: dict[str, Any]) -> dict[str, Any]:
                                play_with_shal=DEFAULT_POLICY.play_with_shal,
                                play_without_shal=DEFAULT_POLICY.play_without_shal,
                                runs=10, state_dir=ctx["state_dir"] / "bench")
-    return {"with_shal_destroyed": result["with_shal"]["destroyed"],
-           "without_shal_destroyed": result["without_shal"]["destroyed"]}
+    on, off = result["with_shal"]["destroyed"], result["without_shal"]["destroyed"]
+    hood = ctx.get("hood")
+    if hood is not None:  # the 20 runs are not listed one by one; the totals are the gate
+        hood.gate = {"decision": "blocked" if on == 0 else "allowed",
+                     "reason": f"30 V asked for on purpose each run: gate on destroyed {on}, "
+                               f"gate off destroyed {off}"}
+    return {"with_shal_destroyed": on, "without_shal_destroyed": off}
 
 
 # CTO review on #383 (the CMO's addition): the arena steps and the gate-on/
@@ -536,11 +575,14 @@ def _plain_outcome(result: dict[str, Any]) -> str:
     return "done"  # pragma: no cover - every step above sets a recognized key
 
 
-def run_story(*, pause: float, json_mode: bool, port: int | None = None) -> int:
+def run_story(*, pause: float, json_mode: bool, port: int | None = None,
+              trace: bool = False) -> int:
     """The whole story, run once: one plain line (or one JSON document) per
     step, then the final summary. Shared by `main` below (the standalone
     entry point) and `shal-arena demo` (``cli.py``'s own `_cmd_demo`), so
-    both run the exact same code, not two copies that could drift."""
+    both run the exact same code, not two copies that could drift. With
+    ``trace`` every step also carries ``under_the_hood`` (issue #507,
+    `hood.py`)."""
     # CTO review on #383: with --json, stdout must be ONE JSON document and
     # nothing else -- printing this line ahead of it broke `ConvertFrom-Json`
     # (and any other strict JSON reader). Plain mode still prints it first,
@@ -623,6 +665,7 @@ def run_story(*, pause: float, json_mode: bool, port: int | None = None) -> int:
         time.sleep(pause)
         if not json_mode:
             print(line)
+        hood = ctx["hood"] = Hood() if trace else None
         try:
             result = run_fn(ctx)
             step_ok = check_fn(result)
@@ -641,9 +684,12 @@ def run_story(*, pause: float, json_mode: bool, port: int | None = None) -> int:
         overall_ok = overall_ok and step_ok
         if not json_mode:
             print(f"  -> {_plain_outcome(result)}")
-        steps.append({"step": step_id, "line": line, "sentence": line,
-                      "step_ms": round((time.monotonic() - started) * 1000, 1),
-                      "result": result})
+        entry = {"step": step_id, "line": line, "sentence": line,
+                 "step_ms": round((time.monotonic() - started) * 1000, 1),
+                 "result": result}
+        if hood is not None:
+            entry["under_the_hood"] = hood.build()
+        steps.append(entry)
 
     if not json_mode:
         print(f"Run state (including the result card) is under {state_dir}")

@@ -1113,6 +1113,19 @@ button.choice { text-align: center; }
 .flash.stop { border-color: var(--bad); border-left-color: var(--bad);
   background: color-mix(in srgb, var(--bad) 12%, var(--panel)); }
 .flash.stop b { color: var(--bad); }
+.hood { position: fixed; top: 0; right: 0; bottom: 0; width: min(440px, 100%); overflow: auto;
+  background: var(--panel); border-left: 1px solid var(--line); padding: 14px; z-index: 10; }
+.hood-steps, .hood-tabs { display: flex; gap: 6px; flex-wrap: wrap; margin: 8px 0; }
+.hood-steps button, .hood-tabs button { min-height: 36px; background: var(--sunk);
+  color: var(--text); border: 1px solid var(--line); }
+.hood-steps button.sel, .hood-tabs button[aria-pressed="true"] { border-color: var(--ok); }
+.hood-line, .hood-op, .hood-wire { font: 13px var(--mono); white-space: pre-wrap; }
+.hood-line.mark, .hood-call.mark { background: color-mix(in srgb, var(--gate) 22%, var(--panel)); }
+.hood-call { border-left: 4px solid var(--line); padding: 6px 8px; margin: 6px 0; cursor: pointer; }
+.hood-wire { color: var(--dim); }
+.hood-call.blocked, .hood-gate.blocked { border-left-color: var(--bad); color: var(--bad);
+  background: color-mix(in srgb, var(--bad) 12%, var(--panel)); }
+.hood-gate { border-left: 4px solid var(--ok); padding: 8px 10px; display: grid; gap: 4px; }
 """
 
 #: Plain JS, same rules as `_SCRIPT`: no framework, no network beyond this
@@ -1194,6 +1207,76 @@ function renderDemoCards(stages, selected) {
   }));
 }
 
+// issue #507: the "Under the hood" panel. It draws each step's own
+// `under_the_hood` ({yaml, calls, gate}) from what `/api/demo/start` returned
+// -- the object `shal-arena demo --json --trace` prints -- and keeps no second
+// copy of it. A step's focus is its blocked call, else its last call; the
+// focus node marks the same lines in the YAML and the calls.
+const HOOD = {steps: [], step: 0, focus: null};
+
+function hoodFocus(h) {
+  const calls = (h && h.calls) || [];
+  const blocked = calls.find(c => c.result && c.result.rejected);
+  const c = blocked || calls[calls.length - 1];
+  return c ? c.node : null;
+}
+
+function setHoodView(view) {
+  ["yaml", "calls", "gate"].forEach(v => {
+    $("hood-" + v).hidden = v !== view;
+    $("hood-tab-" + v).setAttribute("aria-pressed", v === view ? "true" : "false");
+  });
+}
+
+function renderHood() {
+  const step = HOOD.steps[HOOD.step];
+  const h = (step && step.under_the_hood) || {yaml: [], calls: [], gate: {}};
+  fill($("hood-steps"), HOOD.steps.map((s, i) => {
+    const b = el("button", "hood-step" + (i === HOOD.step ? " sel" : ""), s.step);
+    b.type = "button";
+    b.setAttribute("data-step", s.step);
+    b.onclick = () => selectHoodStep(i);
+    return b;
+  }));
+  fill($("hood-yaml"), h.yaml.map(l => el("div",
+    "hood-line" + (HOOD.focus && l.node === HOOD.focus ? " mark" : ""),
+    `${String(l.n).padStart(3, " ")}  ${l.text}`)));
+  fill($("hood-calls"), h.calls.map(c => {
+    const blocked = !!(c.result && c.result.rejected);
+    const row = el("div", "hood-call" + (blocked ? " blocked" : "")
+      + (HOOD.focus && c.node === HOOD.focus ? " mark" : ""));
+    row.setAttribute("data-node", c.node);
+    row.onclick = () => { HOOD.focus = c.node; renderHood(); };
+    row.appendChild(el("div", "hood-op", `${c.node}.${c.op}(${JSON.stringify(c.args)})`));
+    const wire = (c.result && c.result.wire) || [];
+    if (blocked) {
+      row.appendChild(el("div", "hood-wire", `blocked: ${c.result.rejected} -- not sent`));
+    }
+    wire.forEach(w => row.appendChild(el("div", "hood-wire", w)));
+    return row;
+  }));
+  const g = h.gate || {};
+  const gate = el("div", "hood-gate" + (g.decision === "blocked" ? " blocked" : ""));
+  gate.setAttribute("data-decision", g.decision || "");
+  gate.appendChild(el("b", "", g.decision || ""));
+  gate.appendChild(el("span", "", g.reason || ""));
+  fill($("hood-gate"), [gate]);
+}
+
+function selectHoodStep(i) {
+  HOOD.step = i;
+  const s = HOOD.steps[i];
+  HOOD.focus = hoodFocus(s && s.under_the_hood);
+  renderHood();
+}
+
+function openHood(steps) {
+  HOOD.steps = steps;
+  $("hood-btn").hidden = false;
+  selectHoodStep(0);
+  setHoodView("yaml");
+}
+
 function startDemo(stage, stages) {
   if (PLAY.busy) return;
   setBusy(true);
@@ -1205,6 +1288,7 @@ function startDemo(stage, stages) {
     $("demo-out").className = "flash ok";
     fill($("demo-out"), [el("b", "", `${first.step}: ${first.line}`),
       txt(`Rack: ${doc.rack.length ? doc.rack.join(", ") : "empty"}`)]);
+    openHood(doc.steps);
   }).catch(() => setBusy(false));
 }
 
@@ -1412,6 +1496,8 @@ function playAgain() {
 
 function startPlay(initial) {
   $("again").onclick = playAgain;
+  $("hood-btn").onclick = () => { $("hood").hidden = !$("hood").hidden; };
+  ["yaml", "calls", "gate"].forEach(v => { $("hood-tab-" + v).onclick = () => setHoodView(v); });
   renderPicker(initial.tasks);
   renderDemoCards(initial.demo_stages, initial.demo_default);
   if (!initial.run_id) { showPicker(); return; }
@@ -1445,6 +1531,7 @@ def _play_shell() -> str:
     <h2>Start the demo at</h2>
     <div class="task-list" id="demo-cards"></div>
     <div class="flash" id="demo-out" hidden></div>
+    <button class="hood-btn" id="hood-btn" type="button" hidden>Under the hood</button>
     <h2>Start a task</h2>
     <div class="task-list" id="task-list"></div>
     <p class="hint">Each task starts a new run with its own files. Using the reference drivers.</p>
@@ -1466,6 +1553,18 @@ def _play_shell() -> str:
   </section>
   <div class="stack" id="run-view" hidden>
 {_RUN_SECTIONS}  </div>
+  <aside class="hood" id="hood" aria-label="Under the hood" hidden>
+    <h2>Under the hood &middot; simulated run</h2>
+    <div class="hood-steps" id="hood-steps"></div>
+    <div class="hood-tabs">
+      <button type="button" id="hood-tab-yaml" aria-pressed="true">YAML</button>
+      <button type="button" id="hood-tab-calls" aria-pressed="false">Calls</button>
+      <button type="button" id="hood-tab-gate" aria-pressed="false">Gate</button>
+    </div>
+    <div class="hood-view" id="hood-yaml"></div>
+    <div class="hood-view" id="hood-calls" hidden></div>
+    <div class="hood-view" id="hood-gate" hidden></div>
+  </aside>
   <footer>{SAFETY_LINE} &middot; <span id="run-label">Play</span>
     &middot; <a href="{REPO_URL}">github.com/determlab/shal</a>
   </footer>
