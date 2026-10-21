@@ -65,25 +65,71 @@ def test_reference_driver_exists_and_is_copyable() -> None:
         "arena/examples/reference_driver/driver.py must exist (issue #346 Done-when)")
 
 
-def test_every_readme_bash_command_runs_and_prints_valid_json(tmp_path: Path) -> None:
-    commands = [c for c in _readme_bash_commands() if c[0] == "shal-arena"]
-    assert commands, "README should document at least one shal-arena command"
+_BASH_THEN_OUTPUT_RE = re.compile(r"```bash\n(.*?)```(\s*)(?:```\w*\n(.*?)```)?", re.DOTALL)
 
+
+def _pasted_output_keys(block_body: str | None) -> set[str] | None:
+    """Top-level keys of a pasted output block, or None when there is no block
+    or it is not one JSON object (a `$ ...` transcript, an illustration)."""
+    if block_body is None:
+        return None
+    try:
+        doc = json.loads(block_body)
+    except ValueError:
+        return None
+    return set(doc) if isinstance(doc, dict) else None
+
+
+def _run_readme_commands(text: str, cwd: Path) -> list[str]:
+    """Run every `shal-arena` command of the README text in document order
+    (a `<run-id>` takes the id the `run` command printed) and return the
+    problems found: a command that fails, and, for a command whose output is
+    pasted as a JSON block right after its ```bash block, the top-level keys
+    the pasted block lacks or has extra against the real `--json` output."""
+    problems: list[str] = []
     run_id: str | None = None
-    for command in commands:
-        tokens = command[1:]  # drop the leading "shal-arena"
-        tokens = [run_id if (t == "<run-id>" and run_id) else t for t in tokens]
-        assert "<run-id>" not in tokens, (
-            f"no run id captured yet for the README command: {command!r}")
-        tokens = _resolve_repo_paths(tokens)
+    for match in _BASH_THEN_OUTPUT_RE.finditer(text):
+        lines = [shlex.split(line, comments=True) for line in match.group(1).splitlines()]
+        commands = [c for c in lines if c and c[0] == "shal-arena"]
+        pasted = _pasted_output_keys(match.group(3)) if len(commands) == 1 else None
+        for command in commands:
+            tokens = [run_id if (t == "<run-id>" and run_id) else t for t in command[1:]]
+            assert "<run-id>" not in tokens, (
+                f"no run id captured yet for the README command: {command!r}")
+            proc = _run_cli(_resolve_repo_paths(tokens), cwd=cwd)
+            assert proc.returncode == 0, f"{command}\nstderr: {proc.stderr}"
+            doc = json.loads(proc.stdout)
+            assert doc.get("ok") is True, f"{command}\n{proc.stdout}"
+            if tokens and tokens[0] == "run":
+                run_id = doc["run_id"]
+            if pasted is not None:
+                missing = sorted(set(doc) - pasted)
+                extra = sorted(pasted - set(doc))
+                if missing or extra:
+                    problems.append(
+                        f"{' '.join(command)}: README block is missing keys {missing}, "
+                        f"has extra keys {extra} against the real --json output")
+    return problems
 
-        proc = _run_cli(tokens, cwd=tmp_path)
-        assert proc.returncode == 0, f"{command}\nstderr: {proc.stderr}"
-        doc = json.loads(proc.stdout)
-        assert doc.get("ok") is True, f"{command}\n{proc.stdout}"
 
-        if tokens and tokens[0] == "run":
-            run_id = doc["run_id"]
+def test_every_readme_bash_command_runs_and_prints_valid_json(tmp_path: Path) -> None:
+    text = _README.read_text(encoding="utf-8")
+    assert any(c[0] == "shal-arena" for c in _readme_bash_commands()), (
+        "README should document at least one shal-arena command")
+    _run_readme_commands(text, tmp_path)
+
+
+def test_readme_pasted_json_has_the_real_top_level_keys(tmp_path: Path) -> None:
+    problems = _run_readme_commands(_README.read_text(encoding="utf-8"), tmp_path)
+    assert not problems, "\n".join(problems)
+
+
+def test_readme_block_with_a_key_removed_fails_naming_the_key(tmp_path: Path) -> None:
+    text = _README.read_text(encoding="utf-8")
+    line = '  "closed_at": "2026-10-05T20:28:47Z",\n'
+    assert text.count(line) == 1, "the README's `answer` block should carry closed_at"
+    problems = _run_readme_commands(text.replace(line, ""), tmp_path)
+    assert any("shal-arena answer" in p and "closed_at" in p for p in problems), problems
 
 
 def test_readme_never_names_the_default_seed_fault() -> None:
