@@ -15,4 +15,5 @@ Output folder: `build/site/` (git-ignored) with `index.html`, `replay.html`,
 CI: `.github/workflows/site.yml` runs the same build and uploads the folder
 as the `site` artifact on every pull request and push. It deploys to GitHub
 Pages only on a push to `main` or a manual run, and only once a person has
-enabled Pages in the repo settings; the workflow never enables it.
+enabled Pages in the repo settings and set the repository variable
+`PAGES_ENABLED` to `true` in the same step; the workflow never enables Pages.
