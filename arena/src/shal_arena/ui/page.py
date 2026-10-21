@@ -1113,6 +1113,32 @@ button.choice { text-align: center; }
 .flash.stop { border-color: var(--bad); border-left-color: var(--bad);
   background: color-mix(in srgb, var(--bad) 12%, var(--panel)); }
 .flash.stop b { color: var(--bad); }
+.uth { position: fixed; top: 0; right: 0; bottom: 0; width: min(520px, 100%);
+  overflow: auto; z-index: 5; padding: 16px; background: var(--panel);
+  border-left: 1px solid var(--line); display: grid; gap: 12px; align-content: start; }
+.uth-steps { display: flex; gap: 6px; flex-wrap: wrap; }
+.uth h3 { margin: 0 0 4px; font-size: 14px; color: var(--dim); }
+.uth-yaml { font: 13px var(--mono); background: var(--sunk); border-radius: 8px;
+  padding: 8px 0; overflow-x: auto; }
+.uth-line { white-space: pre; padding: 0 12px; border-left: 3px solid transparent; }
+.uth-line.hot { background: color-mix(in srgb, var(--gate) 18%, var(--sunk));
+  border-left-color: var(--gate); }
+.uth-line.hot.bad { background: color-mix(in srgb, var(--bad) 18%, var(--sunk));
+  border-left-color: var(--bad); color: var(--bad); }
+.uth-calls { display: grid; gap: 6px; }
+button.uth-call { display: grid; gap: 2px; text-align: left; padding: 8px 10px;
+  min-height: 44px;
+  font: 13px var(--mono); background: var(--sunk); color: var(--text);
+  border: 1px solid var(--line); border-radius: 8px; }
+button.uth-call.hot { border-color: var(--gate); }
+button.uth-call .w, button.uth-call .r { color: var(--dim); }
+button.uth-call.blocked, button.uth-call.blocked .w, button.uth-call.blocked .r {
+  color: var(--bad); border-color: var(--bad); }
+.uth-gate { border: 1px solid var(--line); border-left: 4px solid var(--ok);
+  border-radius: 8px; padding: 10px 12px; background: var(--sunk); font-size: 14px; }
+.uth-gate b { display: block; font-size: 15px; }
+.uth-gate.blocked { border-color: var(--bad); border-left-color: var(--bad);
+  color: var(--bad); background: color-mix(in srgb, var(--bad) 12%, var(--panel)); }
 """
 
 #: Plain JS, same rules as `_SCRIPT`: no framework, no network beyond this
@@ -1205,7 +1231,103 @@ function startDemo(stage, stages) {
     $("demo-out").className = "flash ok";
     fill($("demo-out"), [el("b", "", `${first.step}: ${first.line}`),
       txt(`Rack: ${doc.rack.length ? doc.rack.join(", ") : "empty"}`)]);
+    loadUth(doc);
   }).catch(() => setBusy(false));
+}
+
+// issue #507: the "Under the hood" panel. It shows each step's own
+// `under_the_hood` object, exactly as `/api/demo/start` returned it (the
+// document `shal-arena demo --from STAGE --json --trace` prints) -- three
+// views of one run: the YAML, the calls down to the command, the gate.
+const UTH = {steps: [], note: "", sel: 0, call: null};
+
+// the YAML line a call's node is named on: `id: psu`, `address: dmm0`, `scpi_psu:`.
+function uthYamlLine(lines, node) {
+  const name = String(node).replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  const re = new RegExp("(^|[\\s:-])" + name + "(:|\\s|$)");
+  return lines.findIndex(l => re.test(l));
+}
+
+// a blocked call first (it is what the viewer should see), else the first.
+function uthFirstCall(u) {
+  const calls = (u && u.calls) || [];
+  const blocked = calls.findIndex(c => c.result && c.result.blocked);
+  return blocked >= 0 ? blocked : (calls.length ? 0 : null);
+}
+
+function uthArgs(args) {
+  return (Array.isArray(args) ? args : [args]).map(a => JSON.stringify(a)).join(", ");
+}
+
+function loadUth(doc) {
+  UTH.steps = doc.steps || [];
+  UTH.note = doc.note || "";
+  UTH.sel = 0;
+  UTH.call = uthFirstCall((UTH.steps[0] || {}).under_the_hood);
+  $("uth-open").hidden = false;
+  renderUth();
+}
+
+function toggleUth() {
+  const open = $("uth-panel").hidden;
+  $("uth-panel").hidden = !open;
+  $("uth-open").setAttribute("aria-expanded", open ? "true" : "false");
+}
+
+function selectUthStep(i) {
+  UTH.sel = i;
+  UTH.call = uthFirstCall((UTH.steps[i] || {}).under_the_hood);
+  renderUth();
+}
+
+function selectUthCall(i) {
+  UTH.call = i;
+  renderUth();
+}
+
+function renderUth() {
+  const step = UTH.steps[UTH.sel] || {};
+  const u = step.under_the_hood || {yaml: [], calls: [], gate: null};
+  const call = UTH.call === null ? null : u.calls[UTH.call];
+  const hot = call ? uthYamlLine(u.yaml, call.node) : -1;
+  $("uth-label").textContent = UTH.note;
+  fill($("uth-steps"), UTH.steps.map((s, i) => {
+    const b = el("button", "task-btn" + (i === UTH.sel ? " sel" : ""));
+    b.type = "button";
+    b.setAttribute("data-uth", "step");
+    b.setAttribute("data-step", s.step);
+    b.setAttribute("aria-pressed", i === UTH.sel ? "true" : "false");
+    b.appendChild(el("span", "t", s.step));
+    b.onclick = () => selectUthStep(i);
+    return b;
+  }));
+  fill($("uth-yaml"), u.yaml.map((line, i) => {
+    const row = el("div", "uth-line" + (i === hot ? " hot" : "")
+      + (i === hot && call.result.blocked ? " bad" : ""), line || " ");
+    row.setAttribute("data-line", String(i));
+    if (i === hot) row.setAttribute("data-hot", "1");
+    return row;
+  }));
+  fill($("uth-calls"), u.calls.map((c, i) => {
+    const r = c.result || {};
+    const b = el("button", "uth-call" + (i === UTH.call ? " hot" : "")
+      + (r.blocked ? " blocked" : ""));
+    b.type = "button";
+    b.setAttribute("data-uth", "call");
+    b.setAttribute("data-call", String(i));
+    if (i === UTH.call) b.setAttribute("data-hot", "1");
+    b.appendChild(el("span", "c", `${c.node}.${c.op}(${uthArgs(c.args)})`));
+    const wire = (r.scpi || []).join(" ; ");
+    b.appendChild(el("span", "w", r.blocked ? "blocked, not sent"
+      : (wire ? `sent: ${wire}` : "")));
+    b.appendChild(el("span", "r", r.ok ? `→ ${JSON.stringify(r.value)}` : `✗ ${r.error}`));
+    b.onclick = () => selectUthCall(i);
+    return b;
+  }));
+  const g = u.gate;
+  const gateEl = $("uth-gate");
+  gateEl.className = "uth-gate" + (g && g.decision === "blocked" ? " blocked" : "");
+  fill(gateEl, g ? [el("b", "", g.decision), txt(g.reason)] : []);
 }
 
 function startTask(name) {
@@ -1412,6 +1534,7 @@ function playAgain() {
 
 function startPlay(initial) {
   $("again").onclick = playAgain;
+  $("uth-open").onclick = toggleUth;
   renderPicker(initial.tasks);
   renderDemoCards(initial.demo_stages, initial.demo_default);
   if (!initial.run_id) { showPicker(); return; }
@@ -1445,6 +1568,8 @@ def _play_shell() -> str:
     <h2>Start the demo at</h2>
     <div class="task-list" id="demo-cards"></div>
     <div class="flash" id="demo-out" hidden></div>
+    <button class="again" id="uth-open" type="button" aria-expanded="false"
+      aria-controls="uth-panel" hidden>Under the hood</button>
     <h2>Start a task</h2>
     <div class="task-list" id="task-list"></div>
     <p class="hint">Each task starts a new run with its own files. Using the reference drivers.</p>
@@ -1466,6 +1591,17 @@ def _play_shell() -> str:
   </section>
   <div class="stack" id="run-view" hidden>
 {_RUN_SECTIONS}  </div>
+  <aside class="uth" id="uth-panel" aria-label="Under the hood" hidden>
+    <h2>Under the hood</h2>
+    <p class="hint" id="uth-label"></p>
+    <div class="uth-steps" id="uth-steps"></div>
+    <section class="uth-view" data-view="yaml"><h3>YAML</h3>
+      <div class="uth-yaml" id="uth-yaml"></div></section>
+    <section class="uth-view" data-view="calls"><h3>Calls</h3>
+      <div class="uth-calls" id="uth-calls"></div></section>
+    <section class="uth-view" data-view="gate"><h3>Gate</h3>
+      <div class="uth-gate" id="uth-gate"></div></section>
+  </aside>
   <footer>{SAFETY_LINE} &middot; <span id="run-label">Play</span>
     &middot; <a href="{REPO_URL}">github.com/determlab/shal</a>
   </footer>

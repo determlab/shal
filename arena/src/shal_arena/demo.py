@@ -38,6 +38,7 @@ from pathlib import Path
 from typing import Any
 
 from .store import RunStore
+from .trace import BLOCKED, Trace
 
 FIRST_LINE = "Simulated instruments only. Nothing here touches real hardware."
 
@@ -250,6 +251,12 @@ def check_bench_10_runs(result: dict[str, Any]) -> bool:
 # -- the real world: shal's and shal_arena's own Python APIs --------------- #
 
 
+def _trace(ctx: dict[str, Any]) -> Trace:
+    """issue #507: the current step's `Trace` (a throwaway one when a caller
+    runs a step function without `run_story`)."""
+    return ctx.get("trace") or Trace()
+
+
 def _run_virtual_bench_pass(ctx: dict[str, Any]) -> dict[str, Any]:
     import shal
 
@@ -257,9 +264,10 @@ def _run_virtual_bench_pass(ctx: dict[str, Any]) -> dict[str, Any]:
     try:
         psu = hal.get_device("psu")
         dmm = hal.get_device("dmm")
+        trace = _trace(ctx)
         with shal.approver(shal.AutoApprove()):
-            psu.set_voltage(3.3)
-        volts = dmm.measure_voltage()
+            trace.call("psu", "set_voltage", [3.3], lambda: psu.set_voltage(3.3))
+        volts = trace.call("dmm", "measure_voltage", [], dmm.measure_voltage)
     finally:
         hal.close()
     verdict = "pass" if 3.3 * 0.98 <= volts <= 3.3 * 1.02 else "fail"
@@ -273,7 +281,7 @@ def _run_virtual_bench_unplug_dmm(ctx: dict[str, Any]) -> dict[str, Any]:
         hal = shal.load(str(ctx["bench_yaml"]))
         try:
             dmm = hal.get_device("dmm")
-            dmm.measure_voltage()
+            _trace(ctx).call("dmm", "measure_voltage", [], dmm.measure_voltage)
         except shal.HopError as e:
             # CTO review on #410: the same `cause` shal core itself writes
             # for a HopError step (`src/shal/record.py`) and the
@@ -293,7 +301,7 @@ def _run_psu_30v_blocked(ctx: dict[str, Any]) -> dict[str, Any]:
     try:
         psu = hal.get_device("psu")
         with shal.approver(shal.AutoApprove()):
-            psu.set_voltage(30.0)
+            _trace(ctx).call("psu", "set_voltage", [30.0], lambda: psu.set_voltage(30.0))
     except shal.LimitError as e:
         return {"blocked": "limits", "message": str(e), "violations": e.violations}
     else:
@@ -536,7 +544,41 @@ def _plain_outcome(result: dict[str, Any]) -> str:
     return "done"  # pragma: no cover - every step above sets a recognized key
 
 
-def run_story(*, pause: float, json_mode: bool, port: int | None = None) -> int:
+#: issue #507: per step, the packaged task (and run sub-directory) it plays;
+#: the bench steps use the embedded bench topology instead.
+_STEP_TASKS = {"arena_easy": ("easy", "easy"), "arena_medium": ("medium", "medium"),
+               "arena_hard": ("hard", "hard"), "arena_power_28v": ("power-28v", "power-28v"),
+               "bench_10_runs": ("rail-3v3", None)}
+_BENCH_STEPS = ("virtual_bench_pass", "virtual_bench_unplug_dmm", "psu_30v_blocked")
+
+
+def _under_the_hood(step_id: str, result: dict[str, Any], trace: Trace,
+                    ctx: dict[str, Any]) -> dict[str, Any]:
+    """issue #507: the step's ``under_the_hood`` object (see `trace.py`) --
+    the YAML the step used, the calls it made and what the gate decided.
+    Arena steps' calls are read back from the run's own sim log."""
+    yaml_text = ""
+    if step_id in _BENCH_STEPS:
+        yaml_text = _BENCH_TOPOLOGY_YAML
+    elif step_id in _STEP_TASKS:
+        task, run_dir = _STEP_TASKS[step_id]
+        yaml_text = (importlib_resources.files("shal_arena") / "tasks" / f"{task}.yaml"
+                     ).read_text(encoding="utf-8")
+        if run_dir is not None and result.get("run_id"):
+            from .simlog import SimLog
+
+            store = RunStore(ctx["state_dir"] / run_dir)
+            trace.from_sim_log(SimLog(store.sim_log_path(result["run_id"])).entries())
+    doc = trace.under_the_hood(yaml_text)
+    if step_id == "bench_10_runs" and result.get("with_shal_destroyed") == 0:
+        doc["gate"] = {"decision": BLOCKED,
+                       "reason": f"gate on: {result['with_shal_destroyed']} destroyed, "
+                                 f"gate off: {result['without_shal_destroyed']} destroyed"}
+    return doc
+
+
+def run_story(*, pause: float, json_mode: bool, port: int | None = None,
+              trace: bool = False) -> int:
     """The whole story, run once: one plain line (or one JSON document) per
     step, then the final summary. Shared by `main` below (the standalone
     entry point) and `shal-arena demo` (``cli.py``'s own `_cmd_demo`), so
@@ -623,6 +665,7 @@ def run_story(*, pause: float, json_mode: bool, port: int | None = None) -> int:
         time.sleep(pause)
         if not json_mode:
             print(line)
+        step_trace = ctx["trace"] = Trace()
         try:
             result = run_fn(ctx)
             step_ok = check_fn(result)
@@ -641,9 +684,12 @@ def run_story(*, pause: float, json_mode: bool, port: int | None = None) -> int:
         overall_ok = overall_ok and step_ok
         if not json_mode:
             print(f"  -> {_plain_outcome(result)}")
-        steps.append({"step": step_id, "line": line, "sentence": line,
-                      "step_ms": round((time.monotonic() - started) * 1000, 1),
-                      "result": result})
+        entry = {"step": step_id, "line": line, "sentence": line,
+                 "step_ms": round((time.monotonic() - started) * 1000, 1),
+                 "result": result}
+        if trace and json_mode:
+            entry["under_the_hood"] = _under_the_hood(step_id, result, step_trace, ctx)
+        steps.append(entry)
 
     if not json_mode:
         print(f"Run state (including the result card) is under {state_dir}")
@@ -674,6 +720,9 @@ def main(argv: list[str] | None = None) -> int:
                              "use 0 for CI)")
     parser.add_argument("--json", action="store_true",
                         help="print one JSON document on stdout instead of narrating")
+    parser.add_argument("--trace", action="store_true",
+                        help="issue #507: with --json, add `under_the_hood: {yaml, calls, "
+                             "gate}` to every step")
     parser.add_argument("--port", type=int, default=None, metavar="PORT",
                         help="issue #408: included in the printed ui hint "
                              "('shal-arena ui --run <id> --port PORT') for whoever will "
@@ -682,7 +731,8 @@ def main(argv: list[str] | None = None) -> int:
     args = parser.parse_args(argv)
     if args.port is not None and not (1 <= args.port <= 65535):
         parser.error(f"--port must be between 1 and 65535, got {args.port}")
-    return run_story(pause=args.pause, json_mode=args.json, port=args.port)
+    return run_story(pause=args.pause, json_mode=args.json, port=args.port,
+                     trace=args.trace)
 
 
 if __name__ == "__main__":

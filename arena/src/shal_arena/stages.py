@@ -33,6 +33,7 @@ from typing import Any
 import yaml
 
 from .errors import ArenaError, TaskFormatError
+from .trace import Trace
 
 STAGES: tuple[str, ...] = ("empty", "picked", "racked", "wired", "ran")
 
@@ -140,12 +141,18 @@ def bench(preset: Preset) -> Iterator[Any]:
             hal.close()
 
 
-def _reads(hal: Any) -> dict[str, Any]:
-    return {t["name"]: hal.call_tool(t["name"], {}) for t in hal.tool_catalog()
-            if t["side_effect"] == "none"}
+def _node(device: str) -> str:
+    """A device's last path segment (its id, or its key in the topology)."""
+    return device.rstrip("/").rsplit("/", 1)[-1]
 
 
-def _step(stage: str) -> tuple[dict[str, Any], bool]:
+def _reads(hal: Any, trace: Trace) -> dict[str, Any]:
+    return {t["name"]: trace.tool(hal, t["name"], _node(t["device"]), t["op"], {})
+            for t in hal.tool_catalog() if t["side_effect"] == "none"}
+
+
+def _step(stage: str, trace: Trace | None = None) -> tuple[dict[str, Any], bool]:
+    trace = trace or Trace()
     preset = load_preset(stage)
     if preset.topology is None:
         return ({"instruments": [], "next": "pick instruments: "
@@ -157,12 +164,13 @@ def _step(stage: str) -> tuple[dict[str, Any], bool]:
                                   "tools": [t["name"] for t in catalog]}
         ok = len(instruments) == len(_case_names(preset.topology))
         if stage in ("wired", "ran"):
-            reads = _reads(hal)
+            reads = _reads(hal, trace)
             result["reads"] = reads
             ok = ok and bool(reads) and all(r["ok"] for r in reads.values())
         if stage == "ran":
-            tool = next(t["name"] for t in catalog if t["op"] == _GATED_OP)
-            called = hal.call_tool(tool, dict(_GATED_ARGS))
+            gated = next(t for t in catalog if t["op"] == _GATED_OP)
+            tool = gated["name"]
+            called = trace.tool(hal, tool, _node(gated["device"]), _GATED_OP, _GATED_ARGS)
             result["seed"] = preset.seed
             result["gate"] = {"tool": tool, "rejected": called.get("rejected"),
                               "sent": "rejected" not in called}
@@ -170,7 +178,14 @@ def _step(stage: str) -> tuple[dict[str, Any], bool]:
     return result, ok
 
 
-def run_from(stage: str, *, pause: float, json_mode: bool) -> int:
+def _setup_yaml(stage: str) -> str:
+    """issue #507: the stage's setup YAML as shown under the hood (the preset
+    without its `stage:`/`run:` keys); empty for `empty`."""
+    topology = load_preset(stage).topology
+    return yaml.safe_dump(topology, sort_keys=False) if topology else ""
+
+
+def run_from(stage: str, *, pause: float, json_mode: bool, trace: bool = False) -> int:
     """One step per stage from ``stage`` to ``ran``, each from its own preset
     -- the first step is ``stage``. Plain lines, or one JSON document on
     stdout. Raises `UnknownStage` before any step runs."""
@@ -188,8 +203,9 @@ def run_from(stage: str, *, pause: float, json_mode: bool) -> int:
         line = _LINES[step_id]
         if not json_mode:
             print(line)
+        step_trace = Trace()
         try:
-            result, ok = _step(step_id)
+            result, ok = _step(step_id, step_trace)
         except Exception as e:  # noqa: BLE001 - one stage's crash must not hide the rest
             traceback.print_exc()
             result = {"crashed": f"{type(e).__name__}: {e}",
@@ -200,9 +216,12 @@ def run_from(stage: str, *, pause: float, json_mode: bool) -> int:
         if not json_mode:
             print(f"  -> {'ok' if ok else 'failed'}")
             sys.stdout.flush()
-        steps.append({"step": step_id, "line": line, "sentence": line,
-                      "step_ms": round((time.monotonic() - started) * 1000, 1),
-                      "ok": ok, "result": result})
+        entry = {"step": step_id, "line": line, "sentence": line,
+                 "step_ms": round((time.monotonic() - started) * 1000, 1),
+                 "ok": ok, "result": result}
+        if trace and json_mode:
+            entry["under_the_hood"] = step_trace.under_the_hood(_setup_yaml(step_id))
+        steps.append(entry)
     if json_mode:
         print(json.dumps({"ok": overall_ok, "note": FIRST_LINE, "from": stage,
                           "side_effect": "none", "steps": steps}, indent=2, default=str))

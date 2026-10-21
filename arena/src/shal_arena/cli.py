@@ -61,10 +61,11 @@ def _cmd_demo(args: argparse.Namespace) -> int:
         # issue #508: start from one stage's preset instead of the whole story
         from .stages import run_from
         try:
-            return run_from(args.from_stage, pause=pause, json_mode=args.json)
+            return run_from(args.from_stage, pause=pause, json_mode=args.json,
+                            trace=args.trace)
         except ArenaError as e:
             return _report_error(e, args.json)
-    return run_story(pause=pause, json_mode=args.json)
+    return run_story(pause=pause, json_mode=args.json, trace=args.trace)
 
 
 def _parse_driver_args(specs: list[str]) -> dict[str, dict[str, Any]]:
@@ -446,6 +447,10 @@ def _build_parser() -> argparse.ArgumentParser:
                         help="seconds between steps (default: 2.0, or 0 under --json)")
     p_demo.add_argument("--json", action="store_true",
                         help="print one JSON document on stdout instead of narrating")
+    p_demo.add_argument("--trace", action="store_true",
+                        help="issue #507: with --json, add `under_the_hood: {yaml, calls, "
+                             "gate}` to every step -- what the demo page's 'Under the hood' "
+                             "button shows")
     p_demo.add_argument("--from", dest="from_stage", default=None, metavar="STAGE",
                         help="issue #508: start from one stage's preset instead -- one of "
                              "empty, picked, racked, wired, ran; runs each stage from "

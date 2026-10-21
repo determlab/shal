@@ -533,7 +533,8 @@ def _demo_from(stage: str) -> dict[str, Any]:
     caller holds `demo_lock`: stdout is process-wide."""
     out = io.StringIO()
     with contextlib.redirect_stdout(out):
-        stages.run_from(stage, pause=0, json_mode=True)
+        # issue #507: `--trace`, so the "Under the hood" button shows this very document
+        stages.run_from(stage, pause=0, json_mode=True, trace=True)
     return json.loads(out.getvalue())
 
 
