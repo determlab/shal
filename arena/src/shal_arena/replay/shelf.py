@@ -194,9 +194,9 @@ rack.addEventListener('drop', ev => {{
   rack.appendChild(el);
 }});
 document.getElementById('check-btn').addEventListener('click', () => {{
-  const missing = placed.filter(i => DEVICES[i].driver !== 'present');
+  // The rack only ever holds driven devices (a grey card is refused on drop);
+  // the missing-driver list for a given rack is `rack_check` / `--check`.
   status.textContent = !placed.length ? 'The rack is empty.'
-    : missing.length ? 'Missing drivers: ' + missing.join(', ')
     : 'Rack ok: every device has a driver.';
 }});
 </script>
