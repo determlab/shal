@@ -1113,6 +1113,30 @@ button.choice { text-align: center; }
 .flash.stop { border-color: var(--bad); border-left-color: var(--bad);
   background: color-mix(in srgb, var(--bad) 12%, var(--panel)); }
 .flash.stop b { color: var(--bad); }
+button.hood-btn, button.hood-x, button.hood-step { min-height: 44px; background: var(--sunk);
+  color: var(--text); border: 1px solid var(--line); padding: 8px 14px; }
+button.hood-btn { margin-top: 10px; }
+.hood { position: fixed; top: 0; right: 0; bottom: 0; width: min(440px, 100%);
+  overflow-y: auto; z-index: 10; background: var(--panel); padding: 16px;
+  border-left: 1px solid var(--line); box-shadow: -8px 0 24px rgba(0,0,0,.35); }
+.hood-head { display: flex; justify-content: space-between; align-items: center; }
+.hood h3 { font-size: 13px; color: var(--dim); text-transform: uppercase; margin: 14px 0 6px; }
+.hood-steps { display: flex; flex-wrap: wrap; gap: 6px; }
+button.hood-step.cur { border-color: var(--ok); }
+.hood-yaml, .hood-calls { font: 13px var(--mono); background: var(--sunk);
+  border: 1px solid var(--line); border-radius: 8px; padding: 8px 0; overflow-x: auto; }
+.hood-line { white-space: pre; padding: 0 10px; }
+.hood-line.hl, .hood-call.hl { background: color-mix(in srgb, var(--gate) 22%, var(--sunk)); }
+.hood-call { padding: 6px 10px; cursor: pointer; }
+.hood-call.cur { border-left: 3px solid var(--gate); }
+.hood-result { color: var(--dim); }
+.hood-gate { border: 1px solid var(--line); border-left: 4px solid var(--ok);
+  border-radius: 8px; padding: 10px 12px; background: var(--sunk); }
+.hood-gate b { display: block; }
+.hood-gate.approved { border-left-color: var(--gate); }
+.hood-gate.stop { border-color: var(--bad); border-left-color: var(--bad);
+  background: color-mix(in srgb, var(--bad) 12%, var(--panel)); }
+.hood-gate.stop b { color: var(--bad); }
 """
 
 #: Plain JS, same rules as `_SCRIPT`: no framework, no network beyond this
@@ -1194,13 +1218,77 @@ function renderDemoCards(stages, selected) {
   }));
 }
 
+// issue #507: "Under the hood". The panel shows `under_the_hood` of each step
+// of the same `demo --from STAGE --json --trace` document the card started --
+// {yaml, calls, gate} -- and nothing else: no second copy of any of it.
+const HOOD = {doc: null, step: 0, call: 0};
+
+// a call's node ("/bench0/scpi_psu", "psu0", "dmm") -> its last name
+function hoodKey(node) { return String(node).split("/").filter(Boolean).pop() || ""; }
+
+function hoodLineHasNode(line, key) {
+  const s = String(line).trim();
+  return !!key && (s === `id: ${key}` || s.startsWith(`${key}:`)
+    || s.endsWith(`address: ${key}`));
+}
+
+function renderHood() {
+  const doc = HOOD.doc;
+  if (!doc) return;
+  const s = doc.steps[HOOD.step];
+  const h = s.under_the_hood;
+  const cur = h.calls[HOOD.call];
+  const key = cur ? hoodKey(cur.node) : "";
+  fill($("hood-steps"), doc.steps.map((st, i) => {
+    const b = el("button", "hood-step" + (i === HOOD.step ? " cur" : ""), st.step);
+    b.type = "button";
+    b.setAttribute("data-step", st.step);
+    b.setAttribute("aria-pressed", i === HOOD.step ? "true" : "false");
+    b.onclick = () => { HOOD.step = i; HOOD.call = 0; renderHood(); };
+    return b;
+  }));
+  $("hood-sentence").textContent = s.sentence || s.line || "";
+  $("hood-label").textContent = doc.note || "Simulated instruments only.";
+  fill($("hood-yaml"), h.yaml.map((line, i) => {
+    const d = el("div", "hood-line" + (hoodLineHasNode(line, key) ? " hl" : ""), line || " ");
+    d.setAttribute("data-line", String(i));
+    return d;
+  }));
+  fill($("hood-calls"), h.calls.map((c, i) => {
+    const hl = hoodKey(c.node) === key;
+    const d = el("div", "hood-call" + (hl ? " hl" : "") + (i === HOOD.call ? " cur" : ""));
+    d.setAttribute("data-call", String(i));
+    d.appendChild(el("b", "", `${c.node} ${c.op}`));
+    d.appendChild(el("span", "", ` ${JSON.stringify(c.args)}`));
+    d.appendChild(el("div", "hood-result", `-> ${typeof c.result === "string"
+      ? c.result : JSON.stringify(c.result)}`));
+    d.onclick = () => { HOOD.call = i; renderHood(); };
+    return d;
+  }));
+  const blocked = h.gate.decision === "blocked";
+  const g = $("hood-gate");
+  g.className = "hood-gate " + (blocked ? "stop" : h.gate.decision);
+  g.setAttribute("data-decision", h.gate.decision);
+  fill(g, [el("b", "", h.gate.decision), el("div", "", h.gate.reason)]);
+}
+
+function toggleHood() {
+  const p = $("hood");
+  p.hidden = !p.hidden;
+  $("hood-btn").setAttribute("aria-expanded", p.hidden ? "false" : "true");
+  if (!p.hidden) renderHood();
+}
+
 function startDemo(stage, stages) {
   if (PLAY.busy) return;
   setBusy(true);
-  post("/api/demo/start", {stage}).then(({status, doc}) => {
+  post("/api/demo/start", {stage, trace: true}).then(({status, doc}) => {
     setBusy(false);
     if (status !== 200) { flashInto("demo-out", doc); return; }
     renderDemoCards(stages, stage);
+    HOOD.doc = doc; HOOD.step = 0; HOOD.call = 0;
+    $("hood-btn").hidden = false;
+    if (!$("hood").hidden) renderHood();
     const first = doc.steps[0];
     $("demo-out").className = "flash ok";
     fill($("demo-out"), [el("b", "", `${first.step}: ${first.line}`),
@@ -1412,6 +1500,8 @@ function playAgain() {
 
 function startPlay(initial) {
   $("again").onclick = playAgain;
+  $("hood-btn").onclick = toggleHood;
+  $("hood-close").onclick = toggleHood;
   renderPicker(initial.tasks);
   renderDemoCards(initial.demo_stages, initial.demo_default);
   if (!initial.run_id) { showPicker(); return; }
@@ -1445,6 +1535,8 @@ def _play_shell() -> str:
     <h2>Start the demo at</h2>
     <div class="task-list" id="demo-cards"></div>
     <div class="flash" id="demo-out" hidden></div>
+    <button class="hood-btn" id="hood-btn" type="button" hidden aria-expanded="false"
+      aria-controls="hood">Under the hood</button>
     <h2>Start a task</h2>
     <div class="task-list" id="task-list"></div>
     <p class="hint">Each task starts a new run with its own files. Using the reference drivers.</p>
@@ -1466,6 +1558,16 @@ def _play_shell() -> str:
   </section>
   <div class="stack" id="run-view" hidden>
 {_RUN_SECTIONS}  </div>
+  <aside class="hood" id="hood" aria-label="Under the hood" hidden>
+    <div class="hood-head"><h2>Under the hood</h2>
+      <button class="hood-x" id="hood-close" type="button">Close</button></div>
+    <p class="hint" id="hood-label"></p>
+    <div class="hood-steps" id="hood-steps"></div>
+    <p class="hint" id="hood-sentence"></p>
+    <h3>YAML</h3><div class="hood-yaml" id="hood-yaml" data-view="yaml"></div>
+    <h3>Calls</h3><div class="hood-calls" id="hood-calls" data-view="calls"></div>
+    <h3>Gate</h3><div class="hood-gate" id="hood-gate" data-view="gate"></div>
+  </aside>
   <footer>{SAFETY_LINE} &middot; <span id="run-label">Play</span>
     &middot; <a href="{REPO_URL}">github.com/determlab/shal</a>
   </footer>

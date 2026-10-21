@@ -33,6 +33,7 @@ from typing import Any
 import yaml
 
 from .errors import ArenaError, TaskFormatError
+from .trace import Trace
 
 STAGES: tuple[str, ...] = ("empty", "picked", "racked", "wired", "ran")
 
@@ -140,16 +141,25 @@ def bench(preset: Preset) -> Iterator[Any]:
             hal.close()
 
 
-def _reads(hal: Any) -> dict[str, Any]:
-    return {t["name"]: hal.call_tool(t["name"], {}) for t in hal.tool_catalog()
+def _call(hal: Any, trace: Trace, tool: dict[str, Any], args: dict[str, Any]) -> dict[str, Any]:
+    """One tool call through the bench, recorded in ``trace``."""
+    called = trace.call(tool["device"], tool["op"], args,
+                        lambda: hal.call_tool(tool["name"], dict(args)))
+    trace.gate_from_tool(called)
+    return called
+
+
+def _reads(hal: Any, trace: Trace) -> dict[str, Any]:
+    return {t["name"]: _call(hal, trace, t, {}) for t in hal.tool_catalog()
             if t["side_effect"] == "none"}
 
 
-def _step(stage: str) -> tuple[dict[str, Any], bool]:
+def _step(stage: str, trace: Trace) -> tuple[dict[str, Any], bool]:
     preset = load_preset(stage)
     if preset.topology is None:
         return ({"instruments": [], "next": "pick instruments: "
                  "`shal-arena demo --from picked --json`"}, True)
+    trace.yaml = yaml.safe_dump(preset.topology, sort_keys=False).splitlines()
     with bench(preset) as hal:
         catalog = hal.tool_catalog()
         instruments = sorted({t["device"] for t in catalog})
@@ -157,12 +167,13 @@ def _step(stage: str) -> tuple[dict[str, Any], bool]:
                                   "tools": [t["name"] for t in catalog]}
         ok = len(instruments) == len(_case_names(preset.topology))
         if stage in ("wired", "ran"):
-            reads = _reads(hal)
+            reads = _reads(hal, trace)
             result["reads"] = reads
             ok = ok and bool(reads) and all(r["ok"] for r in reads.values())
         if stage == "ran":
-            tool = next(t["name"] for t in catalog if t["op"] == _GATED_OP)
-            called = hal.call_tool(tool, dict(_GATED_ARGS))
+            gated = next(t for t in catalog if t["op"] == _GATED_OP)
+            tool = gated["name"]
+            called = _call(hal, trace, gated, dict(_GATED_ARGS))
             result["seed"] = preset.seed
             result["gate"] = {"tool": tool, "rejected": called.get("rejected"),
                               "sent": "rejected" not in called}
@@ -170,7 +181,7 @@ def _step(stage: str) -> tuple[dict[str, Any], bool]:
     return result, ok
 
 
-def run_from(stage: str, *, pause: float, json_mode: bool) -> int:
+def run_from(stage: str, *, pause: float, json_mode: bool, trace: bool = False) -> int:
     """One step per stage from ``stage`` to ``ran``, each from its own preset
     -- the first step is ``stage``. Plain lines, or one JSON document on
     stdout. Raises `UnknownStage` before any step runs."""
@@ -188,8 +199,10 @@ def run_from(stage: str, *, pause: float, json_mode: bool) -> int:
         line = _LINES[step_id]
         if not json_mode:
             print(line)
+        step_trace = Trace()
         try:
-            result, ok = _step(step_id)
+            with step_trace.capture() if trace else contextlib.nullcontext():
+                result, ok = _step(step_id, step_trace)
         except Exception as e:  # noqa: BLE001 - one stage's crash must not hide the rest
             traceback.print_exc()
             result = {"crashed": f"{type(e).__name__}: {e}",
@@ -202,7 +215,8 @@ def run_from(stage: str, *, pause: float, json_mode: bool) -> int:
             sys.stdout.flush()
         steps.append({"step": step_id, "line": line, "sentence": line,
                       "step_ms": round((time.monotonic() - started) * 1000, 1),
-                      "ok": ok, "result": result})
+                      "ok": ok, "result": result,
+                      **({"under_the_hood": step_trace.export()} if trace else {})})
     if json_mode:
         print(json.dumps({"ok": overall_ok, "note": FIRST_LINE, "from": stage,
                           "side_effect": "none", "steps": steps}, indent=2, default=str))

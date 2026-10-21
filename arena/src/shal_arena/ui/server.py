@@ -469,7 +469,9 @@ def _make_handler(run_id: str | None, state_dir: str | Path,
             if self.path == "/api/demo/start":
                 stage = _require_str(body, "stage", example='{"stage": "racked"}')
                 with demo_lock:
-                    doc = _demo_from(stage)
+                    # issue #507: `trace: true` = `demo --trace`, the one data
+                    # source the "Under the hood" panel shows
+                    doc = _demo_from(stage, trace=body.get("trace") is True)
                     instruments = doc["steps"][0]["result"].get("instruments")
                     demo["stage"] = stage
                     if len(instruments or []) > len(demo["rack"]):  # never shrinks
@@ -526,14 +528,14 @@ def _make_handler(run_id: str | None, state_dir: str | Path,
     return Handler
 
 
-def _demo_from(stage: str) -> dict[str, Any]:
+def _demo_from(stage: str, *, trace: bool = False) -> dict[str, Any]:
     """`shal-arena demo --from STAGE --json`, run through the same
     `stages.run_from` the CLI calls; its one JSON document is what the CLI
     would print. An unknown stage raises `UnknownStage` (a 400 here). The
     caller holds `demo_lock`: stdout is process-wide."""
     out = io.StringIO()
     with contextlib.redirect_stdout(out):
-        stages.run_from(stage, pause=0, json_mode=True)
+        stages.run_from(stage, pause=0, json_mode=True, trace=trace)
     return json.loads(out.getvalue())
 
 

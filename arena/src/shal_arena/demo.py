@@ -38,6 +38,7 @@ from pathlib import Path
 from typing import Any
 
 from .store import RunStore
+from .trace import Trace
 
 FIRST_LINE = "Simulated instruments only. Nothing here touches real hardware."
 
@@ -250,16 +251,53 @@ def check_bench_10_runs(result: dict[str, Any]) -> bool:
 # -- the real world: shal's and shal_arena's own Python APIs --------------- #
 
 
+def _is_gated(hal, device: str, op: str) -> bool:
+    return any(t["device"] == device and t["op"] == op
+               and t["side_effect"] in ("config", "actuator") for t in hal.tool_catalog())
+
+
+def _task_yaml_lines(name: str) -> list[str]:
+    """issue #507: the packaged task file a step runs from, as lines."""
+    ref = importlib_resources.files("shal_arena") / "tasks" / f"{name}.yaml"
+    return ref.read_text(encoding="utf-8").splitlines()
+
+
+def _run_call(ctx: dict[str, Any], run_id: str, state_dir: Path, node: str, op: str,
+              args: dict[str, Any], fn) -> Any:
+    """One runner call, traced with the bus exchanges it logged."""
+    from .simlog import SimLog
+
+    return ctx["trace"].call_logged(
+        node, op, args, fn, SimLog(RunStore(state_dir).sim_log_path(run_id)))
+
+
+def _trace_drive(ctx: dict[str, Any], run_id: str, address: str, volts: float,
+                 state_dir: Path) -> None:
+    from .runner import drive_input
+
+    t = ctx["trace"]
+    doc = _run_call(ctx, run_id, state_dir, address, "drive", {"volts": volts},
+                    lambda: drive_input(run_id, address, volts, state_dir=state_dir))
+    if doc.get("sent") is False:
+        t.gate("blocked", str(doc.get("reason") or f"refused {volts} V -- not sent"))
+    else:
+        t.gate("allowed", "drive goes through the gate; within the card's limits, so it was sent")
+
+
 def _run_virtual_bench_pass(ctx: dict[str, Any]) -> dict[str, Any]:
     import shal
 
+    t = ctx.setdefault("trace", Trace())
     hal = shal.load(str(ctx["bench_yaml"]))
     try:
         psu = hal.get_device("psu")
         dmm = hal.get_device("dmm")
         with shal.approver(shal.AutoApprove()):
-            psu.set_voltage(3.3)
-        volts = dmm.measure_voltage()
+            t.call("psu", "set_voltage", {"volts": 3.3}, lambda: psu.set_voltage(3.3))
+        if _is_gated(hal, "psu", "set_voltage"):
+            t.gate("approved", "set_voltage changes the supply, so it is gated; the scripted "
+                               "approver (AutoApprove) approved it and it was sent")
+        volts = t.call("dmm", "measure_voltage", {}, dmm.measure_voltage)
     finally:
         hal.close()
     verdict = "pass" if 3.3 * 0.98 <= volts <= 3.3 * 1.02 else "fail"
@@ -273,7 +311,8 @@ def _run_virtual_bench_unplug_dmm(ctx: dict[str, Any]) -> dict[str, Any]:
         hal = shal.load(str(ctx["bench_yaml"]))
         try:
             dmm = hal.get_device("dmm")
-            dmm.measure_voltage()
+            ctx.setdefault("trace", Trace()).call("dmm", "measure_voltage", {},
+                                                  dmm.measure_voltage)
         except shal.HopError as e:
             # CTO review on #410: the same `cause` shal core itself writes
             # for a HopError step (`src/shal/record.py`) and the
@@ -289,12 +328,14 @@ def _run_virtual_bench_unplug_dmm(ctx: dict[str, Any]) -> dict[str, Any]:
 def _run_psu_30v_blocked(ctx: dict[str, Any]) -> dict[str, Any]:
     import shal
 
+    t = ctx.setdefault("trace", Trace())
     hal = shal.load(str(ctx["bench_yaml"]))
     try:
         psu = hal.get_device("psu")
         with shal.approver(shal.AutoApprove()):
-            psu.set_voltage(30.0)
+            t.call("psu", "set_voltage", {"volts": 30.0}, lambda: psu.set_voltage(30.0))
     except shal.LimitError as e:
+        t.gate("blocked", f"limits: {e} -- not sent")
         return {"blocked": "limits", "message": str(e), "violations": e.violations}
     else:
         return {"blocked": None}
@@ -306,7 +347,7 @@ def _run_arena_task(ctx: dict[str, Any], level: str, *,
                     seed: int | None = None) -> dict[str, Any]:
     from .errors import MeasurementFailed
     from .loader import load_task
-    from .runner import answer, drive_input, start_run, take_measurement
+    from .runner import answer, start_run, take_measurement
 
     with _arena_task_file(level) as task_path:
         loaded = load_task(str(task_path))
@@ -331,11 +372,15 @@ def _run_arena_task(ctx: dict[str, Any], level: str, *,
         # power the card first -- an unpowered rail reads near 0 V, which a
         # tolerance-band diagnosis would (correctly, but uselessly) call
         # "low_voltage" every time
-        drive_input(run_id, str(drives.address), vin.nominal_v, state_dir=state_dir)
+        t = ctx.setdefault("trace", Trace())
+        t.yaml = _task_yaml_lines(level)
+        _trace_drive(ctx, run_id, str(drives.address), vin.nominal_v, state_dir)
 
         try:
-            measured = take_measurement(run_id, str(probe.address), str(ctx["dmm_driver"]),
-                                        state_dir=state_dir)
+            measured = _run_call(ctx, run_id, state_dir, str(probe.address), "measure", {},
+                                 lambda: take_measurement(run_id, str(probe.address),
+                                                          str(ctx["dmm_driver"]),
+                                                          state_dir=state_dir))
             reading = measured["reading"]
         except MeasurementFailed as e:
             # issue #477: no answer from the instrument is a broken link to
@@ -347,7 +392,8 @@ def _run_arena_task(ctx: dict[str, Any], level: str, *,
         given = _diagnose(rail, reading, set(task.question.answer.values),
                           current_a=measured.get("current_a"))
 
-        answer_doc = answer(run_id, given, state_dir=state_dir)
+        answer_doc = t.call("run", "answer", {"value": given},
+                            lambda: answer(run_id, given, state_dir=state_dir))
         ctx["arena_runs"][level] = (run_id, state_dir)
         return {"run_id": run_id, "reading": reading, "given": given,
                "correct": answer_doc["correct"], "disqualified": answer_doc["disqualified"]}
@@ -375,7 +421,7 @@ def _run_power_28v(ctx: dict[str, Any]) -> dict[str, Any]:
     (`bench.answer_from_points`, the same rule `bench` uses)."""
     from .bench import answer_from_points, rail_points
     from .loader import load_task
-    from .runner import answer, call_op, drive_input, start_run, take_measurement
+    from .runner import answer, call_op, start_run, take_measurement
 
     ref = importlib_resources.files("shal_arena") / "tasks" / "power-28v.yaml"
     with importlib_resources.as_file(ref) as task_path, \
@@ -390,20 +436,29 @@ def _run_power_28v(ctx: dict[str, Any]) -> dict[str, Any]:
         run_id = start_run(str(task_path), state_dir=state_dir)["run_id"]
         relay = next(i for i in loaded.task.instruments if i.switches is not None)
         psu = next(i for i in loaded.task.instruments if i.drives is not None)
-        call_op(run_id, str(relay.address), str(relay_driver), "set_relay", ["0", "true"],
-                state_dir=state_dir)
+        tr = ctx.setdefault("trace", Trace())
+        tr.yaml = _task_yaml_lines("power-28v")
+        _run_call(ctx, run_id, state_dir, str(relay.address), "set_relay",
+                  {"channel": 0, "on": True},
+                  lambda: call_op(run_id, str(relay.address), str(relay_driver), "set_relay",
+                                  ["0", "true"], state_dir=state_dir))
         vin = next(i for i in loaded.card.inputs if i.name == psu.drives.removeprefix("card."))
-        drive_input(run_id, str(psu.address), vin.nominal_v, state_dir=state_dir)
+        _trace_drive(ctx, run_id, str(psu.address), vin.nominal_v, state_dir)
         address, points = rail_points(str(task_path))
-        readings = {p: take_measurement(run_id, address, str(ctx["dmm_driver"]), at=p,
-                                        state_dir=state_dir)["reading"] for p in points}
+        readings = {p: _run_call(ctx, run_id, state_dir, address, "measure", {"at": p},
+                                 lambda p=p: take_measurement(
+                                     run_id, address, str(ctx["dmm_driver"]), at=p,
+                                     state_dir=state_dir))["reading"] for p in points}
         temp_tps = {t.test_point for t in loaded.card.temp_points}
-        temps = {i.probe.removeprefix("card."): take_measurement(
-                     run_id, str(i.address), str(temp_driver), state_dir=state_dir)["reading"]
+        temps = {i.probe.removeprefix("card."): _run_call(
+                     ctx, run_id, state_dir, str(i.address), "measure", {},
+                     lambda i=i: take_measurement(run_id, str(i.address), str(temp_driver),
+                                                  state_dir=state_dir))["reading"]
                  for i in loaded.task.instruments
                  if i.probe is not None and i.probe.removeprefix("card.") in temp_tps}
         given = answer_from_points(str(task_path), readings, temps)
-        answer_doc = answer(run_id, given, state_dir=state_dir)
+        answer_doc = tr.call("run", "answer", {"value": given},
+                             lambda: answer(run_id, given, state_dir=state_dir))
     return {"run_id": run_id, "at": points, "readings": readings, "temps": temps,
             "given": given, "correct": answer_doc["correct"],
             "disqualified": answer_doc["disqualified"]}
@@ -420,6 +475,10 @@ def _run_arena_result_card(ctx: dict[str, Any]) -> dict[str, Any]:
     out_path.write_text(html, encoding="utf-8")
     record_path = RunStore(state_dir).record_path(run_id)
     ctx["record_path"] = str(record_path)
+    t = ctx.setdefault("trace", Trace())
+    t.yaml = _task_yaml_lines("hard")
+    t.calls.append({"node": "card", "op": "build_result_card",
+                               "args": {"run_id": run_id}, "result": str(out_path)})
     return {"run_id": run_id, "card_path": str(out_path)}
 
 
@@ -436,8 +495,15 @@ def _run_bench_10_runs(ctx: dict[str, Any]) -> dict[str, Any]:
                                play_with_shal=DEFAULT_POLICY.play_with_shal,
                                play_without_shal=DEFAULT_POLICY.play_without_shal,
                                runs=10, state_dir=ctx["state_dir"] / "bench")
-    return {"with_shal_destroyed": result["with_shal"]["destroyed"],
-           "without_shal_destroyed": result["without_shal"]["destroyed"]}
+    with_d, without_d = result["with_shal"]["destroyed"], result["without_shal"]["destroyed"]
+    t = ctx.setdefault("trace", Trace())
+    t.yaml = _task_yaml_lines("rail-3v3")
+    t.calls.append({"node": "bench", "op": "run_benchmark", "args": {"runs": 10},
+                    "result": {"with_shal_destroyed": with_d,
+                               "without_shal_destroyed": without_d}})
+    t.gate("blocked", f"gate on: {with_d} of 10 cards destroyed (30 V refused, not sent); "
+                      f"gate off: {without_d} destroyed")
+    return {"with_shal_destroyed": with_d, "without_shal_destroyed": without_d}
 
 
 # CTO review on #383 (the CMO's addition): the arena steps and the gate-on/
@@ -536,7 +602,11 @@ def _plain_outcome(result: dict[str, Any]) -> str:
     return "done"  # pragma: no cover - every step above sets a recognized key
 
 
-def run_story(*, pause: float, json_mode: bool, port: int | None = None) -> int:
+_BENCH_STEPS = frozenset({"virtual_bench_pass", "virtual_bench_unplug_dmm", "psu_30v_blocked"})
+
+
+def run_story(*, pause: float, json_mode: bool, port: int | None = None,
+              trace: bool = False) -> int:
     """The whole story, run once: one plain line (or one JSON document) per
     step, then the final summary. Shared by `main` below (the standalone
     entry point) and `shal-arena demo` (``cli.py``'s own `_cmd_demo`), so
@@ -623,8 +693,15 @@ def run_story(*, pause: float, json_mode: bool, port: int | None = None) -> int:
         time.sleep(pause)
         if not json_mode:
             print(line)
+        # issue #507: what this step really did, for `--trace`. The 10-run
+        # benchmark is not captured exchange by exchange (hundreds of them).
+        step_trace = Trace(_BENCH_TOPOLOGY_YAML.splitlines()
+                           if step_id in _BENCH_STEPS else ())
+        ctx["trace"] = step_trace
         try:
-            result = run_fn(ctx)
+            with (step_trace.capture() if trace and step_id != "bench_10_runs"
+                  else contextlib.nullcontext()):
+                result = run_fn(ctx)
             step_ok = check_fn(result)
         except Exception as e:  # noqa: BLE001 - one step's crash must not stop the story
             # CTO review on #410: a crashed step names a fix too, the same
@@ -643,7 +720,8 @@ def run_story(*, pause: float, json_mode: bool, port: int | None = None) -> int:
             print(f"  -> {_plain_outcome(result)}")
         steps.append({"step": step_id, "line": line, "sentence": line,
                       "step_ms": round((time.monotonic() - started) * 1000, 1),
-                      "result": result})
+                      "result": result,
+                      **({"under_the_hood": step_trace.export()} if trace else {})})
 
     if not json_mode:
         print(f"Run state (including the result card) is under {state_dir}")
@@ -679,10 +757,15 @@ def main(argv: list[str] | None = None) -> int:
                              "('shal-arena ui --run <id> --port PORT') for whoever will "
                              "later run that command with a fixed port -- never binds "
                              "anything itself")
+    parser.add_argument("--trace", action="store_true",
+                        help="issue #507: with --json, each step also carries "
+                             "under_the_hood: {yaml, calls, gate}")
     args = parser.parse_args(argv)
+    if args.trace and not args.json:
+        parser.error("--trace needs --json")
     if args.port is not None and not (1 <= args.port <= 65535):
         parser.error(f"--port must be between 1 and 65535, got {args.port}")
-    return run_story(pause=args.pause, json_mode=args.json, port=args.port)
+    return run_story(pause=args.pause, json_mode=args.json, port=args.port, trace=args.trace)
 
 
 if __name__ == "__main__":

@@ -57,14 +57,18 @@ def _cmd_demo(args: argparse.Namespace) -> int:
     from .demo import run_story
 
     pause = args.pause if args.pause is not None else (0.0 if args.json else 2.0)
+    if args.trace and not args.json:
+        return _report_error(ArenaError("--trace needs --json",
+                                        fix="run `shal-arena demo --json --trace`"), False)
     if args.from_stage is not None:
         # issue #508: start from one stage's preset instead of the whole story
         from .stages import run_from
         try:
-            return run_from(args.from_stage, pause=pause, json_mode=args.json)
+            return run_from(args.from_stage, pause=pause, json_mode=args.json,
+                            trace=args.trace)
         except ArenaError as e:
             return _report_error(e, args.json)
-    return run_story(pause=pause, json_mode=args.json)
+    return run_story(pause=pause, json_mode=args.json, trace=args.trace)
 
 
 def _parse_driver_args(specs: list[str]) -> dict[str, dict[str, Any]]:
@@ -446,6 +450,10 @@ def _build_parser() -> argparse.ArgumentParser:
                         help="seconds between steps (default: 2.0, or 0 under --json)")
     p_demo.add_argument("--json", action="store_true",
                         help="print one JSON document on stdout instead of narrating")
+    p_demo.add_argument("--trace", action="store_true",
+                        help="issue #507: with --json, every step also carries "
+                             "under_the_hood: {yaml, calls, gate} -- the setup YAML lines it "
+                             "uses, the calls down to the SCPI command, and the gate verdict")
     p_demo.add_argument("--from", dest="from_stage", default=None, metavar="STAGE",
                         help="issue #508: start from one stage's preset instead -- one of "
                              "empty, picked, racked, wired, ran; runs each stage from "
