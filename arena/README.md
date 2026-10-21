@@ -292,7 +292,8 @@ result" and "Save as image", and the one network reference anywhere on the
 page (github.com/determlab/shal). It refuses instead of writing anything
 until `answer` has closed the run — there is no record/score file yet.
 
-**Rack** — drag instrument tiles into a `setup.yaml`, as a page:
+**Rack** — drag instrument tiles into a `setup.yaml`, as a page. Drag and tap
+both work: on a touch screen, tap a tile to select it, then tap a slot to place it.
 
 ```bash
 shal-arena rack --out rack.html --json
