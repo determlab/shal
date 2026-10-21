@@ -7,9 +7,82 @@ name: Release
 on:
   release:
     types: [published]
+  # Gate-only run: lets a candidate ref be checked before the release is cut.
+  # It never publishes (see the `if:` on `publish`).
+  workflow_dispatch:
+    inputs:
+      ref:
+        description: "Branch, tag or SHA to gate (build + downstream compat suite)"
+        required: true
+        type: string
 
 jobs:
+  # D-008: a release cannot publish unless the downstream compat suite passes
+  # against the exact wheel that will be uploaded.
+  compat-gate:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      # The ref goes through the checkout `ref:` field, never into a shell script.
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event_name == 'workflow_dispatch' && inputs.ref || github.sha }}
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Build
+        run: |
+          pip install build
+          python -m build
+      - name: Fresh venv with the candidate wheel
+        run: |
+          python -m venv gate-venv
+          gate-venv/bin/python -m pip install dist/*.whl
+          # Constraint so pip keeps the candidate: a lab pin that excludes it fails
+          # the next step with a resolver conflict naming the pin.
+          gate-venv/bin/python - <<'PY'
+          import glob, os, sys
+          wheels = glob.glob("dist/*.whl")
+          if len(wheels) != 1:
+              sys.exit(f"expected exactly one wheel in dist/, found {wheels}")
+          version = os.path.basename(wheels[0]).split("-")[1]
+          with open("gate-constraints.txt", "w") as f:
+              f.write(f"pyshal=={version}\n")
+          PY
+      - name: Check out the lab
+        uses: actions/checkout@v4
+        with:
+          repository: determlab/adk-lab
+          ssh-key: ${{ secrets.ADK_LAB_DEPLOY_KEY }}
+          persist-credentials: false
+          path: adk-lab
+      - name: Install the lab against the candidate
+        working-directory: adk-lab
+        run: |
+          if ! ../gate-venv/bin/python -m pip install -e ".[dev]" -c ../gate-constraints.txt; then
+            echo "::error::adk-lab pins pyshal in a way that excludes the candidate wheel (pin conflict above)"
+            exit 1
+          fi
+          ../gate-venv/bin/python - <<'PY'
+          import glob, importlib.metadata, os, sys
+          wheels = glob.glob("../dist/*.whl")
+          if len(wheels) != 1:
+              sys.exit(f"expected exactly one wheel in dist/, found {wheels}")
+          want = os.path.basename(wheels[0]).split("-")[1]
+          got = importlib.metadata.version("pyshal")
+          if got != want:
+              sys.exit(f"installed pyshal {got} != candidate wheel {want}; refusing to pass the gate")
+          print(f"pyshal {got} is the candidate wheel.")
+          PY
+      - name: Run the lab gate
+        working-directory: adk-lab
+        run: ../gate-venv/bin/python gate.py --json
+
   publish:
+    needs: compat-gate
+    if: github.event_name == 'release'
     runs-on: ubuntu-latest
     environment: pypi
     permissions:
