@@ -110,6 +110,17 @@ shal-arena run rail-3v3 --seed 1 --json
       "probe": "card.tp_3v3"
     }
   ],
+  "rails": [
+    {
+      "name": "3v3",
+      "test_point": "tp_3v3",
+      "nominal_v": 3.3,
+      "tol_pct": 3,
+      "min_v": 3.201,
+      "max_v": 3.399
+    }
+  ],
+  "temp_points": [],
   "limits": {
     "max_turns": 60,
     "max_minutes": 30
