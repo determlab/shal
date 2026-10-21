@@ -30,6 +30,7 @@ Two kinds of function live here:
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import os
 import shutil
@@ -247,6 +248,79 @@ def check_arena_fault_determinism(doc: dict[str, Any], card_faults: list[dict[st
                    json.dumps({"got": doc, "want": want, "seed": seed}), rerun)
 
 
+def check_breaking_path(path_id: str, doc: dict[str, Any], exit_code: int, stderr: str,
+                        rerun: str) -> dict[str, Any]:
+    """issue #341: a path broken on purpose must fail LOUDLY and usefully --
+    a non-zero exit, a machine-readable ``error`` ({type, message}) and a
+    non-empty ``fix`` naming the command or change, and never a traceback
+    (on stdout or stderr). Reads JSON only."""
+    error = doc.get("error")
+    ok = (exit_code != EXIT_PASS and doc.get("ok") is False and isinstance(error, dict)
+         and bool(error.get("type")) and bool(error.get("message"))
+         and isinstance(error.get("fix"), str) and bool(error["fix"].strip())
+         and "Traceback" not in stderr and "Traceback" not in json.dumps(doc))
+    return _result(f"breaking_{path_id}", ok, json.dumps(
+        {"exit_code": exit_code, "error": error}), rerun)
+
+
+def check_repeat_identical(docs: list[dict[str, Any]], exit_codes: list[int], runs: int,
+                           rerun: str) -> dict[str, Any]:
+    """issue #341: ``runs`` repeats of the virtual-bench story give the SAME
+    ``verdict`` and ``cause`` (and exit code) every time -- and that result is
+    the passing one; one differing run in ``runs`` fails the check."""
+    seen = sorted({(d.get("verdict"), d.get("cause"), c)
+                   for d, c in zip(docs, exit_codes, strict=False)}, key=repr)
+    ok = (len(docs) == runs and len(exit_codes) == runs and len(seen) == 1
+         and seen[0] == ("pass", None, EXIT_PASS))
+    return _result("virtual_bench_repeat", ok, json.dumps(
+        {"runs": len(docs), "distinct_verdict_cause_exit": [list(s) for s in seen]}), rerun)
+
+
+def seed_summary(doc: dict[str, Any]) -> str:
+    """The part of a ``shal-arena bench --json`` document that must be the
+    same on every OS for the same seed: the counts and turn statistics of both
+    sides, serialized canonically. The ``task`` and ``sim_logs`` paths are
+    machine-specific, so they are left out."""
+    def side(s: dict[str, Any]) -> dict[str, Any]:
+        return {k: v for k, v in s.items() if k != "sim_logs"}
+    return json.dumps({"ok": doc.get("ok"), "runs": doc.get("runs"),
+                       "with_shal": side(doc.get("with_shal", {})),
+                       "without_shal": side(doc.get("without_shal", {}))},
+                      sort_keys=True, separators=(",", ":"))
+
+
+def check_seed_summary(doc: dict[str, Any], exit_code: int, seed: int,
+                       rerun: str) -> dict[str, Any]:
+    summary = seed_summary(doc)
+    ok = exit_code == EXIT_PASS and doc.get("ok") is True
+    return _result(f"arena_bench_seed{seed}", ok, json.dumps(
+        {"seed": seed, "summary": summary,
+         "sha256": hashlib.sha256(summary.encode("utf-8")).hexdigest()}), rerun)
+
+
+def compare_seed_evidence(evidences: list[dict[str, Any]], seed: int = 7,
+                          expected: int = 6) -> tuple[bool, str]:
+    """issue #341, the final job: every evidence.json (one per OS x Python
+    cell) holds a passing seed-summary check, and its summary is
+    byte-identical to all the others'."""
+    check_id = f"arena_bench_seed{seed}"
+    summaries: dict[str, list[str]] = {}
+    problems: list[str] = []
+    for ev in evidences:
+        label = f"{ev.get('os')}/{ev.get('python')}"
+        found = next((c for c in ev.get("checks", []) if c.get("id") == check_id), None)
+        if found is None or found.get("result") != "pass":
+            problems.append(f"{label}: no passing {check_id} check")
+            continue
+        summaries.setdefault(json.loads(found["log"])["summary"], []).append(label)
+    if len(evidences) != expected:
+        problems.append(f"expected {expected} evidence.json files, got {len(evidences)}")
+    if len(summaries) > 1:
+        problems.append("summaries differ: " + json.dumps(summaries, sort_keys=True))
+    return (not problems), ("; ".join(problems) or
+                            f"all {len(evidences)} cells: byte-identical seed {seed} summary")
+
+
 def check_wheel_installed(package: str, version: str | None, ok: bool, output: str,
                           rerun: str) -> dict[str, Any]:
     return _result(f"wheel_installed_{package}", ok, f"version={version} output={output!r}",
@@ -458,7 +532,113 @@ def run_bricks_wheel_check(venv_python: str) -> dict[str, Any]:
                                  _argv_str(bricks_argv))
 
 
+REPEATS = 20
+SEED_BENCH = 7
+
+_SHAL = ["-m", "shal.cli"]
+_ARENA = ["-m", "shal_arena.cli"]
+
+#: issue #341: (path id, which CLI, its arguments, extra env). Every path is a
+#: real mistake a test engineer makes; every argument is relative to the
+#: working dir `run_breaking_paths` sets up, so the committed outputs carry no
+#: machine-specific path in `argv`.
+BREAKING_PATHS: list[tuple[str, list[str], list[str], dict[str, str]]] = [
+    # a driver op that does not exist
+    ("bad_op", _SHAL, ["call", "bench.yaml", "dmm", "no_such_op", "--json"], {}),
+    # a rack (topology) file naming a bus that nothing provides
+    ("wrong_rack", _SHAL, ["tools", "wrong-rack.yaml", "--json"], {}),
+    # 30 V requested on a rail whose limit is 3.6 V (set_voltage is a gated op)
+    ("over_voltage", _SHAL, ["call", "bench.yaml", "psu", "set_voltage", "30", "--json"], {}),
+    # a task file that tries to run code, through a YAML python tag
+    ("trap_code", _ARENA, ["run", "trap-code.yaml", "--state-dir", "state", "--json"], {}),
+    # a task file that points its card at a file outside the task folder
+    ("trap_file", _ARENA, ["run", "trap-file.yaml", "--state-dir", "state", "--json"], {}),
+    # the instrument's link is down (the sim's unplugged cable; the closest
+    # offline stand-in for "no network": every hop to the node fails undelivered)
+    ("no_network", _SHAL, ["call", "bench.yaml", "dmm", "measure_voltage", "--json"],
+     {"SHAL_SIM_UNPLUG": "dmm"}),
+]
+
+_WRONG_RACK = """\
+shal_version: 1
+root:
+  bench:
+    driver: shal,no-such-bus
+    address: sim0
+"""
+
+
+def run_breaking_paths(venv_python: str, bench_dir: Path, work_dir: Path,
+                       out_dir: Path | None = None) -> list[dict[str, Any]]:
+    """Runs every `BREAKING_PATHS` entry through the real CLI with ``--json``
+    and checks it (`check_breaking_path`). With ``out_dir``, also writes each
+    path's real output to ``<out_dir>/<id>.json`` -- the files
+    ``tests/test_e2e_breaking.py`` is checked against."""
+    work_dir.mkdir(parents=True, exist_ok=True)
+    shutil.copy(bench_dir / "bench.yaml", work_dir / "bench.yaml")
+    (work_dir / "wrong-rack.yaml").write_text(_WRONG_RACK, encoding="utf-8")
+    easy = (ARENA_TASKS_DIR / "easy.yaml").read_text(encoding="utf-8")
+    trap_title = 'title: !!python/object/apply:os.system ["echo pwned"]'
+    (work_dir / "trap-code.yaml").write_text(
+        easy.replace('title: "Is the 3V3 rail healthy?"', trap_title), encoding="utf-8")
+    (work_dir / "trap-file.yaml").write_text(
+        easy.replace("card: ../cards/ldo-5v-3v3.yaml", "card: /etc/passwd"), encoding="utf-8")
+
+    checks = []
+    for path_id, module, args, extra_env in BREAKING_PATHS:
+        proc = subprocess.run([venv_python, *module, *args], cwd=work_dir,
+                              env=dict(os.environ, **extra_env), stdin=subprocess.DEVNULL,
+                              capture_output=True, text=True, timeout=120)
+        try:
+            doc = json.loads(proc.stdout)
+        except json.JSONDecodeError:
+            doc = {"ok": False, "error": f"not JSON: stdout={proc.stdout!r}"}
+        shown = ["python", *module, *args]
+        if out_dir is not None:
+            out_dir.mkdir(parents=True, exist_ok=True)
+            (out_dir / f"{path_id}.json").write_text(json.dumps(
+                {"path": path_id, "argv": shown, "env": extra_env,
+                 "exit_code": proc.returncode, "stdout": doc, "stderr": proc.stderr},
+                indent=2) + "\n", encoding="utf-8")
+        env_prefix = "".join(f"{k}={v} " for k, v in extra_env.items())
+        checks.append(check_breaking_path(
+            path_id, doc, proc.returncode, proc.stderr, f"{env_prefix}{_argv_str(shown)}"))
+    return checks
+
+
+def run_virtual_bench_repeat(venv_python: str, bench_dir: Path, runs: int = REPEATS
+                             ) -> dict[str, Any]:
+    """issue #341: the same virtual-bench story, ``runs`` times in a row, in
+    this one job; the result must never change."""
+    docs, codes = [], []
+    for _ in range(runs):
+        doc, ec = _run_json(venv_python, ["run_bench.py"], cwd=bench_dir)
+        docs.append(doc)
+        codes.append(ec)
+    return check_repeat_identical(
+        docs, codes, runs, f"cd {bench_dir} && {venv_python} run_bench.py  (x{runs})")
+
+
+def run_arena_seed_summary(venv_python: str, state_dir: Path,
+                           seed: int = SEED_BENCH) -> dict[str, Any]:
+    argv = [*_ARENA, "bench", "--seed", str(seed), "--runs", "10",
+            "--state-dir", str(state_dir), "--json"]
+    doc, ec = _run_json(venv_python, argv)
+    return check_seed_summary(doc, ec, seed, f"{venv_python} {_argv_str(argv)}")
+
+
+def compare_seed_main(paths: list[str]) -> int:
+    """`story.py compare-seed evidence.json ...`: the final job's assertion."""
+    evidences = [json.loads(Path(p).read_text(encoding="utf-8")) for p in paths]
+    ok, message = compare_seed_evidence(evidences)
+    print(("OK: " if ok else "FAILED: ") + message, file=None if ok else sys.stderr)
+    return 0 if ok else 1
+
+
 def main(argv: list[str] | None = None) -> int:
+    raw = sys.argv[1:] if argv is None else argv
+    if raw and raw[0] == "compare-seed":
+        return compare_seed_main(raw[1:])
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--venv-python", required=True,
                         help="the clean venv's python, already holding only the "
@@ -471,7 +651,11 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--out", required=True, metavar="PATH", help="where to write evidence.json")
     parser.add_argument("--state-dir", default=None,
                         help="scratch dir for arena run state (default: a temp dir)")
-    args = parser.parse_args(argv)
+    parser.add_argument("--breaking-out", default=None, metavar="DIR",
+                        help="also write each breaking path's real output to DIR/<id>.json")
+    parser.add_argument("--repeats", type=int, default=REPEATS,
+                        help=f"how many times to repeat the virtual bench (default {REPEATS})")
+    args = parser.parse_args(raw)
 
     versions = json.loads(Path(args.versions).read_text(encoding="utf-8"))
     state_dir = (Path(args.state_dir) if args.state_dir
@@ -523,6 +707,14 @@ def main(argv: list[str] | None = None) -> int:
     run_step("arena_fault_determinism",
              f"{venv_py} -c \"from shal_arena.fault import realized_fault\"",
              run_arena_fault_determinism, venv_py)
+    run_step("virtual_bench_repeat", f"cd {bench_dir} && {venv_py} run_bench.py",
+             run_virtual_bench_repeat, venv_py, bench_dir, args.repeats)
+    run_step("breaking_paths", f"{venv_py} -m shal.cli call bench.yaml dmm no_such_op --json",
+             run_breaking_paths, venv_py, bench_dir, state_dir / "breaking",
+             Path(args.breaking_out) if args.breaking_out else None)
+    run_step(f"arena_bench_seed{SEED_BENCH}",
+             f"{venv_py} -m shal_arena.cli bench --seed {SEED_BENCH} --runs 10 --json",
+             run_arena_seed_summary, venv_py, state_dir / "bench-seed")
     run_step("wheel_installed_bricks-engine",
              f'{venv_py} -c "import bricks; print(bricks.__version__)"',
              run_bricks_wheel_check, venv_py)

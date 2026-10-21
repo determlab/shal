@@ -30,6 +30,7 @@ on:
       - ".github/workflows/e2e-clean-machine.yml"
       - "dev/e2e/**"
       - "tests/test_e2e_story.py"
+      - "tests/test_e2e_breaking.py"
       - "tests/data/e2e/**"
       - "examples/demos/virtual-bench/**"
       - "src/shal/samples/virtual-bench/**"
@@ -205,6 +206,12 @@ jobs:
           set -eu
           "$VENV_PY" -m pip install --no-index --find-links rc pyshal shal-arena pytest-shal bricks-engine
 
+      # shal#341: this one step also (a) repeats the virtual-bench story 20x
+      # unattended -- one differing run in 20 fails it -- and (b) breaks six
+      # paths on purpose (bad op, wrong rack, 30 V, two task-file traps, no
+      # link), each of which must exit non-zero with a JSON error + fix and
+      # no traceback. (c) It records the `bench --seed 7 --runs 10` summary
+      # in evidence.json for the final `seed-identical` job below.
       - name: Run the story, write evidence.json
         shell: bash
         env:
@@ -226,3 +233,28 @@ jobs:
           name: evidence-${{ matrix.os }}-${{ matrix.python-version }}
           path: evidence.json
           retention-days: 30
+
+  # shal#341: the same seed must give the same numbers on all three OSes. Reads
+  # the six evidence.json files the story cells uploaded and asserts the
+  # `arena_bench_seed7` summary (`shal-arena bench --seed 7 --runs 10 --json`,
+  # machine-specific paths left out) is byte-identical across every cell.
+  seed-identical:
+    needs: story
+    if: ${{ !cancelled() }}
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: evidence-*
+          path: evidence-all
+      - name: Assert the seed-7 bench summary is byte-identical on all six cells
+        shell: bash
+        run: |
+          set -eu
+          python dev/e2e/story.py compare-seed evidence-all/*/evidence.json

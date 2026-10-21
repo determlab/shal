@@ -1,0 +1,24 @@
+{
+  "path": "trap_code",
+  "argv": [
+    "python",
+    "-m",
+    "shal_arena.cli",
+    "run",
+    "trap-code.yaml",
+    "--state-dir",
+    "state",
+    "--json"
+  ],
+  "env": {},
+  "exit_code": 2,
+  "stdout": {
+    "ok": false,
+    "error": {
+      "type": "TaskFormatError",
+      "message": "task file: invalid YAML: could not determine a constructor for the tag 'tag:yaml.org,2002:python/object/apply:os.system'\n  in \"trap-code.yaml\", line 3, column 8",
+      "fix": "fix the YAML syntax in trap-code.yaml"
+    }
+  },
+  "stderr": "shal-arena: task file: invalid YAML: could not determine a constructor for the tag 'tag:yaml.org,2002:python/object/apply:os.system'\n  in \"trap-code.yaml\", line 3, column 8\n"
+}

@@ -1,0 +1,22 @@
+{
+  "path": "wrong_rack",
+  "argv": [
+    "python",
+    "-m",
+    "shal.cli",
+    "tools",
+    "wrong-rack.yaml",
+    "--json"
+  ],
+  "env": {},
+  "exit_code": 1,
+  "stdout": {
+    "ok": false,
+    "error": {
+      "type": "NoDriver",
+      "message": "no driver installed for compatible 'shal,no-such-bus' (install a package exposing it via the 'shal.drivers' entry point)\n  - Already have the driver as a local file? Load it:\n      --drivers <file.py | directory/>   (repeatable)\n  - Device not supported yet? Most devices have a Python library \u2014\n      wrap it as a driver in a few lines: run  shal docs  for the\n      guide, then load your driver with --drivers.",
+      "fix": "install a package that exposes the driver via the 'shal.drivers' entry point, or register a local driver file with --drivers <file.py | directory/>; `shal docs` is the guide to write one"
+    }
+  },
+  "stderr": "no driver installed for compatible 'shal,no-such-bus' (install a package exposing it via the 'shal.drivers' entry point)\n  - Already have the driver as a local file? Load it:\n      --drivers <file.py | directory/>   (repeatable)\n  - Device not supported yet? Most devices have a Python library \u00e2\u20ac\u201d\n      wrap it as a driver in a few lines: run  shal docs  for the\n      guide, then load your driver with --drivers.\n"
+}
