@@ -45,7 +45,7 @@ def test_every_action_pinned_by_full_sha() -> None:
 
 def test_deploy_job_runs_only_off_pull_requests() -> None:
     deploy = _wf()["jobs"]["deploy"]
-    assert deploy["if"] == "github.event_name != 'pull_request'"
+    assert deploy["if"] == "github.event_name != 'pull_request' && vars.PAGES_ENABLED == 'true'"
     assert deploy["concurrency"] == "pages"
     assert deploy["needs"] == "build"
     triggers = _wf()[True]  # PyYAML reads the bare key `on` as True
