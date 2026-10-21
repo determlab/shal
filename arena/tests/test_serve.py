@@ -329,6 +329,37 @@ def test_the_wire_takes_messages_and_hex_bytes(server, client_dir, capsys):
     assert {e["address"] for e in _simlog(state_dir, run_id)} >= {"dmm0", "temp0"}
 
 
+def test_a_run_holds_one_open_session_even_when_a_client_never_finishes(
+        server, client_dir, tmp_path, capsys):
+    url, state_dir, _proc = server
+    run_id, token = _start(capsys, url)
+    srv = ("--server", url, "--token", token)
+    bad = tmp_path / "bad_driver.py"
+    bad.write_text("raise RuntimeError('broken driver')\n", encoding="utf-8")
+    _cli(capsys, "measure", run_id, "dmm0", str(bad), *srv)  # never reaches finish
+    assert _cli(capsys, "measure", run_id, "dmm0", str(PASSING_DMM_DRIVER), *srv)[0] == 0
+
+    from shal_arena.remote import RemoteSessions
+    sessions = RemoteSessions(state_dir)
+    first = sessions.begin(run_id, "measure", "dmm0", None)
+    second = sessions.begin(run_id, "measure", "dmm0", None)
+    assert len(sessions._sessions) == 1
+    assert list(sessions._sessions) == [second["session"]]
+    assert first["session"] != second["session"]
+
+    auth = {"run_id": run_id, "token": token}
+    _, one = _post(url, "/api/remote/begin", {**auth, "action": "measure", "address": "dmm0"})
+    _, two = _post(url, "/api/remote/begin", {**auth, "action": "measure", "address": "dmm0"})
+    status, _ = _post(url, "/api/remote/exchange", {
+        **auth, "session": one["session"], "address": one["child_address"],
+        "message": {"scpi": "MEAS:VOLT:DC?", "query": True}})
+    assert status == 400
+    status, reply = _post(url, "/api/remote/exchange", {
+        **auth, "session": two["session"], "address": two["child_address"],
+        "message": {"scpi": "MEAS:VOLT:DC?", "query": True}})
+    assert status == 200 and reply["ok"]
+
+
 def test_a_remote_bus_payload_over_the_cap_is_413_and_needs_the_token(server, client_dir, capsys):
     url, _state_dir, _proc = server
     run_id, token = _start(capsys, url)

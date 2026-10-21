@@ -127,7 +127,9 @@ class RemoteSessions:
                         address=str(instrument.address), instrument=instrument, case=case,
                         point=point, label=label, state=state, card_sim=card_sim, bus=bus,
                         child_addr=child_addr)
-        with self._lock:
+        with self._lock:  # one open session per run: an unfinished one is dropped
+            for old_id in [k for k, s in self._sessions.items() if s.run_id == run_id]:
+                del self._sessions[old_id]
             self._sessions[sess.session_id] = sess
         return {"ok": True, "side_effect": "write", "run_id": run_id, "session": sess.session_id,
                 "address": sess.address, "case": instrument.case, "compatible": case.compatible,
