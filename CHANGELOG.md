@@ -13,6 +13,13 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+### Added
+- **`shal-arena serve` and `--server URL`** (#486): a headless local server that
+  holds the seed, the simulator and the run state; `run`, `check-driver`,
+  `measure`, `drive`, `call` and `answer` take `--server URL` (and `--token`) and
+  keep no state on the client. New `shal,remote-bus` (in `shal-arena`) carries a
+  client-side driver's `exchange` / `txn` to the server's sim bus.
+
 ### Fixed
 - **`fault: unplugged` / `SHAL_SIM_UNPLUG` now work on every sim bus** (#349),
   not only `shal,sim-scpi`: the README's own `sim.yaml` first-success example

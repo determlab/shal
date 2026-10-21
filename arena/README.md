@@ -386,6 +386,52 @@ same data as JSON: `GET /api/play/tasks` (the task list) and `GET
 /api/play/choices` (the open run's answer choices), next to the POST routes
 above and `/api/run/<id>`.
 
+## Serve a run: `shal-arena serve` and `--server` (issue #486)
+
+Today each command reads the run state, seed included, from a folder on the
+agent's own disk, so an agent can copy it and replay the seed to learn the
+fault. `serve` keeps the seed, the simulator and the run state in a separate
+process; the agent plays through the normal CLI and gets only what each
+command returns.
+
+```text
+shal-arena serve --json [--host 127.0.0.1] [--port N] [--state-dir DIR]
+shal-arena run relay-rail --server URL --json            # returns run_id and token
+shal-arena measure RUN dmm0 ./driver.py --server URL --token TOKEN --json
+shal-arena call RUN relay0 ./driver.py set_relay 0 true --server URL --token TOKEN --json
+shal-arena drive RUN psu0 12.0 --server URL --token TOKEN --json
+shal-arena answer RUN ok --server URL --token TOKEN --json
+```
+
+`serve` binds to `127.0.0.1` by default (another `--host` prints a warning)
+and prints one JSON line with its `url` and `side_effect: "starts a local
+server; writes run state under --state-dir"`. It reuses the Play routes and
+their Host, Origin and Content-Type checks; a body over 64 KiB is a 413 that
+names the cap.
+
+With `--server` a command keeps nothing on the client (no seed, no state
+file, no `cli.jsonl`); the server writes `cli.jsonl`, the exchange log and
+the record under its `--state-dir`, so `replay`, `ui --export` and `verify`
+work on that folder. `run` returns a per-run `token`; every other call must
+send it (`--token`), and a missing or wrong token is a 403 ("pass the token
+that `run` returned"). Tokens live in the server's memory, so a restarted
+server forgets its open runs. The seed, the fault and the sim state are in
+no response; `answer` returns the local `answer`'s fields without `fault_id`
+and without the score fields that follow from the seed or the fault (the
+server's own score file keeps them).
+
+The driver never leaves the client. `measure` and `call` run your
+`driver.py` locally, bound to a `shal,remote-bus` node: each `exchange` (SCPI
+and Modbus messages) or `txn` (I2C bytes, as hex strings) it makes is a JSON
+request to the server's sim bus, and appears in the server's exchange log.
+No route takes code, a file path or a module name, and the server never
+imports your driver. "Measured something" is decided from the bus requests a
+probe instrument received; a reading the client reports is never scored.
+`check-driver --server` runs the conformance check locally against the case's
+fault-free copy and never contacts the server (pass the case name, e.g.
+`dmm`, or an address). A server on the same machine and OS user as the agent
+is not sealed: for measured runs, run the agent in its own sandbox.
+
 ## Task and card format (v1)
 
 Ruled by the CTO on issue #310: two data-only YAML files, no expressions, no
