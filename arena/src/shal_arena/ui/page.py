@@ -1116,9 +1116,10 @@ button.choice { text-align: center; }
 .hood { position: fixed; top: 0; right: 0; bottom: 0; width: min(440px, 100%); overflow: auto;
   background: var(--panel); border-left: 1px solid var(--line); padding: 14px; z-index: 10; }
 .hood-steps, .hood-tabs { display: flex; gap: 6px; flex-wrap: wrap; margin: 8px 0; }
-.hood-steps button, .hood-tabs button { min-height: 36px; background: var(--sunk);
+.hood-steps button, .hood-tabs button { background: var(--sunk);
   color: var(--text); border: 1px solid var(--line); }
-.hood-steps button.sel, .hood-tabs button[aria-pressed="true"] { border-color: var(--ok); }
+button.hood-step, .hood-tabs button { min-height: 44px; }
+.hood-steps button.sel,.hood-tabs button[aria-pressed="true"] { border-color: var(--ok); }
 .hood-line, .hood-op, .hood-wire { font: 13px var(--mono); white-space: pre-wrap; }
 .hood-line.mark, .hood-call.mark { background: color-mix(in srgb, var(--gate) 22%, var(--panel)); }
 .hood-call { border-left: 4px solid var(--line); padding: 6px 8px; margin: 6px 0; cursor: pointer; }
