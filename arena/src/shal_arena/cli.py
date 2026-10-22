@@ -57,14 +57,19 @@ def _cmd_demo(args: argparse.Namespace) -> int:
     from .demo import run_story
 
     pause = args.pause if args.pause is not None else (0.0 if args.json else 2.0)
+    if args.trace and not args.json:
+        return _report_error(
+            ArenaError("--trace adds a key to the JSON document", fix="pass --json too: "
+                       "`shal-arena demo --json --trace`"), False)
     if args.from_stage is not None:
         # issue #508: start from one stage's preset instead of the whole story
         from .stages import run_from
         try:
-            return run_from(args.from_stage, pause=pause, json_mode=args.json)
+            return run_from(args.from_stage, pause=pause, json_mode=args.json,
+                            trace=args.trace)
         except ArenaError as e:
             return _report_error(e, args.json)
-    return run_story(pause=pause, json_mode=args.json)
+    return run_story(pause=pause, json_mode=args.json, trace=args.trace)
 
 
 def _parse_driver_args(specs: list[str]) -> dict[str, dict[str, Any]]:
@@ -450,6 +455,10 @@ def _build_parser() -> argparse.ArgumentParser:
                         help="issue #508: start from one stage's preset instead -- one of "
                              "empty, picked, racked, wired, ran; runs each stage from "
                              "STAGE to ran, the first step is STAGE; writes nothing")
+    p_demo.add_argument("--trace", action="store_true",
+                        help="issue #507: with --json, every step also has under_the_hood: "
+                             "{yaml, calls, gate} -- the setup YAML lines it uses, its calls "
+                             "down to the bus command, and the gate's decision")
     p_demo.set_defaults(func=_cmd_demo)
 
     p_ui = sub.add_parser(

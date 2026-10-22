@@ -41,7 +41,7 @@ def play_server(tmp_path: Path):
 def _cli_first_step(stage: str) -> dict:
     out = io.StringIO()
     with contextlib.redirect_stdout(out):
-        assert cli.main(["demo", "--from", stage, "--json"]) == 0
+        assert cli.main(["demo", "--from", stage, "--json", "--trace"]) == 0
     first = json.loads(out.getvalue())["steps"][0]
     return {k: v for k, v in first.items() if k != "step_ms"}  # timing differs per run
 

@@ -529,11 +529,13 @@ def _make_handler(run_id: str | None, state_dir: str | Path,
 def _demo_from(stage: str) -> dict[str, Any]:
     """`shal-arena demo --from STAGE --json`, run through the same
     `stages.run_from` the CLI calls; its one JSON document is what the CLI
-    would print. An unknown stage raises `UnknownStage` (a 400 here). The
-    caller holds `demo_lock`: stdout is process-wide."""
+    would print with ``--trace`` (issue #507: the "Under the hood" panel shows
+    each step's ``under_the_hood`` as it is). An unknown stage raises
+    `UnknownStage` (a 400 here). The caller holds `demo_lock`: stdout is
+    process-wide."""
     out = io.StringIO()
     with contextlib.redirect_stdout(out):
-        stages.run_from(stage, pause=0, json_mode=True)
+        stages.run_from(stage, pause=0, json_mode=True, trace=True)
     return json.loads(out.getvalue())
 
 

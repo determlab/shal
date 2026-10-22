@@ -31,8 +31,10 @@ from importlib import resources as importlib_resources
 from typing import Any
 
 import yaml
+from shal.log import exchange_sink
 
 from .errors import ArenaError, TaskFormatError
+from .hood import Hood, annotate_yaml
 
 STAGES: tuple[str, ...] = ("empty", "picked", "racked", "wired", "ran")
 
@@ -140,16 +142,33 @@ def bench(preset: Preset) -> Iterator[Any]:
             hal.close()
 
 
-def _reads(hal: Any) -> dict[str, Any]:
-    return {t["name"]: hal.call_tool(t["name"], {}) for t in hal.tool_catalog()
+def _traced_call(hal: Any, hood: Hood | None, entry: dict[str, Any],
+                 args: dict[str, Any]) -> dict[str, Any]:
+    """`hal.call_tool`; with a ``hood``, also recorded with the bus commands
+    it really made (issue #507)."""
+    if hood is None:
+        return hal.call_tool(entry["name"], args)
+    wire: list[str] = []
+    with exchange_sink(lambda e: wire.append(f"{e.request} -> {e.response}")):
+        res = hal.call_tool(entry["name"], args)
+    hood.add_tool_call(entry["device"].rsplit("/", 1)[-1], entry["op"], args, res, wire)
+    return res
+
+
+def _reads(hal: Any, hood: Hood | None = None) -> dict[str, Any]:
+    return {t["name"]: _traced_call(hal, hood, t, {}) for t in hal.tool_catalog()
             if t["side_effect"] == "none"}
 
 
-def _step(stage: str) -> tuple[dict[str, Any], bool]:
+def _step(stage: str, trace: bool = False) -> tuple[dict[str, Any], bool, dict[str, Any] | None]:
     preset = load_preset(stage)
+    hood = Hood() if trace else None
     if preset.topology is None:
+        if hood is not None:
+            hood.set_yaml([])
         return ({"instruments": [], "next": "pick instruments: "
-                 "`shal-arena demo --from picked --json`"}, True)
+                 "`shal-arena demo --from picked --json`"}, True,
+                hood.build() if hood is not None else None)
     with bench(preset) as hal:
         catalog = hal.tool_catalog()
         instruments = sorted({t["device"] for t in catalog})
@@ -157,23 +176,29 @@ def _step(stage: str) -> tuple[dict[str, Any], bool]:
                                   "tools": [t["name"] for t in catalog]}
         ok = len(instruments) == len(_case_names(preset.topology))
         if stage in ("wired", "ran"):
-            reads = _reads(hal)
+            reads = _reads(hal, hood)
             result["reads"] = reads
             ok = ok and bool(reads) and all(r["ok"] for r in reads.values())
         if stage == "ran":
-            tool = next(t["name"] for t in catalog if t["op"] == _GATED_OP)
-            called = hal.call_tool(tool, dict(_GATED_ARGS))
+            entry = next(t for t in catalog if t["op"] == _GATED_OP)
+            tool = entry["name"]
+            called = _traced_call(hal, hood, entry, dict(_GATED_ARGS))
             result["seed"] = preset.seed
             result["gate"] = {"tool": tool, "rejected": called.get("rejected"),
                               "sent": "rejected" not in called}
             ok = ok and isinstance(preset.seed, int) and called.get("rejected") == "approval"
-    return result, ok
+    if hood is None:
+        return result, ok, None
+    keys = {d.rsplit("/", 1)[-1] for d in instruments}
+    hood.set_yaml(annotate_yaml(yaml.safe_dump(preset.topology, sort_keys=False), keys))
+    return result, ok, hood.build()
 
 
-def run_from(stage: str, *, pause: float, json_mode: bool) -> int:
+def run_from(stage: str, *, pause: float, json_mode: bool, trace: bool = False) -> int:
     """One step per stage from ``stage`` to ``ran``, each from its own preset
     -- the first step is ``stage``. Plain lines, or one JSON document on
-    stdout. Raises `UnknownStage` before any step runs."""
+    stdout. Raises `UnknownStage` before any step runs. With ``trace`` every
+    step also carries ``under_the_hood`` (issue #507, `hood.py`)."""
     from .demo import FIRST_LINE
 
     if stage not in STAGES:
@@ -188,21 +213,27 @@ def run_from(stage: str, *, pause: float, json_mode: bool) -> int:
         line = _LINES[step_id]
         if not json_mode:
             print(line)
+        hood_doc = None
         try:
-            result, ok = _step(step_id)
+            result, ok, hood_doc = _step(step_id, trace)
         except Exception as e:  # noqa: BLE001 - one stage's crash must not hide the rest
             traceback.print_exc()
             result = {"crashed": f"{type(e).__name__}: {e}",
                       "fix": getattr(e, "fix", None) or (
                           f"see the traceback on stderr; check presets/{step_id}.yaml")}
             ok = False
+            if trace:
+                hood_doc = Hood().build()
         overall_ok = overall_ok and ok
         if not json_mode:
             print(f"  -> {'ok' if ok else 'failed'}")
             sys.stdout.flush()
-        steps.append({"step": step_id, "line": line, "sentence": line,
-                      "step_ms": round((time.monotonic() - started) * 1000, 1),
-                      "ok": ok, "result": result})
+        entry = {"step": step_id, "line": line, "sentence": line,
+                 "step_ms": round((time.monotonic() - started) * 1000, 1),
+                 "ok": ok, "result": result}
+        if trace:
+            entry["under_the_hood"] = hood_doc
+        steps.append(entry)
     if json_mode:
         print(json.dumps({"ok": overall_ok, "note": FIRST_LINE, "from": stage,
                           "side_effect": "none", "steps": steps}, indent=2, default=str))
