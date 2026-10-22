@@ -1,0 +1,35 @@
+name: Driver request
+description: Ask for a driver for a device or service SHAL does not cover yet.
+title: "Driver request: "
+labels: ["driver-request"]
+body:
+  - type: input
+    id: device
+    attributes:
+      label: Device or service
+      description: Vendor and part number, for example "ti,tmp102".
+    validations:
+      required: true
+  - type: dropdown
+    id: bus
+    attributes:
+      label: How it connects
+      options:
+        - I2C
+        - SPI
+        - SCPI over serial or network
+        - Modbus
+        - Other
+    validations:
+      required: true
+  - type: textarea
+    id: use
+    attributes:
+      label: What you want to do with it
+      description: The reads and the changes you need.
+    validations:
+      required: true
+  - type: input
+    id: datasheet
+    attributes:
+      label: Datasheet or protocol document link

@@ -1,0 +1,36 @@
+name: Arena result
+description: Share a SHAL Arena result and talk to us about how you test.
+title: "Arena result: "
+labels: ["arena-result"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for sharing. This issue is public and under your GitHub name.
+        You can edit or delete it yourself at any time.
+  - type: input
+    id: task
+    attributes:
+      label: Task
+      description: The arena task id.
+    validations:
+      required: true
+  - type: input
+    id: seed
+    attributes:
+      label: Seed
+    validations:
+      required: true
+  - type: input
+    id: score
+    attributes:
+      label: Score
+    validations:
+      required: true
+  - type: input
+    id: sha256
+    attributes:
+      label: Record sha256
+      description: Ties this result to the run record.
+    validations:
+      required: true
