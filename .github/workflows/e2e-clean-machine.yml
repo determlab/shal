@@ -257,4 +257,5 @@ jobs:
         shell: bash
         run: |
           set -eu
+          python -m pip install pyyaml
           python dev/e2e/story.py compare-seed evidence-all/*/evidence.json
