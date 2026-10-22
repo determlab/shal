@@ -15,6 +15,10 @@ def _on(config):
     return config[True] if True in config else config["on"]
 
 
+def _uses(steps, prefix):
+    return [s for s in steps if str(s.get("uses", "")).startswith(prefix)]
+
+
 def test_publish_needs_compat_gate():
     needs = _config()["jobs"]["publish"]["needs"]
     assert "compat-gate" in ([needs] if isinstance(needs, str) else needs)
@@ -30,12 +34,12 @@ def test_publish_uploads_the_gated_wheel_without_rebuilding():
     jobs = _config()["jobs"]
     publish = jobs["publish"]["steps"]
     assert not any("python -m build" in s.get("run", "") for s in publish)
-    download = [s for s in publish if str(s.get("uses", "")).startswith("actions/download-artifact@v4")]
+    download = _uses(publish, "actions/download-artifact@v4")
     assert len(download) == 1
     assert download[0]["with"]["name"] == "dist"
     assert download[0]["with"]["path"] == "dist/"
-    assert not any(str(s.get("uses", "")).startswith("actions/checkout") for s in publish)
-    upload = [s for s in jobs["compat-gate"]["steps"] if str(s.get("uses", "")).startswith("actions/upload-artifact@v4")]
+    assert not _uses(publish, "actions/checkout")
+    upload = _uses(jobs["compat-gate"]["steps"], "actions/upload-artifact@v4")
     assert len(upload) == 1
     assert upload[0]["with"]["name"] == "dist"
     assert upload[0]["with"]["path"] == "dist/"
