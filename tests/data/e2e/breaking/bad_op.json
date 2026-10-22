@@ -1,0 +1,24 @@
+{
+  "path": "bad_op",
+  "argv": [
+    "python",
+    "-m",
+    "shal.cli",
+    "call",
+    "bench.yaml",
+    "dmm",
+    "no_such_op",
+    "--json"
+  ],
+  "env": {},
+  "exit_code": 3,
+  "stdout": {
+    "ok": false,
+    "error": {
+      "type": "CannotRun",
+      "message": "device 'dmm' has no op 'no_such_op' (ops: measure_current, measure_voltage)",
+      "fix": "run `shal tools bench.yaml` for the devices, ops and arguments, or `shal call --help`"
+    }
+  },
+  "stderr": "shal call: device 'dmm' has no op 'no_such_op' (ops: measure_current, measure_voltage)\n"
+}
