@@ -27,8 +27,12 @@ unfinished run so the page can go back to the task list, and
 """
 from __future__ import annotations
 
+import contextlib
+import hmac
+import io
 import json
 import math
+import secrets
 import socket
 import threading
 import webbrowser
@@ -38,8 +42,10 @@ from pathlib import Path
 from typing import Any
 
 from .. import runner as _runner
+from .. import stages
 from ..errors import ArenaError, UnknownRun
 from ..loader import load_task, once_per_path
+from ..remote import MAX_PAYLOAD_BYTES, RemoteSessions
 from ..runner import has_any_measurement
 from ..store import DEFAULT_STATE_DIR, RunStore
 from . import play
@@ -55,7 +61,34 @@ _LOCAL_NAMES = (HOST, "localhost", "[::1]")
 
 #: CTO review on #407 round 2, must-fix 6: every POST route, in WATCH mode.
 _PLAY_ROUTES = ("/api/play/start", "/api/play/measure", "/api/play/drive",
-               "/api/play/switch", "/api/play/answer", "/api/play/new-run")
+               "/api/play/switch", "/api/play/answer", "/api/play/new-run",
+               "/api/demo/start")
+
+#: issue #486 (`shal-arena serve`): the routes, and the keys each one takes.
+#: The Play routes are the same ones above (same Host/Origin/Content-Type
+#: checks, same `play.*` functions); every call but `start` carries the run's
+#: token. A key not listed is a 400 -- no route takes code, a file path or a
+#: module name to run, and a body that tries is refused, not ignored.
+_RUN = {"run_id", "token", "note"}
+_REMOTE_KEYS: dict[str, set[str]] = {
+    "/api/play/start": {"task", "seed", "note"},
+    "/api/play/measure": _RUN | {"address", "at"},
+    "/api/play/drive": _RUN | {"address", "volts"},
+    "/api/play/switch": _RUN | {"address", "on"},
+    "/api/play/answer": _RUN | {"value"},
+    "/api/remote/begin": _RUN | {"action", "address", "at"},
+    "/api/remote/exchange": _RUN | {"session", "address", "message"},
+    "/api/remote/txn": _RUN | {"session", "address", "ops"},
+    "/api/remote/finish": _RUN | {"session", "op", "args", "ok", "reading", "unit", "failed",
+                                  "cause"},
+}
+
+#: `answer`'s score as a client sees it: the fields that say nothing about the
+#: seed or the realized fault (the rest stay in the server's own score file).
+_PUBLIC_SCORE = ("task_id", "duration_s", "turns", "gate_stops", "schema_version",
+                 "game_version", "record_sha256")
+
+_WILDCARD_HOSTS = ("0.0.0.0", "")
 
 
 class _MethodNotAllowed(ArenaError):
@@ -70,6 +103,21 @@ class _Forbidden(ArenaError):
     the request looks like a plain form submit -- wrong Content-Type, or a
     Host/Origin that is not this server. 403, not 400: the request itself
     is not trusted, independent of what it asks for."""
+
+
+class _TooLarge(ArenaError):
+    """issue #486: a `serve` request body over `MAX_PAYLOAD_BYTES` -- 413."""
+
+
+def _public_answer(result: dict[str, Any]) -> dict[str, Any]:
+    """issue #486: what `answer` returns to a client of `serve` -- the local
+    `answer`'s own fields minus the ones that name the seed or the realized
+    fault (`fault_id`, and the score's `seed`, `fault_type` and the counts
+    that follow from it). The server's own score file keeps all of them."""
+    doc = _strip_paths(result)
+    doc.pop("fault_id", None)
+    doc["score"] = {k: v for k, v in doc["score"].items() if k in _PUBLIC_SCORE}
+    return doc
 
 
 def _error_body(e: ArenaError) -> bytes:
@@ -95,7 +143,8 @@ def _strip_paths(doc: dict[str, Any]) -> dict[str, Any]:
 
 
 def _make_handler(run_id: str | None, state_dir: str | Path,
-                  drivers: dict[str, dict[str, Any]] | None) -> type[BaseHTTPRequestHandler]:
+                  drivers: dict[str, dict[str, Any]] | None, *, remote: bool = False,
+                  bind_host: str = HOST) -> type[BaseHTTPRequestHandler]:
     # issue #407: a plain mutable container, not a `nonlocal` rebind inside
     # the handler class -- `POST /api/play/start` is the one route that
     # BINDS a run id where there was none; every other route reads it.
@@ -114,6 +163,17 @@ def _make_handler(run_id: str | None, state_dir: str | Path,
     # open and both start one, orphaning every run but the last to bind.
     # One lock around the whole check-and-bind closes the window.
     start_lock = threading.Lock()
+    # issue #520: the demo's start cards. `rack` is the fullest bench any
+    # card has started; choosing another card never clears or shrinks it.
+    # The lock also guards the stdout capture `_demo_from` does.
+    demo = {"stage": None, "rack": []}
+    demo_lock = threading.Lock()
+    # issue #486 (`shal-arena serve`): many runs at once, each behind its own
+    # token (in memory only: a restarted server forgets them), and the open
+    # remote-bus sessions.
+    tokens: dict[str, str] = {}
+    sessions = RemoteSessions(state_dir)
+    routes = tuple(_REMOTE_KEYS) if remote else _PLAY_ROUTES
 
     class Handler(BaseHTTPRequestHandler):
         protocol_version = "HTTP/1.1"
@@ -149,12 +209,17 @@ def _make_handler(run_id: str | None, state_dir: str | Path,
             """must-fix 5a (round 3 nit): shared by GET and POST alike --
             without a Host check on GET too, a DNS-rebound foreign page
             could still read `GET /`/`/api/run/<id>` even though no POST
-            route was ever reachable from it. issue #523: any of
-            `_LOCAL_NAMES` on this port is this server; returns the one sent."""
+            route was ever reachable from it. issue #523: on the default
+            loopback bind any of `_LOCAL_NAMES` on this port is this server;
+            returns the one sent."""
             port = self.server.server_address[1]
-            allowed = [f"{name}:{port}" for name in _LOCAL_NAMES]
+            if bind_host == HOST:
+                allowed = [f"{name}:{port}" for name in _LOCAL_NAMES]
+            else:
+                allowed = [f"{bind_host}:{port}"]
             host = self.headers.get("Host", "")
-            if host not in allowed:
+            wildcard = bind_host in _WILDCARD_HOSTS and host.rpartition(":")[2] == str(port)
+            if host not in allowed and not wildcard:  # wildcard: an explicit --host 0.0.0.0
                 raise _Forbidden(f"play: unexpected Host header {host!r}",
                                  fix=f"send requests to {' or '.join(allowed)} only")
             return host
@@ -181,6 +246,21 @@ def _make_handler(run_id: str | None, state_dir: str | Path,
             (a dropped connection with a traceback) and never silently
             treated as `{}`."""
             length = int(self.headers.get("Content-Length", "0") or "0")
+            if remote and length > MAX_PAYLOAD_BYTES:
+                # drain what a keep-alive connection still owes (bounded), so
+                # the 413 reaches a client that is still sending
+                left = min(length, 16 * MAX_PAYLOAD_BYTES)
+                while left > 0:
+                    chunk = self.rfile.read(min(left, 65536))
+                    if not chunk:
+                        break
+                    left -= len(chunk)
+                if length > 16 * MAX_PAYLOAD_BYTES:
+                    self.close_connection = True
+                raise _TooLarge(
+                    f"remote: the request body is {length} bytes, over the "
+                    f"{MAX_PAYLOAD_BYTES}-byte cap",
+                    fix=f"send at most {MAX_PAYLOAD_BYTES} bytes per request")
             raw = self.rfile.read(length) if length else b""
             if not raw.strip():
                 return {}
@@ -200,6 +280,11 @@ def _make_handler(run_id: str | None, state_dir: str | Path,
             except _Forbidden as e:
                 self._send_json(403, {"ok": False, "error": e.to_dict()})
                 return
+            if remote:  # `serve` is headless: POST routes only
+                self._send_json(404, {"ok": False, "error": {
+                    "type": "NotFound", "message": "not found",
+                    "fix": f"POST one of {', '.join(routes)}"}})
+                return
             if self.path == "/" or self.path == "":
                 if play_mode:
                     # issue #407: the Play page -- the task picker with no
@@ -217,6 +302,10 @@ def _make_handler(run_id: str | None, state_dir: str | Path,
             if play_mode and self.path == "/api/play/tasks":
                 tasks = [_strip_paths(t) for t in play.list_play_tasks()]
                 self._send_json(200, {"ok": True, "tasks": tasks})
+                return
+            if play_mode and self.path == "/api/demo/stages":
+                self._send_json(200, {"ok": True, "stages": list(stages.STAGES),
+                                      "default": stages.DEFAULT_STAGE, **demo})
                 return
             if play_mode and self.path == "/api/play/choices":
                 if current["run_id"] is None:
@@ -264,11 +353,11 @@ def _make_handler(run_id: str | None, state_dir: str | Path,
                 # even for a request this handler ends up rejecting before
                 # ever looking at the body's contents.
                 body = self._read_json_body()
-                if self.path not in _PLAY_ROUTES:
+                if self.path not in routes:
                     self._send_json(404, {
                         "ok": False, "error": {
                             "type": "NotFound", "message": "not found",
-                            "fix": f"POST one of {', '.join(_PLAY_ROUTES)}"}})
+                            "fix": f"POST one of {', '.join(routes)}"}})
                     return
                 self._same_origin_check()
                 if not play_mode:
@@ -280,6 +369,8 @@ def _make_handler(run_id: str | None, state_dir: str | Path,
                 self._send_json(403, {"ok": False, "error": e.to_dict()})
             except _MethodNotAllowed as e:
                 self._send_json(405, {"ok": False, "error": e.to_dict()})
+            except _TooLarge as e:
+                self._send_json(413, {"ok": False, "error": e.to_dict()})
             except ArenaError as e:
                 self._send_json(400, {"ok": False, "error": e.to_dict()})
             except Exception as e:  # noqa: BLE001 - a bug here must still answer in shape
@@ -287,7 +378,135 @@ def _make_handler(run_id: str | None, state_dir: str | Path,
                     "type": type(e).__name__, "message": str(e),
                     "fix": "this is a shal-arena bug, not a request problem -- file an issue"}})
 
+        def _authorize(self, body: dict[str, Any]) -> str:
+            """issue #486: the run this call is for, if it carries that run's
+            token. A missing token, a wrong one, another run's, and an unknown
+            run all answer the same 403 -- it never says which."""
+            run_id, token = body.get("run_id"), body.get("token")
+            expected = tokens.get(run_id) if isinstance(run_id, str) else None
+            if (expected is None or not isinstance(token, str)
+                    or not hmac.compare_digest(token.encode(), expected.encode())):
+                raise _Forbidden(
+                    "remote: this call has no valid token for this run",
+                    fix="pass the token that `run` returned (--token TOKEN, or \"token\" "
+                        "in the body) together with that run's run_id")
+            return run_id
+
+        def _logged(self, run_id: str, argv: list[str], note: str | None, fn) -> dict[str, Any]:
+            """issue #486: run one command and write its `<run>.cli.jsonl`
+            line on THIS side, the way a local `shal-arena` call does -- the
+            client keeps no log of its own. `argv` never holds the token."""
+            from ..cli import _log_cli_call
+            try:
+                doc = fn()
+            except ArenaError as e:
+                _log_cli_call(str(state_dir), run_id, argv, e.exit_code,
+                              {"ok": False, "error": e.to_dict()}, "", note)
+                raise
+            _log_cli_call(str(state_dir), run_id, argv, 0 if doc.get("ok", True) else 1,
+                          doc, "", note)
+            return doc
+
+        def _dispatch_remote(self, body: dict[str, Any]) -> None:
+            """issue #486: every route of a `shal-arena serve` server -- the
+            Play routes (the same `play.*` / `runner.*` functions) and the
+            remote-bus ones. Nothing here takes code, a path or a module."""
+            path = self.path
+            unknown = sorted(set(body) - _REMOTE_KEYS[path])
+            if unknown:
+                raise ArenaError(
+                    f"remote: {path} does not take {unknown}; this server runs no code "
+                    "and opens no path",
+                    fix=f"send only: {', '.join(sorted(_REMOTE_KEYS[path]))}")
+            note = body.get("note")
+            if note is not None:
+                from ..cli import NOTE_MAX_CHARS, _note_too_long_error
+                if not isinstance(note, str):
+                    raise ArenaError("remote: 'note' must be a string",
+                                     fix="send 'note' as text, or leave it out")
+                if len(note) > NOTE_MAX_CHARS:
+                    raise _note_too_long_error(note)
+            if path == "/api/play/start":
+                task = _require_str(body, "task", example='{"task": "rail-3v3"}')
+                seed = _require_optional_int(body, "seed")
+                result = _strip_paths(play.start(task, state_dir=state_dir, seed=seed))
+                run_id = result["run_id"]
+                tokens[run_id] = secrets.token_urlsafe(16)
+                argv = ["run", task] + ([] if seed is None else ["--seed", str(seed)])
+                self._logged(run_id, argv, note, lambda: result)
+                self._send_json(200, {**result, "token": tokens[run_id]})
+                return
+            run_id = self._authorize(body)
+            if path == "/api/remote/exchange":
+                self._send_json(200, sessions.exchange(
+                    run_id, body.get("session"), body.get("address"), body.get("message")))
+                return
+            if path == "/api/remote/txn":
+                self._send_json(200, sessions.txn(
+                    run_id, body.get("session"), body.get("address"), body.get("ops")))
+                return
+            if path == "/api/remote/begin":
+                self._send_json(200, sessions.begin(
+                    run_id, _require_str(body, "action", example='{"action": "measure"}'),
+                    _require_str(body, "address", example='{"address": "dmm0"}'),
+                    _optional_str(body, "at", example='{"address": "dmm0", "at": "tp_5v"}')))
+                return
+            if path == "/api/remote/finish":
+                sess = sessions.get(run_id, body.get("session"))
+                argv = [sess.action, run_id, sess.address]
+                if sess.action == "call":
+                    argv += [str(body.get("op")), *map(str, body.get("args") or [])]
+                elif sess.point is not None:
+                    argv += ["--at", sess.point]
+                doc = self._logged(run_id, argv, note, lambda: sessions.finish(
+                    run_id, body.get("session"), body))
+                self._send_json(200, doc)
+                return
+            if path == "/api/play/answer":
+                value = _require_str(body, "value", example='{"value": "ok"}')
+                _check_answer_value(run_id, value, state_dir)
+                # the local `answer`, not Play's: no measurement is a
+                # `disqualified` answer here too, never a refusal
+                self._send_json(200, self._logged(
+                    run_id, ["answer", run_id, value], note,
+                    lambda: _public_answer(_runner.answer(run_id, value, state_dir=state_dir))))
+                return
+            address = _require_str(body, "address", example='{"address": "psu0"}')
+            if path == "/api/play/drive":
+                volts = _require_finite_number(body, "volts")
+                doc = self._logged(run_id, ["drive", run_id, address, str(volts)], note,
+                                   lambda: _strip_paths(play.drive(
+                                       run_id, address, volts, state_dir=state_dir)))
+            elif path == "/api/play/switch":
+                on = _require_bool(body, "on")
+                doc = self._logged(run_id, ["call", run_id, address, "set_relay", "0",
+                                            "true" if on else "false"], note,
+                                   lambda: _strip_paths(play.switch(
+                                       run_id, address, _case_for(run_id, address, state_dir),
+                                       on, state_dir=state_dir)))
+            else:  # /api/play/measure
+                at = _optional_str(body, "at", example='{"address": "dmm0", "at": "tp_5v"}')
+                doc = self._logged(run_id, ["measure", run_id, address]
+                                   + ([] if at is None else ["--at", at]), note,
+                                   lambda: _strip_paths(play.measure(
+                                       run_id, address, _case_for(run_id, address, state_dir),
+                                       at=at, state_dir=state_dir)))
+            self._send_json(200, doc)
+
         def _dispatch(self, body: dict[str, Any]) -> None:
+            if remote:
+                self._dispatch_remote(body)
+                return
+            if self.path == "/api/demo/start":
+                stage = _require_str(body, "stage", example='{"stage": "racked"}')
+                with demo_lock:
+                    doc = _demo_from(stage)
+                    instruments = doc["steps"][0]["result"].get("instruments")
+                    demo["stage"] = stage
+                    if len(instruments or []) > len(demo["rack"]):  # never shrinks
+                        demo["rack"] = instruments
+                    self._send_json(200, {**doc, **demo})
+                return
             if self.path == "/api/play/start":
                 with start_lock:
                     if current["run_id"] is not None:
@@ -345,6 +564,19 @@ def _make_handler(run_id: str | None, state_dir: str | Path,
                 return
 
     return Handler
+
+
+def _demo_from(stage: str) -> dict[str, Any]:
+    """`shal-arena demo --from STAGE --json`, run through the same
+    `stages.run_from` the CLI calls; its one JSON document is what the CLI
+    would print with ``--trace`` (issue #507: the "Under the hood" panel shows
+    each step's ``under_the_hood`` as it is). An unknown stage raises
+    `UnknownStage` (a 400 here). The caller holds `demo_lock`: stdout is
+    process-wide."""
+    out = io.StringIO()
+    with contextlib.redirect_stdout(out):
+        stages.run_from(stage, pause=0, json_mode=True, trace=True)
+    return json.loads(out.getvalue())
 
 
 def _require_str(body: dict[str, Any], key: str, *, example: str) -> str:
@@ -432,19 +664,26 @@ def _case_for(run_id: str, address: str, state_dir: str | Path) -> str:
 
 def serve(run_id: str | None = None, *, state_dir: str | Path = DEFAULT_STATE_DIR, port: int = 0,
          open_browser: bool = True,
-         drivers: dict[str, dict[str, Any]] | None = None) -> ThreadingHTTPServer:
+         drivers: dict[str, dict[str, Any]] | None = None,
+         host: str = HOST, remote: bool = False) -> ThreadingHTTPServer:
     """Bind on `HOST` and the given `port` (0 picks a free one) and return
     the live server -- the caller runs `serve_forever()` (or, in a test,
     polls it directly and shuts it down itself). With a `run_id`: fails
     fast, before binding anything, if it does not exist (same named-fix
     error every other command raises for an unknown run) -- WATCH mode,
     unchanged from #406. With none: PLAY mode (#407), binds with no run
-    open; `POST /api/play/start` opens one."""
+    open; `POST /api/play/start` opens one.
+
+    issue #486: ``remote=True`` is `shal-arena serve` -- headless, many runs,
+    a token per run, plus the remote-bus routes; ``host`` is where it binds
+    (``127.0.0.1`` unless the caller was told explicitly, in `cli.py`). It
+    prints nothing: the `serve` command prints its one JSON line itself."""
     if run_id is not None:
         run_payload(run_id, state_dir=state_dir)  # ArenaError, unknown run -- fail before bind
-    handler = _make_handler(run_id, state_dir, drivers)
-    httpd = _ArenaServer((HOST, port), handler)
-    httpd.twin = _ipv6_twin(handler, httpd.server_address[1])
+    handler = _make_handler(run_id, state_dir, drivers, remote=remote, bind_host=host)
+    httpd = _ArenaServer((host, port), handler)
+    if host == HOST:  # `localhost` means this machine only on the default bind
+        httpd.twin = _ipv6_twin(handler, httpd.server_address[1])
 
     # issue #407 round 2, must-fix 1: `runner._import_driver_file` re-execs
     # the file on every call, making a brand-new class object each time --
@@ -475,10 +714,9 @@ def serve(run_id: str | None = None, *, state_dir: str | Path = DEFAULT_STATE_DI
     # issue #523: print every URL that answers, so a person can paste either.
     # only when the `::1` twin really bound -- otherwise `localhost` may not work.
     also = f" (also http://localhost:{httpd.server_address[1]}/)" if httpd.twin else ""
-    if run_id is not None:
-        print(f"shal-arena ui: watching {run_id} at {url}{also}")
-    else:
-        print(f"shal-arena ui: play at {url}{also}")
+    if not remote:
+        print(f"shal-arena ui: watching {run_id} at {url}{also}" if run_id is not None
+              else f"shal-arena ui: play at {url}{also}")
     if open_browser:
         webbrowser.open(url)
     return httpd

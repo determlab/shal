@@ -1,0 +1,42 @@
+{
+  "path": "over_voltage",
+  "argv": [
+    "python",
+    "-m",
+    "shal.cli",
+    "call",
+    "bench.yaml",
+    "psu",
+    "set_voltage",
+    "30",
+    "--json"
+  ],
+  "env": {},
+  "exit_code": 2,
+  "stdout": {
+    "ok": false,
+    "rejected": "limits",
+    "tool": "psu__set_voltage",
+    "device": "psu",
+    "op": "set_voltage",
+    "side_effect": "actuator",
+    "sent": false,
+    "violations": [
+      {
+        "param": "volts",
+        "value": 30.0,
+        "keyword": "maximum",
+        "limit": 3.6,
+        "message": "30.0 is greater than the maximum of 3.6"
+      }
+    ],
+    "address": "psu0",
+    "simulated": true,
+    "error": {
+      "type": "LimitsRejected",
+      "message": "/bench/psu0  set_voltage rejected by declared limits (30.0 is greater than the maximum of 3.6) \u2014 nothing was sent to the device",
+      "fix": "pass a value inside the op's declared limits (`shal tools bench.yaml --json`)"
+    }
+  },
+  "stderr": "shal call: /bench/psu0  set_voltage rejected by declared limits (30.0 is greater than the maximum of 3.6) \u00e2\u20ac\u201d nothing was sent to the device\n"
+}

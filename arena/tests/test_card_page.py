@@ -328,6 +328,127 @@ def test_rack_page_js_builder_matches_the_python_builder(tmp_path: Path) -> None
     assert yaml.safe_load(proc.stdout) == yaml.safe_load(build_setup_yaml(case_names))
 
 
+_DOM_STUB = """
+function mkEl(props) {
+  const cls = new Set();
+  const attrs = {};
+  const handlers = {};
+  return Object.assign({
+    dataset: {}, textContent: "", value: "", id: "", handlers, attrs,
+    classList: {add: c => cls.add(c), remove: c => cls.delete(c),
+                contains: c => cls.has(c)},
+    setAttribute: (k, v) => { attrs[k] = v; },
+    addEventListener: (ev, fn) => { handlers[ev] = fn; },
+  }, props);
+}
+const fakeTiles = TILES.map(c => {
+  const el = mkEl({dataset: {case: c}});
+  el.attrs["aria-pressed"] = "false";
+  return el;
+});
+const fakeSlots = [0, 1, 2, 3].map(i => mkEl({dataset: {slot: String(i)}}));
+const notHere = mkEl({id: "not-here", dataset: {slot: "4"}});
+const byId = {"yaml-out": mkEl({}), "not-here": notHere,
+              "download-btn": mkEl({}), "copy-btn": mkEl({})};
+globalThis.document = {
+  querySelectorAll: sel => sel.startsWith(".slot") ? [...fakeSlots, notHere] : fakeTiles,
+  getElementById: id => byId[id],
+};
+globalThis.window = {open: () => {}};
+"""
+
+_DOM_DRIVER = """
+const out = [];
+for (const [mode, name, i] of PLAN) {
+  const tile = fakeTiles.find(t => t.dataset.case === name);
+  if (mode === "tap") {
+    tile.handlers.click();
+    out.push(tile.attrs["aria-pressed"] + ":" + tile.classList.contains("selected"));
+    fakeSlots[i].handlers.click();
+    out.push(tile.attrs["aria-pressed"] + ":" + tile.classList.contains("selected"));
+  } else {
+    fakeSlots[i].handlers.drop({preventDefault() {},
+      dataTransfer: {getData: () => name}});
+  }
+}
+console.log(JSON.stringify({yaml: byId["yaml-out"].value, states: out,
+                            labels: fakeSlots.map(s => s.textContent)}));
+"""
+
+
+def _run_rack_page(tmp_path: Path, plan: list[list]) -> dict:
+    node = shutil.which("node")
+    if node is None:
+        pytest.skip("node not available")
+    page = render_rack_page()
+    page_script = page.split("<script>", 1)[1].split("</script>", 1)[0]
+    script = tmp_path / "page.mjs"
+    script.write_text(
+        "const TILES = " + json.dumps([t.case for t in rack_tiles()]) + ";\n"
+        "const PLAN = " + json.dumps(plan) + ";\n"
+        + _DOM_STUB + page_script + _DOM_DRIVER, encoding="utf-8")
+    proc = subprocess.run([node, str(script)], capture_output=True, text=True, timeout=30)
+    assert proc.returncode == 0, proc.stderr
+    return json.loads(proc.stdout)
+
+
+def test_rack_page_tap_path_and_drag_path_build_the_same_setup_yaml(tmp_path: Path) -> None:
+    # scpi-bus cases only: the page's JS builder hard-codes sim-scpi/address 1
+    # (the pre-existing drift for sht31/relay-modbus is outside this change).
+    cases = ["dmm", "scpi-psu", "dmm"]
+    tap = _run_rack_page(tmp_path, [["tap", c, i] for i, c in enumerate(cases)])
+    drag = _run_rack_page(tmp_path, [["drag", c, i] for i, c in enumerate(cases)])
+
+    assert tap["yaml"] == drag["yaml"]
+    assert tap["labels"] == drag["labels"]
+    assert yaml.safe_load(tap["yaml"]) == yaml.safe_load(build_setup_yaml(cases))
+    # Tap selects (aria-pressed true), placing clears the selection.
+    assert tap["states"][:2] == ["true:true", "false:false"]
+
+
+def test_rack_page_tapping_a_selected_tile_again_unselects_it(tmp_path: Path) -> None:
+    node = shutil.which("node")
+    if node is None:
+        pytest.skip("node not available")
+    page = render_rack_page()
+    page_script = page.split("<script>", 1)[1].split("</script>", 1)[0]
+    script = tmp_path / "toggle.mjs"
+    script.write_text(
+        "const TILES = " + json.dumps([t.case for t in rack_tiles()]) + ";\n"
+        + _DOM_STUB + page_script
+        + """
+const t = fakeTiles[0];
+t.handlers.click();
+const on = t.attrs["aria-pressed"] + ":" + t.classList.contains("selected");
+t.handlers.click();
+fakeSlots[0].handlers.click();  // nothing selected: nothing placed
+console.log(on, t.attrs["aria-pressed"], t.classList.contains("selected"),
+            JSON.stringify(byId["yaml-out"].value));
+""", encoding="utf-8")
+    proc = subprocess.run([node, str(script)], capture_output=True, text=True, timeout=30)
+    assert proc.returncode == 0, proc.stderr
+    assert proc.stdout.strip() == 'true:true false false ""'
+
+
+def test_rack_page_has_tap_handler_note_and_only_the_github_link() -> None:
+    page = render_rack_page()
+    assert "addEventListener('click'" in page
+    assert 'aria-pressed="false"' in page
+    assert "Drag and tap both work" in page
+    assert "dragstart" in page and "'drop'" in page  # drag-and-drop stays
+    http_lines = [ln for ln in page.splitlines() if "http" in ln]
+    assert http_lines
+    assert all("github.com/determlab/shal" in ln for ln in http_lines)
+    assert "https://" not in page.replace("https://github.com/determlab/shal", "")
+
+
+def test_setup_yaml_output_is_unchanged_byte_for_byte() -> None:
+    proc = _run_cli("setup-yaml", "dmm", "scpi-psu", "--json")
+    assert proc.returncode == 0, proc.stderr
+    assert json.loads(proc.stdout)["setup_yaml"] == build_setup_yaml(["dmm", "scpi-psu"])
+    assert build_setup_yaml(["dmm"]).startswith("shal_version: 1\nroot:\n  bench0:\n")
+
+
 def test_rack_page_renders_offline_and_has_both_tiles() -> None:
     page = render_rack_page()
     assert "<!doctype html>" in page.lower()

@@ -1,0 +1,24 @@
+{
+  "path": "trap_file",
+  "argv": [
+    "python",
+    "-m",
+    "shal_arena.cli",
+    "run",
+    "trap-file.yaml",
+    "--state-dir",
+    "state",
+    "--json"
+  ],
+  "env": {},
+  "exit_code": 2,
+  "stdout": {
+    "ok": false,
+    "error": {
+      "type": "TaskFormatError",
+      "message": "card file not found: C:\\etc\\passwd",
+      "fix": "pass the path to an existing card file, or run `shal-arena run --help`"
+    }
+  },
+  "stderr": "shal-arena: card file not found: C:\\etc\\passwd\n"
+}

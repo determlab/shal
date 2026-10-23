@@ -105,7 +105,8 @@ def _tile_html(tile: Tile) -> str:
     cost = f"${tile.replacement_usd:,.0f}" if tile.replacement_usd is not None else ""
     if tile.has_driver:
         return (
-            f'<div class="tile" draggable="true" data-case="{label}">'
+            f'<div class="tile" draggable="true" data-case="{label}" '
+            f'role="button" tabindex="0" aria-pressed="false">'
             f'<div class="tile-name">{label}</div>'
             f'<div class="tile-compatible">{compatible}</div>'
             f'<div class="tile-cost">{html.escape(cost)}</div>'
@@ -170,6 +171,7 @@ def render_rack_page(tiles: list[Tile] | None = None) -> str:
   .shelf, .rack {{ display: flex; flex-wrap: wrap; gap: 12px; margin: 12px 0 24px; }}
   .tile {{ border: 1px solid #30363d; border-radius: 8px; padding: 10px 14px;
           background: #161b22; cursor: grab; min-width: 140px; }}
+  .tile.selected {{ outline: 2px solid #58a6ff; background: #1f2a3a; }}
   .tile-grey {{ opacity: 0.6; cursor: default; }}
   .tile-name {{ font-weight: 600; }}
   .tile-compatible, .tile-cost {{ font-size: 12px; color: #8b949e; }}
@@ -186,7 +188,8 @@ def render_rack_page(tiles: list[Tile] | None = None) -> str:
 </head>
 <body>
 <h1>SHAL Arena — rack</h1>
-<p>Drag an instrument tile into a rack slot to build <code>setup.yaml</code>.</p>
+<p>Drag an instrument tile into a rack slot to build <code>setup.yaml</code>.
+Drag and tap both work: on a touch screen, tap a tile, then tap a slot.</p>
 
 <div class="shelf" id="shelf">
 {tiles_html}
@@ -220,9 +223,36 @@ function refresh() {{
   document.getElementById('yaml-out').value = yamlText;
 }}
 
+// One place-a-tile path for both drag-and-drop and tap-to-place.
+function placeTile(slot, i, caseName) {{
+  placed[i] = caseName;
+  slot.textContent = caseName;
+  slot.classList.add('filled');
+  refresh();
+}}
+
+let selectedTile = null;
+
+function clearSelection() {{
+  if (selectedTile) {{
+    selectedTile.classList.remove('selected');
+    selectedTile.setAttribute('aria-pressed', 'false');
+  }}
+  selectedTile = null;
+}}
+
 document.querySelectorAll('.tile[draggable="true"]').forEach(tile => {{
   tile.addEventListener('dragstart', ev => {{
     ev.dataTransfer.setData('text/plain', tile.dataset.case);
+  }});
+  // Tap fallback for touch screens: tap a tile to select it, tap again to unselect.
+  tile.addEventListener('click', () => {{
+    const wasSelected = selectedTile === tile;
+    clearSelection();
+    if (wasSelected) return;
+    selectedTile = tile;
+    tile.classList.add('selected');
+    tile.setAttribute('aria-pressed', 'true');
   }});
 }});
 
@@ -232,10 +262,13 @@ slots.forEach((slot, i) => {{
     ev.preventDefault();
     const caseName = ev.dataTransfer.getData('text/plain');
     if (!caseName) return;
-    placed[i] = caseName;
-    slot.textContent = caseName;
-    slot.classList.add('filled');
-    refresh();
+    placeTile(slot, i, caseName);
+  }});
+  // Tap a slot while a tile is selected: place it, then clear the selection.
+  slot.addEventListener('click', () => {{
+    if (!selectedTile) return;
+    placeTile(slot, i, selectedTile.dataset.case);
+    clearSelection();
   }});
 }});
 

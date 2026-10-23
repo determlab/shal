@@ -3,6 +3,7 @@
 ``drive`` is #313's; ``bench`` is #314's).
 
     shal-arena demo --json
+    shal-arena demo --from racked --json
     shal-arena tasks --json
     shal-arena run rail-3v3 --json
     shal-arena check-driver <run-id> psu0 ./driver.py --json
@@ -11,6 +12,8 @@
     shal-arena drive <run-id> psu0 6.5 --json
     shal-arena call <run-id> relay0 ./driver.py set_relay 0 false --json
     shal-arena answer <run-id> low_voltage --json
+    shal-arena serve --json                        (issue #486: then --server URL on run,
+    shal-arena run relay-rail --server URL --json   check-driver, measure, drive, call, answer)
     shal-arena bench --runs 10 --json
     shal-arena bench rail-3v3 --runs 10 --policy ./policy.py --json
 
@@ -54,7 +57,19 @@ def _cmd_demo(args: argparse.Namespace) -> int:
     from .demo import run_story
 
     pause = args.pause if args.pause is not None else (0.0 if args.json else 2.0)
-    return run_story(pause=pause, json_mode=args.json)
+    if args.trace and not args.json:
+        return _report_error(
+            ArenaError("--trace adds a key to the JSON document", fix="pass --json too: "
+                       "`shal-arena demo --json --trace`"), False)
+    if args.from_stage is not None:
+        # issue #508: start from one stage's preset instead of the whole story
+        from .stages import run_from
+        try:
+            return run_from(args.from_stage, pause=pause, json_mode=args.json,
+                            trace=args.trace)
+        except ArenaError as e:
+            return _report_error(e, args.json)
+    return run_story(pause=pause, json_mode=args.json, trace=args.trace)
 
 
 def _parse_driver_args(specs: list[str]) -> dict[str, dict[str, Any]]:
@@ -138,15 +153,55 @@ def _cmd_tasks(args: argparse.Namespace) -> int:
     return 0
 
 
+def _remote():
+    """issue #486: the `--server` client, imported only when a command uses
+    it (importing it registers `shal,remote-bus`)."""
+    from . import client
+    return client
+
+
+def _cmd_serve(args: argparse.Namespace) -> int:
+    from .ui.server import HOST, serve
+
+    try:
+        httpd = serve(None, state_dir=args.state_dir, port=args.port, open_browser=False,
+                      host=args.host, remote=True)
+    except OSError as e:
+        return _report_error(ArenaError(f"serve: cannot bind {args.host}:{args.port}: {e}",
+                                        fix="pick a free --port (0 picks one) or a --host "
+                                            "this machine has"), args.json)
+    if args.host != HOST:
+        print(f"shal-arena serve: WARNING: bound to {args.host!r}, not {HOST}; anyone who "
+              "can reach this address can play runs (they still need each run's token)",
+              file=sys.stderr)
+    url = f"http://{args.host}:{httpd.server_address[1]}"
+    doc = {"ok": True, "side_effect": "starts a local server; writes run state under "
+                                      "--state-dir", "url": url, "state_dir": args.state_dir}
+    print(json.dumps(doc) if args.json else f"shal-arena serve: {url} (state: {args.state_dir})")
+    try:
+        httpd.serve_forever()
+    except KeyboardInterrupt:
+        pass
+    finally:
+        httpd.server_close()
+    return 0
+
+
 def _cmd_run(args: argparse.Namespace) -> int:
     try:
-        result = start_run(str(resolve_task(args.task)), seed=args.seed, state_dir=args.state_dir)
+        if args.server:
+            result = _remote().run(args.server, args.task, seed=args.seed, note=args.note)
+        else:
+            result = start_run(str(resolve_task(args.task)), seed=args.seed,
+                               state_dir=args.state_dir)
     except ArenaError as e:
         return _report_error(e, args.json)
     if args.json:
         _json_out(result)
     else:
         print(f"run {result['run_id']}: {result['task']['title']}")
+        if result.get("token"):
+            print(f"token: {result['token']}  (pass --server and --token on every other call)")
         print(result['task']['question'])
         for inst in result["instruments"]:
             wiring = (inst.get("drives") or inst.get("switches")
@@ -157,8 +212,11 @@ def _cmd_run(args: argparse.Namespace) -> int:
 
 def _cmd_check(args: argparse.Namespace) -> int:
     try:
-        result = check_instrument_driver(args.run_id, args.instrument, args.manifest,
-                                         state_dir=args.state_dir)
+        if args.server:  # runs here, against the local fault-free case; no request is made
+            result = _remote().check(args.run_id, args.instrument, args.manifest)
+        else:
+            result = check_instrument_driver(args.run_id, args.instrument, args.manifest,
+                                             state_dir=args.state_dir)
     except ArenaError as e:
         return _report_error(e, args.json)
     if args.json:
@@ -173,8 +231,12 @@ def _cmd_check(args: argparse.Namespace) -> int:
 
 def _cmd_measure(args: argparse.Namespace) -> int:
     try:
-        result = take_measurement(args.run_id, args.instrument, args.manifest,
-                                  at=args.at, state_dir=args.state_dir)
+        if args.server:
+            result = _remote().measure(args.server, args.run_id, args.token, args.instrument,
+                                       args.manifest, at=args.at, note=args.note)
+        else:
+            result = take_measurement(args.run_id, args.instrument, args.manifest,
+                                      at=args.at, state_dir=args.state_dir)
     except ArenaError as e:
         return _report_error(e, args.json)
     if args.json:
@@ -187,7 +249,12 @@ def _cmd_measure(args: argparse.Namespace) -> int:
 
 def _cmd_drive(args: argparse.Namespace) -> int:
     try:
-        result = drive_input(args.run_id, args.instrument, args.volts, state_dir=args.state_dir)
+        if args.server:
+            result = _remote().drive(args.server, args.run_id, args.token, args.instrument,
+                                     args.volts, note=args.note)
+        else:
+            result = drive_input(args.run_id, args.instrument, args.volts,
+                                 state_dir=args.state_dir)
     except ArenaError as e:
         return _report_error(e, args.json)
     if args.json:
@@ -202,8 +269,13 @@ def _cmd_drive(args: argparse.Namespace) -> int:
 
 def _cmd_call(args: argparse.Namespace) -> int:
     try:
-        result = call_op(args.run_id, args.instrument, args.manifest, args.op, args.args,
-                         at=args.at, state_dir=args.state_dir)
+        if args.server:
+            result = _remote().call(args.server, args.run_id, args.token, args.instrument,
+                                    args.manifest, args.op, args.args, at=args.at,
+                                    note=args.note)
+        else:
+            result = call_op(args.run_id, args.instrument, args.manifest, args.op, args.args,
+                             at=args.at, state_dir=args.state_dir)
     except ArenaError as e:
         return _report_error(e, args.json)
     if args.json:
@@ -218,16 +290,23 @@ def _cmd_call(args: argparse.Namespace) -> int:
 
 def _cmd_answer(args: argparse.Namespace) -> int:
     try:
-        result = _answer(args.run_id, args.value, state_dir=args.state_dir)
+        if args.server:
+            result = _remote().answer(args.server, args.run_id, args.token, args.value,
+                                      note=args.note)
+        else:
+            result = _answer(args.run_id, args.value, state_dir=args.state_dir)
     except ArenaError as e:
         return _report_error(e, args.json)
     if args.json:
         _json_out(result)
     else:
-        print("correct" if result["correct"] else f"incorrect (was {result['fault_id']})")
+        # a served run never says which fault it was
+        print("correct" if result["correct"] else "incorrect" if "fault_id" not in result
+              else f"incorrect (was {result['fault_id']})")
         if result["disqualified"]:
             print("disqualified: no measurement logged for this run")
-        print(f"sim log: {result['sim_log']}")
+        if "sim_log" in result:
+            print(f"sim log: {result['sim_log']}")
     return 0
 
 
@@ -372,6 +451,14 @@ def _build_parser() -> argparse.ArgumentParser:
                         help="seconds between steps (default: 2.0, or 0 under --json)")
     p_demo.add_argument("--json", action="store_true",
                         help="print one JSON document on stdout instead of narrating")
+    p_demo.add_argument("--from", dest="from_stage", default=None, metavar="STAGE",
+                        help="issue #508: start from one stage's preset instead -- one of "
+                             "empty, picked, racked, wired, ran; runs each stage from "
+                             "STAGE to ran, the first step is STAGE; writes nothing")
+    p_demo.add_argument("--trace", action="store_true",
+                        help="issue #507: with --json, every step also has under_the_hood: "
+                             "{yaml, calls, gate} -- the setup YAML lines it uses, its calls "
+                             "down to the bus command, and the gate's decision")
     p_demo.set_defaults(func=_cmd_demo)
 
     p_ui = sub.add_parser(
@@ -399,6 +486,30 @@ def _build_parser() -> argparse.ArgumentParser:
                       help="where run state lives (default: ./.shal-arena)")
     p_ui.set_defaults(func=_cmd_ui)
 
+    def add_server(p: argparse.ArgumentParser, *, token: bool = True) -> None:
+        # issue #486: with --server the command is a request to a `shal-arena
+        # serve` server and keeps no local state (no seed, state file or
+        # cli.jsonl); without it nothing changes.
+        p.add_argument("--server", default=None, metavar="URL",
+                       help="url of a `shal-arena serve` server (its `url`): the run lives "
+                            "there, this command keeps no state; your driver.py still runs "
+                            "here, its bus calls go to the server")
+        if token:
+            p.add_argument("--token", default=None, metavar="TOKEN",
+                           help="with --server: the run's token, as `run` returned it")
+
+    p_serve = sub.add_parser(
+        "serve", allow_abbrev=False,
+        help="issue #486: a headless local server that holds the seed, the sim and the "
+             "run state; play it with --server URL on the run commands")
+    p_serve.add_argument("--host", default="127.0.0.1", metavar="HOST",
+                         help="where to bind (default 127.0.0.1; any other host prints a "
+                              "warning)")
+    p_serve.add_argument("--port", type=int, default=0,
+                         help="local port (default: 0, picks a free one)")
+    add_common(p_serve)
+    p_serve.set_defaults(func=_cmd_serve)
+
     p_tasks = sub.add_parser(
         "tasks", allow_abbrev=False,
         help="list the packaged tasks (name, path, level) that `run` takes by name")
@@ -414,6 +525,7 @@ def _build_parser() -> argparse.ArgumentParser:
                        help="override the task's seed (a weekly challenge passes this)")
     add_common(p_run)
     add_note(p_run)
+    add_server(p_run, token=False)
     p_run.set_defaults(func=_cmd_run)
 
     p_check = sub.add_parser(
@@ -424,6 +536,7 @@ def _build_parser() -> argparse.ArgumentParser:
     p_check.add_argument("manifest", help="path to your driver.py")
     add_common(p_check)
     add_note(p_check)
+    add_server(p_check)
     p_check.set_defaults(func=_cmd_check)
 
     at_help = ("the test point to probe, e.g. tp_5v -- required when the instrument "
@@ -437,6 +550,7 @@ def _build_parser() -> argparse.ArgumentParser:
     p_measure.add_argument("--at", default=None, metavar="POINT", help=at_help)
     add_common(p_measure)
     add_note(p_measure)
+    add_server(p_measure)
     p_measure.set_defaults(func=_cmd_measure)
 
     p_drive = sub.add_parser(
@@ -448,6 +562,7 @@ def _build_parser() -> argparse.ArgumentParser:
     p_drive.add_argument("volts", type=float)
     add_common(p_drive)
     add_note(p_drive)
+    add_server(p_drive)
     p_drive.set_defaults(func=_cmd_drive)
 
     p_call = sub.add_parser(
@@ -462,6 +577,7 @@ def _build_parser() -> argparse.ArgumentParser:
     p_call.add_argument("--at", default=None, metavar="POINT", help=at_help)
     add_common(p_call)
     add_note(p_call)
+    add_server(p_call)
     p_call.set_defaults(func=_cmd_call)
 
     p_answer = sub.add_parser("answer", allow_abbrev=False,
@@ -470,6 +586,7 @@ def _build_parser() -> argparse.ArgumentParser:
     p_answer.add_argument("value", help="your answer (one of the card's fault ids, or 'ok')")
     add_common(p_answer)
     add_note(p_answer)
+    add_server(p_answer)
     p_answer.set_defaults(func=_cmd_answer)
 
     p_bench = sub.add_parser(
@@ -726,7 +843,9 @@ def main(argv: list[str] | None = None) -> int:
             parsed = candidate
 
     run_id = _extract_run_id(args, printed, parsed)
-    if run_id is not None:
+    # issue #486: with --server the run lives on the server, which writes the
+    # cli.jsonl line itself; this side keeps nothing.
+    if run_id is not None and not getattr(args, "server", None):
         state_dir = getattr(args, "state_dir", DEFAULT_STATE_DIR)
         _log_cli_call(state_dir, run_id, raw_argv, exit_code, parsed, printed, note)
     return exit_code

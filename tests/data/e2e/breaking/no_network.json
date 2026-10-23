@@ -1,0 +1,33 @@
+{
+  "path": "no_network",
+  "argv": [
+    "python",
+    "-m",
+    "shal.cli",
+    "call",
+    "bench.yaml",
+    "dmm",
+    "measure_voltage",
+    "--json"
+  ],
+  "env": {
+    "SHAL_SIM_UNPLUG": "dmm"
+  },
+  "exit_code": 4,
+  "stdout": {
+    "ok": false,
+    "tool": "dmm__measure_voltage",
+    "device": "dmm",
+    "op": "measure_voltage",
+    "side_effect": "none",
+    "error": {
+      "type": "Unreachable",
+      "message": "no connection to the instrument at sim0: /bench  no answer from the instrument at 'dmm0'   (hop: sim-scpi, txn=9b12, delivered=no)",
+      "fix": "check the cable, address or power of the instrument, then run the command again"
+    },
+    "delivered": "no",
+    "address": "dmm0",
+    "simulated": true
+  },
+  "stderr": "shal call: dmm.measure_voltage failed: no connection to the instrument at sim0: /bench  no answer from the instrument at 'dmm0'   (hop: sim-scpi, txn=9b12, delivered=no)\n"
+}

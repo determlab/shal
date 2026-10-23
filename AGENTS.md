@@ -7,6 +7,15 @@ reviewed: 2026-09-27
 
 # AGENTS.md — using SHAL
 
+Fastest start — run these two lines, nothing else is needed (no account, no hardware, no API key):
+
+```text
+pip install git+https://github.com/determlab/shal "git+https://github.com/determlab/shal#subdirectory=arena"
+shal-arena ui
+```
+
+The first line installs pyshal and shal-arena from `main`; `shal-arena ui` starts the local game page. Everything below is the reference.
+
 ## What shal does
 
 SHAL reads one YAML file that describes devices and services, and turns every

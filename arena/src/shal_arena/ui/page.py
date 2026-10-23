@@ -20,6 +20,8 @@ from __future__ import annotations
 import json
 from typing import Any
 
+from .. import stages
+
 REPO_URL = "https://github.com/determlab/shal"
 
 
@@ -67,7 +69,7 @@ h1 { font-size: 22px; line-height: 1.25; margin: 4px 0 0; text-wrap: balance; }
 .verdict-bar.bad { border-left-color: var(--gate); }
 .verdict-bar.running { border-left-color: var(--line); }
 .verdict-bar .big { flex: 1 1 100%; font-size: 18px; font-weight: 700; }
-.verdict-bar .big b { color: var(--bad); }
+.verdict-bar .big b.hit { color: var(--bad); }
 .verdict-bar .reason { color: var(--dim); font-size: 14px; }
 .chip { font: 700 13px var(--mono); padding: 4px 10px; border-radius: 999px; white-space: nowrap; }
 .chip.ok { background: color-mix(in srgb, var(--ok) 18%, transparent); color: var(--ok); }
@@ -467,7 +469,7 @@ function resultLineNodes(result) {
     const [pre, what, rest] = resultItemParts(i);
     if (k) out.push(txt("; "));
     if (pre) out.push(txt(pre));
-    out.push(el("b", "", what));
+    out.push(el("b", result.found ? "hit" : "", what));  // red only on a found fault (#521)
     if (rest) out.push(txt(rest));
   });
   return out;
@@ -1125,6 +1127,7 @@ button.task-btn, button.ctl-btn, button.choice, button.again {
   min-height: 44px; background: var(--sunk); color: var(--text);
   border: 1px solid var(--line); text-align: left; touch-action: manipulation; }
 button.task-btn { min-height: 64px; padding: 12px 14px; display: grid; gap: 2px; }
+button.task-btn.sel { border-color: var(--ok); }
 button.task-btn .t { font-size: 16px; font-weight: 700; }
 button.task-btn .s { font: 13px var(--mono); color: var(--dim); font-weight: 400; }
 button.ctl-btn.gate { border-color: var(--gate); }
@@ -1153,6 +1156,20 @@ button.choice { text-align: center; }
 .flash.stop { border-color: var(--bad); border-left-color: var(--bad);
   background: color-mix(in srgb, var(--bad) 12%, var(--panel)); }
 .flash.stop b { color: var(--bad); }
+.hood { position: fixed; top: 0; right: 0; bottom: 0; width: min(440px, 100%); overflow: auto;
+  background: var(--panel); border-left: 1px solid var(--line); padding: 14px; z-index: 10; }
+.hood-steps, .hood-tabs { display: flex; gap: 6px; flex-wrap: wrap; margin: 8px 0; }
+.hood-steps button, .hood-tabs button { background: var(--sunk);
+  color: var(--text); border: 1px solid var(--line); }
+button.hood-step, .hood-tabs button { min-height: 44px; }
+.hood-steps button.sel,.hood-tabs button[aria-pressed="true"] { border-color: var(--ok); }
+.hood-line, .hood-op, .hood-wire { font: 13px var(--mono); white-space: pre-wrap; }
+.hood-line.mark, .hood-call.mark { background: color-mix(in srgb, var(--gate) 22%, var(--panel)); }
+.hood-call { border-left: 4px solid var(--line); padding: 6px 8px; margin: 6px 0; cursor: pointer; }
+.hood-wire { color: var(--dim); }
+.hood-call.blocked, .hood-gate.blocked { border-left-color: var(--bad); color: var(--bad);
+  background: color-mix(in srgb, var(--bad) 12%, var(--panel)); }
+.hood-gate { border-left: 4px solid var(--ok); padding: 8px 10px; display: grid; gap: 4px; }
 """
 
 #: Plain JS, same rules as `_SCRIPT`: no framework, no network beyond this
@@ -1211,10 +1228,112 @@ function renderPicker(tasks) {
     b.type = "button";
     b.setAttribute("data-play", "start");
     b.appendChild(el("span", "t", t.name));
-    b.appendChild(el("span", "s", `${t.level} level · starts a new run (write)`));
+    b.appendChild(el("span", "s", `${t.level} level · starts a new run · records in this run`));
     b.onclick = () => startTask(t.name);
     return b;
   }));
+}
+
+// issue #520: the 5 start cards. The stage list comes from the server (the
+// CLI's own `--from` stages); a card posts its stage and shows the first step
+// of what `shal-arena demo --from STAGE --json` returned. Choosing another
+// card never touches the rack the server keeps.
+function renderDemoCards(stages, selected) {
+  fill($("demo-cards"), stages.map(s => {
+    const b = el("button", "task-btn" + (s === selected ? " sel" : ""));
+    b.type = "button";
+    b.setAttribute("data-play", "demo");
+    b.setAttribute("data-stage", s);
+    b.setAttribute("aria-pressed", s === selected ? "true" : "false");
+    b.appendChild(el("span", "t", s));
+    b.onclick = () => startDemo(s, stages);
+    return b;
+  }));
+}
+
+// issue #507: the "Under the hood" panel. It draws each step's own
+// `under_the_hood` ({yaml, calls, gate}) from what `/api/demo/start` returned
+// -- the object `shal-arena demo --json --trace` prints -- and keeps no second
+// copy of it. A step's focus is its blocked call, else its last call; the
+// focus node marks the same lines in the YAML and the calls.
+const HOOD = {steps: [], step: 0, focus: null};
+
+function hoodFocus(h) {
+  const calls = (h && h.calls) || [];
+  const blocked = calls.find(c => c.result && c.result.rejected);
+  const c = blocked || calls[calls.length - 1];
+  return c ? c.node : null;
+}
+
+function setHoodView(view) {
+  ["yaml", "calls", "gate"].forEach(v => {
+    $("hood-" + v).hidden = v !== view;
+    $("hood-tab-" + v).setAttribute("aria-pressed", v === view ? "true" : "false");
+  });
+}
+
+function renderHood() {
+  const step = HOOD.steps[HOOD.step];
+  const h = (step && step.under_the_hood) || {yaml: [], calls: [], gate: {}};
+  fill($("hood-steps"), HOOD.steps.map((s, i) => {
+    const b = el("button", "hood-step" + (i === HOOD.step ? " sel" : ""), s.step);
+    b.type = "button";
+    b.setAttribute("data-step", s.step);
+    b.onclick = () => selectHoodStep(i);
+    return b;
+  }));
+  fill($("hood-yaml"), h.yaml.map(l => el("div",
+    "hood-line" + (HOOD.focus && l.node === HOOD.focus ? " mark" : ""),
+    `${String(l.n).padStart(3, " ")}  ${l.text}`)));
+  fill($("hood-calls"), h.calls.map(c => {
+    const blocked = !!(c.result && c.result.rejected);
+    const row = el("div", "hood-call" + (blocked ? " blocked" : "")
+      + (HOOD.focus && c.node === HOOD.focus ? " mark" : ""));
+    row.setAttribute("data-node", c.node);
+    row.onclick = () => { HOOD.focus = c.node; renderHood(); };
+    row.appendChild(el("div", "hood-op", `${c.node}.${c.op}(${JSON.stringify(c.args)})`));
+    const wire = (c.result && c.result.wire) || [];
+    if (blocked) {
+      row.appendChild(el("div", "hood-wire", `blocked: ${c.result.rejected} -- not sent`));
+    }
+    wire.forEach(w => row.appendChild(el("div", "hood-wire", w)));
+    return row;
+  }));
+  const g = h.gate || {};
+  const gate = el("div", "hood-gate" + (g.decision === "blocked" ? " blocked" : ""));
+  gate.setAttribute("data-decision", g.decision || "");
+  gate.appendChild(el("b", "", g.decision || ""));
+  gate.appendChild(el("span", "", g.reason || ""));
+  fill($("hood-gate"), [gate]);
+}
+
+function selectHoodStep(i) {
+  HOOD.step = i;
+  const s = HOOD.steps[i];
+  HOOD.focus = hoodFocus(s && s.under_the_hood);
+  renderHood();
+}
+
+function openHood(steps) {
+  HOOD.steps = steps;
+  $("hood-btn").hidden = false;
+  selectHoodStep(0);
+  setHoodView("yaml");
+}
+
+function startDemo(stage, stages) {
+  if (PLAY.busy) return;
+  setBusy(true);
+  post("/api/demo/start", {stage}).then(({status, doc}) => {
+    setBusy(false);
+    if (status !== 200) { flashInto("demo-out", doc); return; }
+    renderDemoCards(stages, stage);
+    const first = doc.steps[0];
+    $("demo-out").className = "flash ok";
+    fill($("demo-out"), [el("b", "", `${first.step}: ${first.line}`),
+      txt(`Rack: ${doc.rack.length ? doc.rack.join(", ") : "empty"}`)]);
+    openHood(doc.steps);
+  }).catch(() => setBusy(false));
 }
 
 function startTask(name) {
@@ -1326,10 +1445,10 @@ function renderControls(payload) {
       row.appendChild(lab);
       row.appendChild(pick);
       row.appendChild(ctlButton(c.label, "", () => measure(c.address, pick.value)));
-      hint = "write · reads this instrument at the chosen point and records it in this run";
+      hint = "records in this run · reads this instrument at the chosen point";
     } else {
       row.appendChild(ctlButton(c.label, "", () => measure(c.address)));
-      hint = "write · reads this instrument and records the reading in this run";
+      hint = "records in this run · reads this instrument";
     }
     box.appendChild(row);
     box.appendChild(el("p", "hint", hint));
@@ -1440,7 +1559,10 @@ function startPlay(initial) {
   SHARE_LIVE = true;
   $("again").onclick = playAgain;
   $("new-run").onclick = startNewRun;
+  $("hood-btn").onclick = () => { $("hood").hidden = !$("hood").hidden; };
+  ["yaml", "calls", "gate"].forEach(v => { $("hood-tab-" + v).onclick = () => setHoodView(v); });
   renderPicker(initial.tasks);
+  renderDemoCards(initial.demo_stages, initial.demo_default);
   if (!initial.run_id) { showPicker(); return; }
   // a reload mid-run: the same run, its own answer choices, its own state.
   PLAY.runId = initial.run_id;
@@ -1469,6 +1591,10 @@ def _play_shell() -> str:
     <p class="lede" id="lede"></p>
   </header>
   <section class="box" id="picker" aria-label="Pick a task">
+    <h2>Start the demo at</h2>
+    <div class="task-list" id="demo-cards"></div>
+    <div class="flash" id="demo-out" hidden></div>
+    <button class="hood-btn" id="hood-btn" type="button" hidden>Under the hood</button>
     <h2>Start a task</h2>
     <div class="task-list" id="task-list"></div>
     <p class="hint">Each task starts a new run with its own files. Using the reference drivers.</p>
@@ -1493,6 +1619,18 @@ def _play_shell() -> str:
   </section>
   <div class="stack" id="run-view" hidden>
 {_RUN_SECTIONS}  </div>
+  <aside class="hood" id="hood" aria-label="Under the hood" hidden>
+    <h2>Under the hood &middot; simulated run</h2>
+    <div class="hood-steps" id="hood-steps"></div>
+    <div class="hood-tabs">
+      <button type="button" id="hood-tab-yaml" aria-pressed="true">YAML</button>
+      <button type="button" id="hood-tab-calls" aria-pressed="false">Calls</button>
+      <button type="button" id="hood-tab-gate" aria-pressed="false">Gate</button>
+    </div>
+    <div class="hood-view" id="hood-yaml"></div>
+    <div class="hood-view" id="hood-calls" hidden></div>
+    <div class="hood-view" id="hood-gate" hidden></div>
+  </aside>
   <footer>{SAFETY_LINE} &middot; <span id="run-label">Play</span>
     &middot; <a href="{REPO_URL}">github.com/determlab/shal</a>
   </footer>
@@ -1511,7 +1649,8 @@ def render_play_page(tasks: list[dict[str, Any]], run_id: str | None) -> str:
     from .export import _EXPORT_SCRIPT  # export.py imports this module
 
     initial = {"tasks": [{"name": t["name"], "level": t.get("level", "")} for t in tasks],
-               "run_id": run_id}
+               "run_id": run_id,
+               "demo_stages": list(stages.STAGES), "demo_default": stages.DEFAULT_STAGE}
     script_tag = (
         f'<script id="play-data" type="application/json">{safe_json(initial)}</script>\n'
         f"<script>{_SCRIPT}\n{_EXPORT_SCRIPT}\n{_PLAY_SCRIPT}\n"
