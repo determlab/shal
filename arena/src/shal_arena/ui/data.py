@@ -18,9 +18,12 @@ from typing import Any
 import yaml
 
 from ..cases import CASES
-from ..errors import TaskFormatError
+from ..errors import ArenaError, TaskFormatError
 from ..loader import load_task, resolve_task
-from ..replay.card import _timeline  # issue #406: reuse, not a second copy
+from ..replay.card import (
+    _headline,  # issue #523: the card's own score line
+    _timeline,  # issue #406: reuse, not a second copy
+)
 from ..store import DEFAULT_STATE_DIR, RunStore
 
 
@@ -434,3 +437,25 @@ def run_payload(run_id: str, *, state_dir: str | Path = DEFAULT_STATE_DIR) -> di
     payload["answer_sentence"] = _answer_sentence(payload, rails, temp_points)
     payload["result"] = _result(payload, rails, temp_points)
     return payload
+
+
+#: issue #523: what `Share result` sends, and nothing else. The page states
+#: this same list ("Sends: task, seed, score, sha256") next to the button.
+SHARE_FIELDS = ("task", "seed", "score", "sha256")
+
+
+def share_payload(run_id: str, *, state_dir: str | Path = DEFAULT_STATE_DIR) -> dict[str, Any]:
+    """The Share payload for one CLOSED run: exactly `SHARE_FIELDS`. `score`
+    is the result card's own headline ("1 of 1 faults caught. 0 false
+    fails."), never `fault_type`, so a shared seed does not give its answer
+    away; `sha256` is the score file's `record_sha256`, the value
+    `shal-arena verify` checks. An open run has no score yet: `ArenaError`
+    with a fix; an unknown run: `UnknownRun`, as every reader raises."""
+    store = RunStore(state_dir)
+    state = store.load(run_id)
+    if state.status != "closed":
+        raise ArenaError(f"share: run {run_id!r} is not finished yet",
+                         fix="answer the run first; Share sends its score")
+    score = _load_json(store.score_path(run_id))
+    return {"task": score["task_id"], "seed": score["seed"],
+            "score": _headline(score), "sha256": score["record_sha256"]}

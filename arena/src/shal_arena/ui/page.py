@@ -122,6 +122,10 @@ h1 { font-size: 22px; line-height: 1.25; margin: 4px 0 0; text-wrap: balance; }
 @keyframes seqlit { from { opacity: .2; } }
 .card-spec { font-size: 13px; color: var(--dim); margin: 0 0 8px; }
 .controls { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
+.share-row { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
+.share-row[hidden] { display: none; }
+.share-sends, .share-note { font-size: 13px; color: var(--dim); }
+.share-note { font-family: var(--mono); overflow-wrap: anywhere; flex-basis: 100%; }
 button { font: 600 14px var(--sans); min-height: 44px; padding: 9px 16px; border-radius: 8px;
   border: 1px solid var(--gate); background: var(--gate); color: var(--bg); cursor: pointer; }
 button:focus-visible { outline: 2px solid var(--text); outline-offset: 2px; }
@@ -963,6 +967,39 @@ function render(payload) {
   renderCliWindow(payload);
   renderFooter(payload);
   renderReplayButton(payload);
+  renderShare(payload);
+}
+
+// issue #523: Share result -- only on a live page (the server has the
+// `/api/share/<id>` route; an offline export does not) and only once the
+// run is closed. Sends nothing until clicked; then copies the server's
+// four-field payload (task, seed, score, sha256) to the clipboard.
+let SHARE_LIVE = false;
+
+function renderShare(payload) {
+  const row = document.getElementById("share-row");
+  if (!row) return;
+  row.hidden = !(SHARE_LIVE && payload.closed);
+  document.getElementById("share-note").textContent = "";
+  document.getElementById("share").onclick = () => shareResult(payload.run_id);
+}
+
+function shareResult(runId) {
+  const note = document.getElementById("share-note");
+  fetch(`/api/share/${encodeURIComponent(runId)}`)
+    .then(r => r.json().then(doc => ({status: r.status, doc})))
+    .then(({status, doc}) => {
+      if (status !== 200) {
+        const e = (doc && doc.error) || {};
+        note.textContent = [e.message, e.fix ? `Fix: ${e.fix}` : ""].filter(Boolean).join(" ");
+        return;
+      }
+      const text = JSON.stringify(doc);
+      const copy = navigator.clipboard ? navigator.clipboard.writeText(text) : Promise.reject();
+      copy.then(() => { note.textContent = `Copied: ${text}`; },
+                () => { note.textContent = text; });
+    })
+    .catch(() => { note.textContent = "Share failed: the server did not answer."; });
 }
 
 function withMode(payload) {
@@ -972,6 +1009,7 @@ function withMode(payload) {
 }
 
 function start(runId, initial) {
+  SHARE_LIVE = true;
   render(withMode(initial));
   if (initial.closed) return;
   const poll = () => fetch(`/api/run/${encodeURIComponent(runId)}`)
@@ -995,6 +1033,11 @@ _RUN_SECTIONS = """  <section class="hero" aria-label="What happened">
     <div class="box hero-visual">
       <div class="viz" id="hero"></div>
       <div class="hero-result" id="hero-result"></div>
+    </div>
+    <div class="share-row" id="share-row" hidden>
+      <button id="share" type="button">Share result</button>
+      <span class="share-sends">Sends: task, seed, score, sha256</span>
+      <span class="share-note" id="share-note" role="status"></span>
     </div>
   </section>
   <div class="controls">
@@ -1434,6 +1477,7 @@ function renderAnswer(payload) {
       + "measurement is disqualified (the same rule as the CLI).";
   // closed: the controls step aside, the result card comes right up
   $("again-row").hidden = !closed;
+  $("new-run-row").hidden = closed;
   $("ctl-box").hidden = closed;
   $("answer-box").hidden = closed;
 }
@@ -1489,6 +1533,22 @@ function answer(value) {
   });
 }
 
+// issue #523: the way out of an unfinished run -- the server unbinds it
+// (POST /api/play/new-run, the same JSON route an agent calls), then the
+// page goes back to the task list.
+function startNewRun() {
+  if (PLAY.busy) return;
+  if (!confirm("Abandon this run? It cannot be resumed.")) return;
+  setBusy(true);
+  post("/api/play/new-run", {}).then(({status, doc}) => {
+    setBusy(false);
+    if (status !== 200) { flashError(doc); return; }
+    PLAY.runId = null; PLAY.payload = null; PLAY.values = [];
+    $("flash").hidden = true;
+    showPicker();
+  }).catch(() => setBusy(false));
+}
+
 function playAgain() {
   PLAY.runId = null; PLAY.payload = null; PLAY.values = [];
   $("flash").hidden = true;
@@ -1496,7 +1556,9 @@ function playAgain() {
 }
 
 function startPlay(initial) {
+  SHARE_LIVE = true;
   $("again").onclick = playAgain;
+  $("new-run").onclick = startNewRun;
   $("hood-btn").onclick = () => { $("hood").hidden = !$("hood").hidden; };
   ["yaml", "calls", "gate"].forEach(v => { $("hood-tab-" + v).onclick = () => setHoodView(v); });
   renderPicker(initial.tasks);
@@ -1540,6 +1602,9 @@ def _play_shell() -> str:
   </section>
   <section class="stack" id="play" aria-label="Play" hidden>
     <div class="flash" id="flash" role="status" hidden></div>
+    <div class="controls" id="new-run-row"><button class="again" id="new-run" type="button"
+      data-play="new-run">Start new run</button>
+      <span class="hint">Leaves this run unfinished and goes back to the task list.</span></div>
     <div class="controls" id="again-row" hidden><button class="again" id="again"
       type="button">Play another task</button></div>
     <section class="box" id="ctl-box">

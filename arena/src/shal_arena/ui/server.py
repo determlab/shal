@@ -1,6 +1,7 @@
 """The WATCH/PLAY server (issues #406, #407): stdlib `http.server` only,
-bound to ``127.0.0.1`` -- never ``0.0.0.0`` -- so this is reachable from this
-machine alone. Serves at most one run at a time: the one `--run <id>` named
+bound to the loopback address ``127.0.0.1`` (and ``::1`` too when this machine
+has IPv6 loopback, issue #523) -- never ``0.0.0.0`` -- so this is reachable
+from this machine alone. Serves at most one run at a time: the one `--run <id>` named
 at startup, or -- issue #407 -- none yet, bound once a `POST /api/play/start`
 creates one. Reads only that run's own files (`ui.data.run_payload` is the
 one reader), never any other run under the same state dir.
@@ -16,6 +17,13 @@ issue #407 (page round, after #484 merged): in PLAY mode `GET /` is the Play
 page (`page.render_play_page`), never JSON. The task list it renders is also
 `GET /api/play/tasks`, and the open run's answer choices are
 `GET /api/play/choices` -- the JSON an agent reads instead of the page.
+
+issue #523 (first-run review): `localhost:<port>` answers like
+`127.0.0.1:<port>` (both are this machine; the Host check accepts either name),
+and the start line prints both URLs. `POST /api/play/new-run` clears an
+unfinished run so the page can go back to the task list, and
+`GET /api/share/<run_id>` is the Share payload -- exactly `task`, `seed`,
+`score`, `sha256` -- the page copies after the user clicks `Share result`.
 """
 from __future__ import annotations
 
@@ -25,28 +33,36 @@ import io
 import json
 import math
 import secrets
+import socket
 import threading
 import webbrowser
+from collections.abc import Callable
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from typing import Any
 
 from .. import runner as _runner
 from .. import stages
-from ..errors import ArenaError
+from ..errors import ArenaError, UnknownRun
 from ..loader import load_task, once_per_path
 from ..remote import MAX_PAYLOAD_BYTES, RemoteSessions
 from ..runner import has_any_measurement
 from ..store import DEFAULT_STATE_DIR, RunStore
 from . import play
-from .data import run_payload
+from .data import run_payload, share_payload
 from .page import render_play_page, render_watch_page
 
 HOST = "127.0.0.1"
 
+#: issue #523: the names a browser on this machine may put in `Host` (and in
+#: `Origin`). `localhost` is this machine too; a DNS-rebound foreign name is
+#: still refused, which is all the Host check is for.
+_LOCAL_NAMES = (HOST, "localhost", "[::1]")
+
 #: CTO review on #407 round 2, must-fix 6: every POST route, in WATCH mode.
 _PLAY_ROUTES = ("/api/play/start", "/api/play/measure", "/api/play/drive",
-               "/api/play/switch", "/api/play/answer", "/api/demo/start")
+               "/api/play/switch", "/api/play/answer", "/api/play/new-run",
+               "/api/demo/start")
 
 #: issue #486 (`shal-arena serve`): the routes, and the keys each one takes.
 #: The Play routes are the same ones above (same Host/Origin/Content-Type
@@ -193,16 +209,20 @@ def _make_handler(run_id: str | None, state_dir: str | Path,
             """must-fix 5a (round 3 nit): shared by GET and POST alike --
             without a Host check on GET too, a DNS-rebound foreign page
             could still read `GET /`/`/api/run/<id>` even though no POST
-            route was ever reachable from it."""
+            route was ever reachable from it. issue #523: on the default
+            loopback bind any of `_LOCAL_NAMES` on this port is this server;
+            returns the one sent."""
             port = self.server.server_address[1]
-            want_host = f"{bind_host}:{port}"
+            if bind_host == HOST:
+                allowed = [f"{name}:{port}" for name in _LOCAL_NAMES]
+            else:
+                allowed = [f"{bind_host}:{port}"]
             host = self.headers.get("Host", "")
-            if bind_host in _WILDCARD_HOSTS and host.rpartition(":")[2] == str(port):
-                want_host = host  # an explicit --host 0.0.0.0: any name for this port
-            if host != want_host:
+            wildcard = bind_host in _WILDCARD_HOSTS and host.rpartition(":")[2] == str(port)
+            if host not in allowed and not wildcard:  # wildcard: an explicit --host 0.0.0.0
                 raise _Forbidden(f"play: unexpected Host header {host!r}",
-                                 fix=f"send requests to {want_host} only")
-            return want_host
+                                 fix=f"send requests to {' or '.join(allowed)} only")
+            return host
 
         def _same_origin_check(self) -> None:
             """must-fix 5a. `Host` must name this server (`_check_host`); a
@@ -297,6 +317,17 @@ def _make_handler(run_id: str | None, state_dir: str | Path,
                                       "values": _answer_values(current["run_id"], state_dir)})
                 return
             served = {current["run_id"], current["last_run_id"]} - {None}
+            share_path = self.path.removeprefix("/api/share/")
+            if self.path.startswith("/api/share/") and share_path in served:
+                # issue #523: the Share payload -- read-only, built from the
+                # closed run's own score file; an open run is a 400 with a fix.
+                try:
+                    self._send_json(200, share_payload(share_path, state_dir=state_dir))
+                except UnknownRun as e:
+                    self._send_json(404, {"ok": False, "error": e.to_dict()})
+                except ArenaError as e:
+                    self._send_json(400, {"ok": False, "error": e.to_dict()})
+                return
             run_path = self.path.removeprefix("/api/run/")
             if self.path.startswith("/api/run/") and run_path in served:
                 payload = self._payload_or_error(run_path)
@@ -488,6 +519,15 @@ def _make_handler(run_id: str | None, state_dir: str | Path,
                     current["run_id"] = result["run_id"]
                 self._send_json(200, _strip_paths(result))
                 return
+            if self.path == "/api/play/new-run":
+                # issue #523: the way out of an unfinished run. Unbinds it
+                # (its files stay on disk, unanswered) so the page shows the
+                # task list and the next start is not refused.
+                with start_lock:
+                    cleared = current["run_id"]
+                    current["run_id"] = None
+                self._send_json(200, {"ok": True, "cleared": cleared})
+                return
             if current["run_id"] is None:
                 raise ArenaError("play: no run is open yet",
                                  fix="POST /api/play/start first, with a task name")
@@ -641,7 +681,9 @@ def serve(run_id: str | None = None, *, state_dir: str | Path = DEFAULT_STATE_DI
     if run_id is not None:
         run_payload(run_id, state_dir=state_dir)  # ArenaError, unknown run -- fail before bind
     handler = _make_handler(run_id, state_dir, drivers, remote=remote, bind_host=host)
-    httpd = ThreadingHTTPServer((host, port), handler)
+    httpd = _ArenaServer((host, port), handler)
+    if host == HOST:  # `localhost` means this machine only on the default bind
+        httpd.twin = _ipv6_twin(handler, httpd.server_address[1])
 
     # issue #407 round 2, must-fix 1: `runner._import_driver_file` re-execs
     # the file on every call, making a brand-new class object each time --
@@ -659,21 +701,70 @@ def serve(run_id: str | None = None, *, state_dir: str | Path = DEFAULT_STATE_DI
     # 2 servers closing out of order leaving the wrong one installed. PLAY
     # mode itself still serves one run at a time, so this remains scoped
     # to "the one server that could possibly need it."
-    real_server_close = httpd.server_close
     if run_id is None:
         original_import = _runner._import_driver_file
         _runner._import_driver_file = once_per_path(original_import)
 
-        def _server_close() -> None:
+        def _restore_import() -> None:
             _runner._import_driver_file = original_import
-            real_server_close()
 
-        httpd.server_close = _server_close
+        httpd.on_close = _restore_import
 
     url = f"http://{HOST}:{httpd.server_address[1]}/"
+    # issue #523: print every URL that answers, so a person can paste either.
+    # only when the `::1` twin really bound -- otherwise `localhost` may not work.
+    also = f" (also http://localhost:{httpd.server_address[1]}/)" if httpd.twin else ""
     if not remote:
-        print(f"shal-arena ui: watching {run_id} at {url}" if run_id is not None
-              else f"shal-arena ui: play at {url}")
+        print(f"shal-arena ui: watching {run_id} at {url}{also}" if run_id is not None
+              else f"shal-arena ui: play at {url}{also}")
     if open_browser:
         webbrowser.open(url)
     return httpd
+
+
+class _V6Server(ThreadingHTTPServer):
+    address_family = socket.AF_INET6
+    # Windows: SO_REUSEADDR would let another process share `[::1]:<port>`.
+    allow_reuse_address = False
+
+
+class _ArenaServer(ThreadingHTTPServer):
+    """The `127.0.0.1` server. Owns the optional `::1` twin and the close
+    callback, so `shutdown()` and `server_close()` each stop everything
+    this server started (#523)."""
+
+    twin: Any = None
+    on_close: Callable[[], None] | None = None
+
+    def shutdown(self) -> None:
+        if self.twin is not None:
+            self.twin.shutdown()
+        super().shutdown()
+
+    def server_close(self) -> None:
+        try:
+            if self.twin is not None:
+                self.twin.shutdown()
+                self.twin.server_close()
+        finally:
+            try:
+                super().server_close()
+            finally:
+                if self.on_close is not None:
+                    self.on_close()
+
+
+def _ipv6_twin(handler: type[BaseHTTPRequestHandler], port: int) -> ThreadingHTTPServer | None:
+    """issue #523: `localhost` can resolve to `::1` first, and a client that
+    does not fall back to `127.0.0.1` was refused. Serve the same handler on
+    `::1` and the same port, in its own daemon thread, when this machine has
+    IPv6 loopback; when it does not, `localhost` can only mean `127.0.0.1`,
+    which is already served, so this returns None."""
+    if not socket.has_ipv6:
+        return None
+    try:
+        twin = _V6Server(("::1", port), handler)
+    except OSError:
+        return None
+    threading.Thread(target=twin.serve_forever, daemon=True).start()
+    return twin
