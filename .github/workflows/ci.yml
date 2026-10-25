@@ -29,10 +29,20 @@ jobs:
           python-version: ${{ matrix.python-version }}
       - name: Install
         run: pip install -e ".[dev]"
+      - name: Install shal-arena (issue #517)
+        # tests/test_story_script.py is `pytest.importorskip("shal_arena")`: without
+        # shal-arena installed it SKIPS, and CI stayed green while 2 tests failed
+        # on main (CTO review of #511). Editable, from this checkout, after pyshal.
+        run: pip install -e ./arena
       - name: Lint
         run: ruff check src tests
       - name: Test
         run: python -m pytest -rs --cov=shal --cov-report=term-missing
+      - name: Story-script tests ran, none skipped (issue #517)
+        shell: bash
+        run: |
+          python -m pytest tests/test_story_script.py -q -rs | tee story.log
+          if grep -qi skipped story.log; then echo "test_story_script.py skipped: shal_arena is not importable"; exit 1; fi
 
   examples:
     # Keep examples/ alive: a src/shal change that breaks a demo or the
