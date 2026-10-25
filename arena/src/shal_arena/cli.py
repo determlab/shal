@@ -378,6 +378,34 @@ def _cmd_rack(args: argparse.Namespace) -> int:
     return 0
 
 
+def _cmd_shelf(args: argparse.Namespace) -> int:
+    """issue #506: the demo's device shelf, readable without the UI."""
+    from .replay.shelf import rack_check, render_shelf_page, shelf_listing
+
+    if args.out:
+        Path(args.out).write_text(render_shelf_page(), encoding="utf-8")
+        if args.json:
+            _json_out({"ok": True, "side_effect": "write", "shelf_path": args.out})
+        else:
+            print(f"wrote {args.out}")
+        return 0
+    try:
+        doc = rack_check(args.check) if args.check else shelf_listing()
+    except ArenaError as e:
+        return _report_error(e, args.json)
+    if args.json:
+        _json_out(doc)
+    elif args.check:
+        for m in doc["missing"]:
+            print(f"MISSING  {m['id']} ({m['model']}): {m['next_step']}")
+        print("rack ok" if doc["ok"] else "rack not ok")
+    else:
+        for d in doc["devices"]:
+            print(f"{d['id']}  {d['model']}  ({d['connection']})  "
+                  f"driver: {d['driver']}, {d['driver_lines']} lines")
+    return 0 if doc["ok"] else 1
+
+
 def _cmd_setup_yaml(args: argparse.Namespace) -> int:
     try:
         doc = build_setup_yaml(args.cases)
@@ -628,6 +656,17 @@ def _build_parser() -> argparse.ArgumentParser:
     p_rack.add_argument("--out", default="rack.html", metavar="PATH")
     add_common(p_rack)
     p_rack.set_defaults(func=_cmd_rack)
+
+    p_shelf = sub.add_parser(
+        "shelf", allow_abbrev=False,
+        help="the demo's device shelf (issue #506): 12 devices, driver present|missing; "
+             "--check IDS checks a rack; --out PATH writes the shelf page")
+    p_shelf.add_argument("--check", nargs="+", default=None, metavar="ID",
+                         help="check a rack of these device ids; exit 1 if any has no driver")
+    p_shelf.add_argument("--out", default=None, metavar="PATH",
+                         help="write the shelf page (HTML) to PATH instead of listing")
+    add_common(p_shelf)
+    p_shelf.set_defaults(func=_cmd_shelf)
 
     p_setup = sub.add_parser(
         "setup-yaml", allow_abbrev=False,
