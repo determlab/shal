@@ -110,6 +110,7 @@ class cached_driver_imports:  # noqa: N801 -- used as a context manager
 
     def __enter__(self) -> None:
         from shal import registry
+
         from shal_arena import runner
         from shal_arena.cases import resolve_case
         from shal_arena.loader import once_per_path
@@ -174,7 +175,8 @@ def compare(paths: list[Path], expect: int | None = None) -> int:
             continue
         failed = True
         a, b = first.splitlines(), other.splitlines()
-        line = next((i for i, (x, y) in enumerate(zip(a, b)) if x != y), min(len(a), len(b)))
+        line = next((i for i, (x, y) in enumerate(zip(a, b, strict=False)) if x != y),
+                    min(len(a), len(b)))
         left = a[line].decode("utf-8", "replace") if line < len(a) else "<end of file>"
         right = b[line].decode("utf-8", "replace") if line < len(b) else "<end of file>"
         print(f"seed-scores: {path} differs from {paths[0]} at line {line + 1}:\n"
