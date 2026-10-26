@@ -137,7 +137,7 @@ def run_tool(name: str, arguments: dict[str, Any] | None, *, state_dir: str | Pa
              prefix: list[str] | None = None) -> tuple[int, str]:
     """Run one tool as its CLI command: ``(exit code, stdout)``."""
     proc = subprocess.run(cli_argv(name, arguments, state_dir=state_dir, prefix=prefix),
-                          capture_output=True, text=True, encoding="utf-8",
+                          capture_output=True, text=True, encoding="utf-8", errors="replace",
                           stdin=subprocess.DEVNULL)
     return proc.returncode, proc.stdout.strip() or json.dumps(
         {"ok": False, "error": {"type": "NoOutput", "message": proc.stderr.strip(),
