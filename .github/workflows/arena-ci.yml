@@ -1,0 +1,169 @@
+name: Arena CI
+
+# Issue #317: the arena's own CI, on Windows, macOS and Linux. Everything it
+# runs lives in arena/ci/ (this file is here only because GitHub reads
+# workflows from .github/workflows/); arena/tests/test_ci_contract.py pins
+# the shape below.
+#
+# - seed-scores + seed-identical: the same seeds give byte-equal score files
+#   on all three OS (arena/ci/seed_scores.py).
+# - cold-agent: the docs' install line in a clean venv, one task to a closed
+#   run, timed; fails over 600 s (arena/ci/cold_agent.py).
+# - two-agents: Claude Code and Codex stand-ins finish a task through the
+#   CLI with --json and through MCP (arena/ci/two_agents.py). Scripted: no
+#   vendor agent runs in CI (it needs an account and an API key).
+# - task-replay: a task PR is read as data and replayed from its seed by the
+#   base branch's code; the PR's commit is never checked out
+#   (arena/ci/task_replay.py).
+#
+# CI never runs code from a stranger: the code jobs skip a pull request from
+# a fork, and the one job that does act on a fork's PR (task-replay) runs on
+# `pull_request_target` -- the base branch's workflow and code -- and reads
+# the PR's yaml files as data only.
+
+on:
+  pull_request:
+    paths:
+      - "arena/**"
+      - ".github/workflows/arena-ci.yml"
+  push:
+    branches: [main]
+    paths:
+      - "arena/**"
+      - ".github/workflows/arena-ci.yml"
+  pull_request_target:
+    paths:
+      - "arena/src/shal_arena/tasks/**"
+      - "arena/src/shal_arena/cards/**"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  seed-scores:
+    if: >-
+      github.event_name != 'pull_request_target' &&
+      (github.event_name != 'pull_request' ||
+       github.event.pull_request.head.repo.full_name == github.repository)
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install pyshal (this commit, editable) then shal-arena
+        run: |
+          pip install -e .
+          pip install -e ./arena
+      - name: Play every packaged task on fixed seeds, write the score file
+        run: python arena/ci/seed_scores.py write --out seed-scores.json --state-dir "${{ runner.temp }}/seed-scores"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: seed-scores-${{ matrix.os }}
+          path: seed-scores.json
+          retention-days: 14
+
+  seed-identical:
+    needs: seed-scores
+    # runs even when one OS failed, so the log says which file is missing
+    if: >-
+      !cancelled() && github.event_name != 'pull_request_target' &&
+      (github.event_name != 'pull_request' ||
+       github.event.pull_request.head.repo.full_name == github.repository)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: seed-scores-*
+          path: seed-scores-all
+      - name: The three score files are byte-equal
+        shell: bash
+        run: python arena/ci/seed_scores.py compare --expect 3 seed-scores-all/*/seed-scores.json
+
+  cold-agent:
+    if: >-
+      github.event_name != 'pull_request_target' &&
+      (github.event_name != 'pull_request' ||
+       github.event.pull_request.head.repo.full_name == github.repository)
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Build this commit's wheels (they stand in for the docs' two git URLs)
+        run: |
+          pip install build
+          python -m build --wheel --outdir dist .
+          python -m build --wheel --outdir dist arena
+      - name: Cold agent -- docs only, clean venv, first success timed (fails over 600 s)
+        run: python arena/ci/cold_agent.py --dist dist --venv "${{ runner.temp }}/cold-venv" --workdir "${{ runner.temp }}/cold-work" --limit-s 600
+
+  two-agents:
+    if: >-
+      github.event_name != 'pull_request_target' &&
+      (github.event_name != 'pull_request' ||
+       github.event.pull_request.head.repo.full_name == github.repository)
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install pyshal with the MCP extra (this commit) then shal-arena
+        run: |
+          pip install -e ".[mcp]"
+          pip install -e "./arena[dev]"
+      - name: Lint arena/ci
+        run: ruff check arena/ci arena/tests/test_ci_contract.py
+      - name: CI contract tests (issue #317), none skipped
+        shell: bash
+        run: |
+          python -m pytest arena/tests/test_ci_contract.py -q -rs | tee contract.log
+          if grep -qi skipped contract.log; then echo "a contract test skipped: is mcp installed?"; exit 1; fi
+      - name: Claude Code and Codex stand-ins, CLI --json and MCP
+        run: python arena/ci/two_agents.py
+
+  task-replay:
+    if: github.event_name == 'pull_request_target'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      # pull_request_target: this is the BASE branch, never the PR's commit
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Fetch the PR's commit as git objects only
+        env:
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+        run: git fetch --no-tags origin "+refs/pull/${PR_NUMBER}/head:refs/remotes/pr/head"
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install pyshal and shal-arena from the base checkout
+        run: |
+          pip install -e .
+          pip install -e ./arena
+      - name: Read the PR's task/card yaml as data, replay each task from its seed
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+        run: python arena/ci/task_replay.py --base "$BASE_SHA" --head refs/remotes/pr/head
