@@ -638,6 +638,8 @@ hardware — swap in a real transport later, and your code doesn't change.
 - 🚧 Actuator watchdog & safe-state (timeouts, auto safe-state on disconnect)
 - 🚧 Automatic failover between a device's routes
 
+**Ideas, not implemented:** [agentic universal test station](https://github.com/determlab/shal/blob/main/docs/roadmap/agentic-test-station.md)
+
 ---
 
 ## Documentation
